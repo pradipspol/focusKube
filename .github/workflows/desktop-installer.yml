@@ -46,6 +46,9 @@ jobs:
   backend-build:
     runs-on: windows-latest
 
+    needs:
+      - backend-lint
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -63,6 +66,9 @@ jobs:
 
   frontend-build:
     runs-on: windows-latest
+
+    needs:
+      - frontend-lint
 
     steps:
       - name: Checkout repository

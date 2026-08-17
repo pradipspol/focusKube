@@ -476,7 +476,6 @@ export function SidebarProviderSources({
       await onUploadLocalKubeconfig(name, content);
       expandGroup('localKubeconfigsRoot');
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error('Failed to upload kubeconfig:', err);
     } finally {
       setUploadBusy(false);
@@ -1087,7 +1086,6 @@ export function SidebarProviderSources({
                           const ok = await ensureLocalAzureConnected(item.contexts[0]);
                           if (!ok) return;
                           onConnectLocalKubeconfig(item.id).catch((err) => {
-                            // eslint-disable-next-line no-console
                             console.error('Failed to connect local kubeconfig:', err);
                           });
                         }}
@@ -1119,7 +1117,6 @@ export function SidebarProviderSources({
                             return;
                           }
                           onDeleteLocalKubeconfig(item.id).catch((err) => {
-                            // eslint-disable-next-line no-console
                             console.error('Failed to remove local kubeconfig:', err);
                           });
                         }}
@@ -1152,7 +1149,6 @@ export function SidebarProviderSources({
                               )
                             ) {
                               onDeleteLocalKubeconfigContext(item.id, ctxName).catch((err) => {
-                                // eslint-disable-next-line no-console
                                 console.error('Failed to remove context:', err);
                               });
                             }
@@ -1185,7 +1181,6 @@ export function SidebarProviderSources({
                                   const ok = await ensureLocalAzureConnected(ctxName);
                                   if (!ok) return;
                                   onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
-                                    // eslint-disable-next-line no-console
                                     console.error('Failed to connect local kubeconfig context:', err);
                                   });
                                 }}
@@ -1222,7 +1217,6 @@ export function SidebarProviderSources({
                                       const ok = await ensureLocalAzureConnected(ctxName);
                                       if (!ok) return;
                                       onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
-                                        // eslint-disable-next-line no-console
                                         console.error('Failed to connect local kubeconfig context:', err);
                                       });
                                     }}

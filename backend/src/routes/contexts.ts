@@ -295,8 +295,10 @@ contextsRouter.get('/', withRouteErrorLogging('contexts', 'GET /', async (req, r
       {
         fallback: () => contextsPayload(req, { skipConnectivity: true }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh contexts cache:', err);
+          logWarn('contexts.cache.refresh_failed', {
+            reqId: req.logRequestId ?? null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),
@@ -381,8 +383,10 @@ contextsRouter.post('/reload', withRouteErrorLogging('contexts', 'POST /reload',
       {
         fallback: () => contextsPayload(req, { skipConnectivity: true }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh contexts cache:', err);
+          logWarn('contexts.cache.refresh_failed', {
+            reqId: req.logRequestId ?? null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),

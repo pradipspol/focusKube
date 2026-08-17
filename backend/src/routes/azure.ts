@@ -23,6 +23,7 @@ import {
 } from '../auth/session.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { AsyncRefreshCache } from '../util/asyncCache.js';
+import { logWarn } from '../util/logger.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
 import { invalidateContextsCache } from './contexts.js';
 import {
@@ -159,8 +160,9 @@ azureRouter.get('/account', withRouteErrorLogging('azure', 'GET /account', async
         waitMs: 8_000,
         fallback: () => ({ account: null }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh Azure account cache:', err);
+          logWarn('azure.account_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),
@@ -180,8 +182,9 @@ azureRouter.get('/accounts', withRouteErrorLogging('azure', 'GET /accounts', asy
       {
         fallback: () => ({ accounts: [] }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh Azure accounts cache:', err);
+          logWarn('azure.accounts_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),
@@ -214,8 +217,9 @@ azureRouter.get('/subscriptions', withRouteErrorLogging('azure', 'GET /subscript
       {
         fallback: () => ({ subscriptions: [] }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh Azure subscriptions cache:', err);
+          logWarn('azure.subscriptions_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),
@@ -295,8 +299,9 @@ azureRouter.get('/aks', async (req, res) => {
         waitMs: 60_000,
         fallback: () => ({ clusters: [] }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh Azure AKS cache:', err);
+          logWarn('azure.aks_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),

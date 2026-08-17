@@ -18,6 +18,7 @@ import { removeContextsFromKubeconfigFile } from '../kube/kubeconfigFile.js';
 import { badRequest } from '../util/httpError.js';
 import { AsyncRefreshCache } from '../util/asyncCache.js';
 import { setRequestOperation } from '../util/requestOp.js';
+import { logWarn } from '../util/logger.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
 import { invalidateContextsCache } from './contexts.js';
 import {
@@ -69,8 +70,9 @@ awsRouter.get('/account', withRouteErrorLogging('aws', 'GET /account', async (re
         waitMs: 8_000,
         fallback: () => ({ account: null }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh AWS account cache:', err);
+          logWarn('aws.account_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),
@@ -160,8 +162,9 @@ awsRouter.get('/eks', withRouteErrorLogging('aws', 'GET /eks', async (req, res) 
         waitMs: 60_000,
         fallback: () => ({ clusters: [] }),
         onError: (err) => {
-          // eslint-disable-next-line no-console
-          console.warn('Failed to refresh AWS EKS cache:', err);
+          logWarn('aws.eks_cache.refresh_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         },
       },
     ),

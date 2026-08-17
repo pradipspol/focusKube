@@ -116,8 +116,10 @@ function loadDesktopAuthState(): void {
     if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
       desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
     }
-  } catch {
-    // Best effort only: desktop mode can still start with a fresh login.
+  } catch (err) {
+    logError('auth.desktop_state.load_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -128,8 +130,10 @@ function persistDesktopAuthState(): void {
     fs.mkdirSync(config.sessionStorageDir, { recursive: true });
     const payload: PersistedDesktopAuthState = { lastEmail: desktopAuthLastEmail };
     fs.writeFileSync(desktopAuthStatePath(), JSON.stringify(payload, null, 2), 'utf8');
-  } catch {
-    // Best effort only.
+  } catch (err) {
+    logError('auth.desktop_state.persist_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -165,8 +169,10 @@ async function getPersistedDesktopAuthEmailAsync(): Promise<string | null> {
     if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
       desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
     }
-  } catch {
-    // Best effort only: desktop mode can still start with a fresh login.
+  } catch (err) {
+    logError('auth.desktop_state.load_async_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
   return desktopAuthLastEmail;
 }
@@ -175,7 +181,11 @@ async function ensureFileAsync(filePath: string): Promise<void> {
   await ensureDirAsync(path.dirname(filePath));
   try {
     await fsp.stat(filePath);
-  } catch {
+  } catch (err) {
+    logError('auth.session.ensure_file_failed', {
+      filePath,
+      error: err instanceof Error ? err.message : String(err),
+    });
     await fsp.writeFile(filePath, '', { encoding: 'utf8' });
   }
 }
@@ -187,11 +197,21 @@ async function copyIfMissingAsync(sourcePath: string, targetPath: string): Promi
     try {
       await fsp.stat(sourcePath);
       sourceExists = true;
-    } catch {}
+    } catch (err) {
+      logWarn('auth.session.copy_source_stat_failed', {
+        sourcePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     try {
       await fsp.stat(targetPath);
       targetExists = true;
-    } catch {}
+    } catch (err) {
+      logWarn('auth.session.copy_target_stat_failed', {
+        targetPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     if (!sourceExists || targetExists) return;
     await ensureDirAsync(path.dirname(targetPath));
@@ -211,7 +231,9 @@ async function ensureSessionKubeconfigAsync(kubeconfigPath: string): Promise<voi
       exists = true;
       isFile = stat.isFile();
       size = stat.size;
-    } catch {}
+    } catch {
+      // Best effort only.
+    }
 
     if (exists && isFile && size > 0) return;
 
@@ -230,8 +252,11 @@ async function ensureSessionKubeconfigAsync(kubeconfigPath: string): Promise<voi
       ].join('\n') + '\n',
       { encoding: 'utf8' },
     );
-  } catch {
-    // Best effort: if bootstrap fails, callers can still rely on other auth/bootstrap flows.
+  } catch (err) {
+    logError('auth.session.ensure_kubeconfig_failed', {
+      kubeconfigPath,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

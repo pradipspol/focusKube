@@ -155,7 +155,6 @@ export function DataTable<T>({
       window.cancelAnimationFrame(rafId);
       window.removeEventListener('resize', fit);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colSignature, rows.length, selectable, hasActions, hasManualResize]);
 
   const colWidth = (key: string, fallback?: number) => widths[key] ?? autoWidths[key] ?? fallback;

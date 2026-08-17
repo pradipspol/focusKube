@@ -108,7 +108,6 @@ export function AzurePanel({
       setMessage('');
       setMessageIsError(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loginStatus.data?.state]);
 
   useEffect(() => {
@@ -126,7 +125,6 @@ export function AzurePanel({
   useEffect(() => {
     const def = subs.data?.subscriptions.find((s) => s.isDefault) ?? subs.data?.subscriptions[0];
     if (def && !subscription) setSubscription(def.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subs.data]);
 
   const setSub = useMutation({

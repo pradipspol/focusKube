@@ -37,7 +37,11 @@ export class RecordingLifecycle {
       const kubeConfig = await kube.rawConfig(context, { kubeconfigPath, fallbackContext });
       const cluster = kubeConfig.getCurrentCluster();
       return cluster?.server;
-    } catch {
+    } catch (err) {
+      logWarn('observability.recording.server_url_lookup_failed', {
+        context,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return undefined;
     }
   }

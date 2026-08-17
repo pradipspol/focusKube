@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { logError } from '../util/logger.js';
 
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -39,8 +40,11 @@ export class Collection<T extends { id: string }> {
           this.docs = parsed.map((doc) => this.reviveDoc(doc));
         }
       }
-    } catch {
-      // Best effort only: start empty if the file is missing or invalid.
+    } catch (err) {
+      logError('store.collection.load_failed', {
+        filePath: this.filePath(),
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     this.pruneExpired();
@@ -87,8 +91,11 @@ export class Collection<T extends { id: string }> {
     try {
       await fsp.mkdir(path.dirname(this.filePath()), { recursive: true });
       await fsp.writeFile(this.filePath(), JSON.stringify(this.docs), 'utf8');
-    } catch {
-      // Best effort only.
+    } catch (err) {
+      logError('store.collection.flush_failed', {
+        filePath: this.filePath(),
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       this.writeInFlight = false;
     }

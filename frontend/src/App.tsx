@@ -616,7 +616,6 @@ export default function App() {
     const tabContext = activeTab?.originContext;
     if (!tabContext || tabContext === context) return;
     void handleContextChange(tabContext);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 
   const openView = (

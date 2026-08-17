@@ -297,7 +297,11 @@ async function fileExists(candidatePath: string): Promise<boolean> {
   try {
     const stat = await fsp.stat(candidatePath);
     return stat.isFile();
-  } catch {
+  } catch (err) {
+    logWarn('kubeconfig.file_exists_failed', {
+      candidatePath,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }

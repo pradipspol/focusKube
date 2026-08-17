@@ -649,7 +649,9 @@ export async function azGetAksCredentials(opts: {
       }
     } catch (err) {
       // Log but don't fail if kubeconfig patching fails
-      console.error('[azGetAksCredentials] Failed to patch kubeconfig:', err);
+      logError('azure.get_aks_credentials.patch_kubeconfig_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }

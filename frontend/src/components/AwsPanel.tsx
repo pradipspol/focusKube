@@ -126,7 +126,6 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
       setMessage('');
       setMessageIsError(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [awsLoginStatus.data?.state]);
 
   const eks = useQuery({

@@ -296,16 +296,6 @@ resourcesRouter.get('/:plural', async (req, res) => {
       ...details,
     })
   };
-
-  //   console.log(JSON.stringify({
-  //     level: 'debug',
-  //     reqId,
-  //     operation: 'resources.list',
-  //     stage,
-  //     plural,
-  //     namespace,
-  //     ...details,
-  //   }));
   // };
 
   logDbg('resources.list.start');
