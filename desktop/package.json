@@ -15,6 +15,7 @@
   "build": {
     "appId": "com.k8-explorer.desktop",
     "productName": "k8-explorer",
+    "electronVersion": "25.0.0",
     "afterPack": "./afterPack.js",
     "files": [
       "main.js",
@@ -42,7 +43,7 @@
     }
   },
   "devDependencies": {
-    "electron": "^25.0.0",
+    "electron": "25.0.0",
     "electron-wix-msi": "^3.0.0",
     "electron-builder": "^24.0.0"
   }
