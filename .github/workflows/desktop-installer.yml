@@ -126,7 +126,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: desktop-latest
+          tag_name: k8-explorer-latest
           name: K8s Explorer Desktop Latest
           target_commitish: ${{ github.sha }}
           prerelease: true
