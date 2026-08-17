@@ -44,6 +44,7 @@
   },
   "devDependencies": {
     "electron": "25.0.0",
+    "7zip-bin": "^5.2.0",
     "electron-wix-msi": "^3.0.0",
     "electron-builder": "^24.0.0"
   }
