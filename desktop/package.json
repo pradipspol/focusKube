@@ -16,6 +16,7 @@
     "appId": "com.k8-explorer.desktop",
     "productName": "k8-explorer",
     "electronVersion": "25.0.0",
+    "npmRebuild": false,
     "afterPack": "./afterPack.js",
     "files": [
       "main.js",
