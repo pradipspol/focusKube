@@ -8,7 +8,7 @@ import { AzureLoginManager } from '../azure/azure.js';
 import { AwsLoginManager } from '../aws/aws.js';
 import { config } from '../config.js';
 import { HttpError } from '../util/httpError.js';
-import { logError, logInfo, setLogContext } from '../util/logger.js';
+import { logError, logInfo, logWarn, setLogContext } from '../util/logger.js';
 import { kube } from '../kube/client.js';
 import { type Role } from './rbac.js';
 
