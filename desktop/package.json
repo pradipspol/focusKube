@@ -1,0 +1,49 @@
+{
+  "name": "k8-explorer-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "npm --prefix .. run build:bundle:prod && node ./package-windows.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6",
+    "get-port": "^5.1.1"
+  },
+  "build": {
+    "appId": "com.k8-explorer.desktop",
+    "productName": "k8-explorer",
+    "afterPack": "./afterPack.js",
+    "files": [
+      "main.js",
+      "package.json",
+      "node_modules/"
+    ],
+    "extraResources": [
+      {
+        "from": "extra",
+        "to": "extras",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "${productName}-Setup-${version}.exe"
+    }
+    ,
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "include": "installer/nsis-installer-hook.nsh"
+    }
+  },
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-wix-msi": "^3.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

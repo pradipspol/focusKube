@@ -1,0 +1,40 @@
+{
+  "name": "k8-explorer-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend API for the K8s Explorer web app (Kubernetes + Helm + Azure).",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "build:bundle": "tsc -p tsconfig.json --noEmit && node ./scripts/build-esbuild.mjs",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.600.0",
+    "@aws-sdk/client-eks": "^3.600.0",
+    "@aws-sdk/client-sts": "^3.600.0",
+    "@aws-sdk/credential-providers": "^3.600.0",
+    "@kubernetes/client-node": "^0.22.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-async-errors": "^3.1.1",
+    "js-yaml": "^4.1.0",
+    "pino": "^10.3.1",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
