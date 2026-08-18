@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  backend-lint:
+  lint-and-build:
     runs-on: windows-latest
 
     steps:
@@ -25,72 +25,21 @@ jobs:
       - name: Lint backend
         run: npm --workspace backend run lint
 
-  frontend-lint:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm install
-
       - name: Lint frontend
         run: npm --workspace frontend run lint
-
-  backend-build:
-    runs-on: windows-latest
-
-    needs:
-      - backend-lint
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm install
 
       - name: Build backend
         run: npm --workspace backend run build
 
-  frontend-build:
-    runs-on: windows-latest
-
-    needs:
-      - frontend-lint
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm install
-
       - name: Build frontend
         run: npm --workspace frontend run build
 
-  build-desktop-installer:
+
+  build-and-release-installer:
     runs-on: windows-latest
 
     needs:
-      - backend-build
-      - frontend-build
+      - lint-and-build
 
     permissions:
       contents: write
