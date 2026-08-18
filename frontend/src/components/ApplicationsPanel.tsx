@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError, type Scope } from '../api/client';
+import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { age, statusOf } from '../utils/format';
 import { DataTable } from './DataTable';
 import { NamespaceSelector } from './NamespaceSelector';
+import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
 interface Props {
   scope: Scope;
@@ -39,13 +40,6 @@ export function ApplicationsPanel({
   onSelectedNamespacesChange,
   onAzureAuthRequired,
 }: Props) {
-  const authSourceFromError = (error: unknown): 'local' | 'cloud' | undefined => {
-    if (!(error instanceof ApiError)) return undefined;
-    const details = (error.details ?? null) as { code?: string; source?: string } | null;
-    if (details?.code !== 'AZURE_AUTH_REQUIRED') return undefined;
-    return details.source === 'local' ? 'local' : 'cloud';
-  };
-
   const [query, setQuery] = useState('');
   const [, setAgeTick] = useState(0);
   const [detailsRow, setDetailsRow] = useState<ApplicationRow | null>(null);
@@ -109,10 +103,7 @@ export function ApplicationsPanel({
     enabled: !!scope.context,
   });
 
-  useEffect(() => {
-    if (!(applications.error instanceof ApiError) || applications.error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(applications.error));
-  }, [applications.error, onAzureAuthRequired]);
+  useAzureAuthRequiredEffect(applications.error, onAzureAuthRequired);
 
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;

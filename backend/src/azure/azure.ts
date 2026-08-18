@@ -153,13 +153,16 @@ export async function hasAzureCliLogin(azureConfigDir: string): Promise<boolean>
   const now = Date.now();
   const cacheKey = azureCliLoginCacheKey(azureConfigDir);
 
-  if (state.value !== null && now - state.checkedAt < config.azureAuthCheckCacheMs) {
+  const cacheThresholdMs = state.value === false
+    ? config.azureAuthCheckNegativeCacheMs
+    : config.azureAuthCheckCacheMs;
+  if (state.value !== null && now - state.checkedAt < cacheThresholdMs) {
     logInfo('azure.login.check.cached', {
       azureConfigDir,
       cacheKey,
       cachedValue: state.value,
       cacheAgeMs: now - state.checkedAt,
-      cacheThresholdMs: config.azureAuthCheckCacheMs,
+      cacheThresholdMs,
     });
     return state.value;
   }

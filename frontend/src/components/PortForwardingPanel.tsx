@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError, wsUrl, type Scope } from '../api/client';
+import { api, wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
+import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
 interface Props {
   scope: Scope;
@@ -21,13 +22,6 @@ type ForwardMessage =
   | { type: 'ERROR'; message: string };
 
 export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAuthRequired }: Props) {
-  const authSourceFromError = (error: unknown): 'local' | 'cloud' | undefined => {
-    if (!(error instanceof ApiError)) return undefined;
-    const details = (error.details ?? null) as { code?: string; source?: string } | null;
-    if (details?.code !== 'AZURE_AUTH_REQUIRED') return undefined;
-    return details.source === 'local' ? 'local' : 'cloud';
-  };
-
   const [targetKind, setTargetKind] = useState<TargetKind>('pods');
   const [targetKey, setTargetKey] = useState('');
   const [targetPort, setTargetPort] = useState('');
@@ -44,10 +38,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
     enabled: !!scope.context,
   });
 
-  useEffect(() => {
-    if (!(podQuery.error instanceof ApiError) || podQuery.error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(podQuery.error));
-  }, [onAzureAuthRequired, podQuery.error]);
+  useAzureAuthRequiredEffect(podQuery.error, onAzureAuthRequired);
 
   const serviceQuery = useQuery({
     queryKey: ['port-forward', 'services', scope.context, scope.namespace],
@@ -55,10 +46,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
     enabled: !!scope.context,
   });
 
-  useEffect(() => {
-    if (!(serviceQuery.error instanceof ApiError) || serviceQuery.error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(serviceQuery.error));
-  }, [onAzureAuthRequired, serviceQuery.error]);
+  useAzureAuthRequiredEffect(serviceQuery.error, onAzureAuthRequired);
 
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;

@@ -19,6 +19,11 @@ export const config = {
   k8sContextProbeTimeoutMs: parseInt(process.env.K8S_CONTEXT_PROBE_TIMEOUT_MS ?? '5000', 10),
   azureAuthCheckTimeoutMs: parseInt(process.env.AZURE_AUTH_CHECK_TIMEOUT_MS ?? '5000', 10),
   azureAuthCheckCacheMs: parseInt(process.env.AZURE_AUTH_CHECK_CACHE_MS ?? '15000', 10),
+  // A failed/timed-out probe is cached for far less time than a successful one:
+  // a cold `az account show` spawn racing another az/kubelogin process can
+  // time out once even though the user is signed in, and we don't want that
+  // single false negative gating every panel for the full positive-cache window.
+  azureAuthCheckNegativeCacheMs: parseInt(process.env.AZURE_AUTH_CHECK_NEGATIVE_CACHE_MS ?? '2000', 10),
   logRetentionDays: parseInt(process.env.LOG_RETENTION_DAYS ?? '5', 10),
 
   // Base URL of the frontend app, used for post-login/redirect targets.

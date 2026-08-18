@@ -6,6 +6,7 @@ import { usePermissions } from '../auth/permissions';
 import { age, statusOf } from '../utils/format';
 import { downloadFile, toCsv, toTxt, type ExportFormat } from '../utils/export';
 import { getWatchWorker, releaseWatchWorker } from '../utils/workerRuntime';
+import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
 import { ResourceDetail } from './ResourceDetail';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
@@ -386,13 +387,6 @@ export function ResourceTable({
   onOpenPodTerminal,
   onOpenPodLogsTerminal,
 }: Props) {
-  const authSourceFromError = (error: unknown): 'local' | 'cloud' | undefined => {
-    if (!(error instanceof ApiError)) return undefined;
-    const details = (error.details ?? null) as { code?: string; source?: string } | null;
-    if (details?.code !== 'AZURE_AUTH_REQUIRED') return undefined;
-    return details.source === 'local' ? 'local' : 'cloud';
-  };
-
   const qc = useQueryClient();
   const { canWrite, canDelete } = usePermissions();
   const [selected, setSelected] = useState<{ obj: K8sObject; tab?: string } | null>(null);
@@ -501,10 +495,7 @@ export function ResourceTable({
               : POLL_INTERVAL_MS,
   });
 
-  useEffect(() => {
-    if (!(plainList.error instanceof ApiError) || plainList.error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(plainList.error));
-  }, [onAzureAuthRequired, plainList.error]);
+  useAzureAuthRequiredEffect(plainList.error, onAzureAuthRequired);
 
   const pagedList = useInfiniteQuery<PagedResourceListResult, Error>({
     queryKey: pagedQueryKey,
@@ -520,10 +511,7 @@ export function ResourceTable({
     refetchOnWindowFocus: true,
   });
 
-  useEffect(() => {
-    if (!(pagedList.error instanceof ApiError) || pagedList.error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(pagedList.error));
-  }, [onAzureAuthRequired, pagedList.error]);
+  useAzureAuthRequiredEffect(pagedList.error, onAzureAuthRequired);
 
   const list = usesLazyPaging ? pagedList : plainList;
 
@@ -816,7 +804,12 @@ export function ResourceTable({
       watchWorkerRef.current = null;
     };
     // watchRetryToken is included so a user-initiated retry restarts the worker.
-  }, [plural, qc, scope.context, effectiveScope.namespace, watchKey, watchRetryToken]);
+    // namespaceSelectionSignature is included so multi-namespace checkbox
+    // changes tear down and restart the watch too - the worker only supports
+    // watching a single namespace or the whole cluster, so a stale watch left
+    // over from a different namespace selection can otherwise keep patching
+    // cross-namespace events into the newly filtered view.
+  }, [plural, qc, scope.context, effectiveScope.namespace, namespaceSelectionSignature, watchKey, watchRetryToken]);
 
   useEffect(() => {
     // Re-enable responsive auto-fit and reset the connection budget whenever
@@ -827,7 +820,7 @@ export function ResourceTable({
     lastResyncInvalidateAtRef.current = 0;
     failureCountRef.current = 0;
     setConnectionState('ok');
-  }, [plural, scope.context, scope.namespace]);
+  }, [plural, scope.context, scope.namespace, namespaceSelectionSignature]);
 
   useEffect(() => {
     if (hasManualResize) return;

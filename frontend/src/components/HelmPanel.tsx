@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type Scope } from '../api/client';
+import { api, type Scope } from '../api/client';
 import type { HelmRelease } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { Modal } from './Modal';
 import { DataTable } from './DataTable';
 import { DetailsModal } from './DetailsModal';
 import { NamespaceSelector } from './NamespaceSelector';
+import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { HelmInstallModal } from './HelmInstallModal';
 import { HelmUpgradeModal } from './HelmUpgradeModal';
 
@@ -33,13 +34,6 @@ export function HelmPanel({
   onAzureAuthRequired,
   onToast,
 }: Props) {
-  const authSourceFromError = (error: unknown): 'local' | 'cloud' | undefined => {
-    if (!(error instanceof ApiError)) return undefined;
-    const details = (error.details ?? null) as { code?: string; source?: string } | null;
-    if (details?.code !== 'AZURE_AUTH_REQUIRED') return undefined;
-    return details.source === 'local' ? 'local' : 'cloud';
-  };
-
   const qc = useQueryClient();
   const { canWrite, canDelete } = usePermissions();
   const [historyFor, setHistoryFor] = useState<HelmRelease | null>(null);
@@ -99,11 +93,8 @@ export function HelmPanel({
     enabled: mode === 'charts' && showCatalog,
   });
 
-  useEffect(() => {
-    const error = mode === 'charts' && showCatalog ? charts.error : releases.error;
-    if (!(error instanceof ApiError) || error.status !== 401) return;
-    onAzureAuthRequired?.(authSourceFromError(error));
-  }, [charts.error, mode, onAzureAuthRequired, releases.error, showCatalog]);
+  const activeError = mode === 'charts' && showCatalog ? charts.error : releases.error;
+  useAzureAuthRequiredEffect(activeError, onAzureAuthRequired);
 
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;
