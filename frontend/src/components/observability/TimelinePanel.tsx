@@ -57,6 +57,13 @@ export function TimelinePanel({ scope }: Props) {
     return unsubscribe;
   }, [subscribe]);
 
+  // Prime the current state snapshot so the table is populated before the user scrubs.
+  useEffect(() => {
+    requestStateAt(new Date(currentTime));
+    // Intentionally run once for the initial time position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // When scrubber is released, request state-at via WebSocket
   const handleScrubberCommit = (ts: number) => {
     requestStateAt(new Date(ts));

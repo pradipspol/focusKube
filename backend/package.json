@@ -11,7 +11,9 @@
     "build:bundle": "tsc -p tsconfig.json --noEmit && node ./scripts/build-esbuild.mjs",
     "lint": "eslint .",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "test:watch": "tsx --test --watch src/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.600.0",
@@ -39,6 +41,7 @@
     "globals": "^16.3.0",
     "typescript-eslint": "^8.41.0",
     "tsx": "^4.19.2",
+    "undici-types": "^6.20.0",
     "typescript": "^5.7.2"
   }
 }

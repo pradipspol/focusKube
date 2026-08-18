@@ -189,7 +189,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
               fontSize: '0.95em',
               fontWeight: activeTab === tab ? 600 : 400,
               color: activeTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
-              border: 'none',
+              borderTop: 'none',
+              borderRight: 'none',
+              borderLeft: 'none',
               textTransform: 'capitalize',
             }}
           >

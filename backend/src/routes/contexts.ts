@@ -18,7 +18,6 @@ import {
   type SessionScope,
 } from '../auth/session.js';
 import { logInfo, logWarn, logError } from '../util/logger.js';
-import { AsyncRefreshCache } from '../util/asyncCache.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
 import {
   deleteDesktopContextSourcesForNames,
@@ -30,63 +29,21 @@ import {
   upsertDesktopContextSource,
   upsertDesktopLocalKubeconfig,
 } from '../runtime/desktopStore.js';
+import { contextsService, type ContextsPayload } from '../services/contextsService.js';
 
 export const contextsRouter = Router();
-const contextsPayloadCaches = new Map<string, AsyncRefreshCache<ContextsPayload>>();
-
-type ContextsPayload = {
-  active?: string;
-  contexts: Array<{
-    name: string;
-    cluster: string;
-    user: string;
-    namespace?: string;
-    active: boolean;
-    connected?: boolean;
-    source?: {
-      provider: 'aks' | 'eks' | 'local';
-      subscriptionId?: string;
-      subscriptionName?: string;
-      resourceGroup?: string;
-      clusterName?: string;
-      accountId?: string;
-      region?: string;
-    };
-  }>;
-  localKubeconfigs: Array<{
-    id: string;
-    name: string;
-    contexts: string[];
-    createdAt: string;
-    updatedAt: string;
-  }>;
-};
 
 function requireUserKey(req: any): string {
-  const userId = req.authUser?.id;
-  if (!userId) throw badRequest('User not found');
-  return userId;
+  return contextsService.requireUserKey(req.authUser?.id);
 }
 
 function parseKubeconfigContexts(content: string): string[] {
-  const kc = new k8s.KubeConfig();
-  try {
-    kc.loadFromString(content);
-  } catch (err) {
-    throw badRequest('Invalid kubeconfig file', (err as Error).message);
-  }
-  return kc.getContexts().map((ctx) => ctx.name);
+  return contextsService.parseKubeconfigContexts(content);
 }
 
 async function listLocalKubeconfigsForUser(userKey: string) {
   const docs = await listDesktopLocalKubeconfigs(userKey);
-  return docs.map((doc) => ({
-    id: doc.id,
-    name: doc.name,
-    contexts: doc.contexts,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
-  }));
+  return contextsService.mapLocalKubeconfigs(docs);
 }
 
 async function removeContextSourcesForNames(
@@ -153,8 +110,6 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
     elapsedMs: Number((Number(process.hrtime.bigint() - sourcesStartedHr) / 1_000_000).toFixed(1)),
   });
 
-  const sourceByContext = new Map(sourceDocs.map((doc) => [`${doc.scope}::${doc.contextName}`, doc]));
-
   const connectivityStartedHr = process.hrtime.bigint();
   const connectivity = skipConnectivity
     ? contexts.map((ctx) => ({ name: ctx.name, connected: false }))
@@ -166,8 +121,6 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
     skipped: true,
     elapsedMs: Number((Number(process.hrtime.bigint() - connectivityStartedHr) / 1_000_000).toFixed(1)),
   });
-
-  const connectedByName = new Map(connectivity.map((entry) => [entry.name, entry.connected]));
 
   const localConfigsStartedHr = process.hrtime.bigint();
   const localKubeconfigs = await listLocalKubeconfigsForUser(userKey);
@@ -184,62 +137,17 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
     elapsedMs: Number((Number(process.hrtime.bigint() - startedHr) / 1_000_000).toFixed(1)),
   });
 
-  return {
-    active: req.userSession.activeContext ?? undefined,
-    contexts: entries.map(({ ctx, scope }) => {
-      const sourceDoc = sourceByContext.get(`${scope}::${ctx.name}`);
-      return {
-        ...ctx,
-        connected: connectedByName.get(ctx.name) ?? false,
-        source: sourceDoc
-          ? sourceDoc.source === 'eks'
-            ? {
-                provider: 'eks' as const,
-                accountId: sourceDoc.accountId,
-                region: sourceDoc.region,
-                clusterName: sourceDoc.clusterName,
-              }
-            : {
-                provider: 'aks' as const,
-                subscriptionId: sourceDoc.subscriptionId,
-                subscriptionName: sourceDoc.subscriptionName,
-                resourceGroup: sourceDoc.resourceGroup,
-                clusterName: sourceDoc.clusterName,
-              }
-          : scope === 'local'
-            ? { provider: 'local' as const }
-            : scope === 'aws'
-              ? {
-                  provider: 'eks' as const,
-                  // `aws eks update-kubeconfig --alias <name>` writes context names that
-                  // match the cluster name in this app; when explicit source docs are
-                  // missing, infer clusterName from context name so the sidebar can match.
-                  clusterName: ctx.name,
-                }
-              : scope === 'azure'
-                ? {
-                    provider: 'aks' as const,
-                    clusterName: ctx.name,
-                  }
-                : undefined,
-      };
-    }),
+  return contextsService.buildPayload({
+    activeContext: req.userSession.activeContext,
+    entries,
+    sourceDocs,
     localKubeconfigs,
-  };
-}
-
-function contextsCacheFor(req: any): AsyncRefreshCache<ContextsPayload> {
-  const cacheKey = req.userSession.userId;
-  const existing = contextsPayloadCaches.get(cacheKey);
-  if (existing) return existing;
-
-  const created = new AsyncRefreshCache<ContextsPayload>(`contexts.${cacheKey}`);
-  contextsPayloadCaches.set(cacheKey, created);
-  return created;
+    skipConnectivity,
+  });
 }
 
 export function invalidateContextsCache(req: any): void {
-  contextsCacheFor(req).invalidate();
+  contextsService.invalidateCache(req.userSession.userId);
 }
 
 async function probeConnectivity(contextName: string, req: any): Promise<boolean> {
@@ -301,18 +209,16 @@ async function withTimeoutFallback<T>(
 contextsRouter.get('/', withRouteErrorLogging('contexts', 'GET /', async (req, res) => {
   setRequestOperation(req, 'contexts.list');
   if (!req.userSession) throw badRequest('Session not found');
-  const cache = contextsCacheFor(req);
   res.json(
-    await cache.get(
+    await contextsService.getCachedPayload(
+      req.userSession.userId,
       () => contextsPayload(req),
-      {
-        fallback: () => contextsPayload(req, { skipConnectivity: true }),
-        onError: (err) => {
-          logWarn('contexts.cache.refresh_failed', {
-            reqId: req.logRequestId ?? null,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
+      () => contextsPayload(req, { skipConnectivity: true }),
+      (err) => {
+        logWarn('contexts.cache.refresh_failed', {
+          reqId: req.logRequestId ?? null,
+          error: err instanceof Error ? err.message : String(err),
+        });
       },
     ),
   );
@@ -388,19 +294,17 @@ contextsRouter.post('/disconnect', withRouteErrorLogging('contexts', 'POST /disc
 contextsRouter.post('/reload', withRouteErrorLogging('contexts', 'POST /reload', async (req, res) => {
   setRequestOperation(req, 'contexts.reload');
   if (!req.userSession) throw badRequest('Session not found');
-  const cache = contextsCacheFor(req);
-  cache.invalidate();
+  contextsService.invalidateCache(req.userSession.userId);
   res.json(
-    await cache.get(
+    await contextsService.getCachedPayload(
+      req.userSession.userId,
       () => contextsPayload(req),
-      {
-        fallback: () => contextsPayload(req, { skipConnectivity: true }),
-        onError: (err) => {
-          logWarn('contexts.cache.refresh_failed', {
-            reqId: req.logRequestId ?? null,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
+      () => contextsPayload(req, { skipConnectivity: true }),
+      (err) => {
+        logWarn('contexts.cache.refresh_failed', {
+          reqId: req.logRequestId ?? null,
+          error: err instanceof Error ? err.message : String(err),
+        });
       },
     ),
   );
@@ -420,7 +324,7 @@ contextsRouter.post('/local-kubeconfigs', withRouteErrorLogging('contexts', 'POS
   const contexts = parseKubeconfigContexts(content);
   await upsertDesktopLocalKubeconfig(userKey, { name, content, contexts });
 
-  contextsCacheFor(req).invalidate();
+  contextsService.invalidateCache(req.userSession.userId);
   res.status(201).json(await contextsPayload(req, { skipConnectivity: true }));
 }));
 
@@ -503,7 +407,7 @@ contextsRouter.delete('/local-kubeconfigs/:id', async (req, res) => {
     }
   }
 
-  contextsCacheFor(req).invalidate();
+  contextsService.invalidateCache(req.userSession.userId);
   res.json(await contextsPayload(req, { skipConnectivity: true }));
 });
 
@@ -543,7 +447,7 @@ contextsRouter.delete('/local-kubeconfigs/:id/contexts/:contextName', async (req
       req.userSession.activeContext = null;
       req.userSession.activeContextSource = null;
     }
-    contextsCacheFor(req).invalidate();
+    contextsService.invalidateCache(req.userSession.userId);
     res.json(await contextsPayload(req, { skipConnectivity: true }));
     return;
   }
@@ -562,6 +466,6 @@ contextsRouter.delete('/local-kubeconfigs/:id/contexts/:contextName', async (req
     req.userSession.activeContextSource = null;
   }
 
-  contextsCacheFor(req).invalidate();
+  contextsService.invalidateCache(req.userSession.userId);
   res.json(await contextsPayload(req, { skipConnectivity: true }));
 });

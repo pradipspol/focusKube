@@ -5,25 +5,22 @@ import { kube } from '../kube/client.js';
 import { badRequest } from '../util/httpError.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
 import { setRequestOperation } from '../util/requestOp.js';
-import { ensureContextAuthReady } from '../kube/authGuard.js';
+import { sessionEnvForSource } from '../auth/session.js';
 import {
-  azureConfigDirForSource,
-  kubeconfigPathForSource,
-  resolveSessionScopeForContext,
-  sessionEnvForSource,
-} from '../auth/session.js';
+  ensureScopedContextAuth,
+  requestedContextFromQuery,
+  requestedSourceFromQuery,
+  resolveScopedRequestContext,
+} from './requestContext.js';
 
 export const helmRouter = Router();
 
 /** Build the common helm flags (kube context + namespace). */
 async function helmFlags(req: any, namespaceRequired = false): Promise<string[]> {
   const flags: string[] = [];
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const context = await kube.resolveContextName((req.query.context as string) || undefined, {
-    kubeconfigPath: selectedKubeconfigPath,
+  const scoped = await resolveScopedRequestContext(req);
+  const context = await kube.resolveContextName(scoped.requestedContext, {
+    kubeconfigPath: scoped.selectedKubeconfigPath,
     fallbackContext: req.userSession.activeContext,
   });
   if (context) flags.push('--kube-context', context);
@@ -37,25 +34,13 @@ async function helmFlags(req: any, namespaceRequired = false): Promise<string[]>
 /** List releases. Without a namespace, lists across all namespaces. */
 helmRouter.get('/releases', withRouteErrorLogging('helm', 'GET /releases', async (req, res) => {
   setRequestOperation(req, 'helm.releases.list');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = ['list', '--output', 'json'];
   if (!req.query.namespace) args.push('--all-namespaces');
   args.push(...await helmFlags(req));
   const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   res.json({ releases: JSON.parse(stdout || '[]') });
 }));
@@ -68,23 +53,12 @@ helmRouter.post('/repos', withRouteErrorLogging('helm', 'POST /repos', async (re
   }).safeParse(req.body);
   if (!body.success) throw badRequest('Invalid repo request: name and url are required');
 
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
 
   const args = ['repo', 'add', body.data.name, body.data.url];
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   if (result.code !== 0) throw badRequest('Failed to add Helm repository', (result.stderr || result.stdout).trim());
   res.json({ ok: true, name: body.data.name, url: body.data.url });
@@ -92,24 +66,12 @@ helmRouter.post('/repos', withRouteErrorLogging('helm', 'POST /repos', async (re
 
 helmRouter.get('/repos', withRouteErrorLogging('helm', 'GET /repos', async (req, res) => {
   setRequestOperation(req, 'helm.repos.list');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
 
   const args = ['repo', 'list', '--output', 'json'];
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   if (result.code !== 0) {
     res.json({ repos: [] });
@@ -120,23 +82,11 @@ helmRouter.get('/repos', withRouteErrorLogging('helm', 'GET /repos', async (req,
 
 helmRouter.get('/charts', withRouteErrorLogging('helm', 'GET /charts', async (req, res) => {
   setRequestOperation(req, 'helm.charts.list');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = ['search', 'repo', '--output', 'json'];
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
 
   // "no repositories to show" should not be a hard error for the UI.
@@ -154,90 +104,43 @@ helmRouter.get('/charts', withRouteErrorLogging('helm', 'GET /charts', async (re
 
 helmRouter.get('/releases/:name/history', withRouteErrorLogging('helm', 'GET /releases/:name/history', async (req, res) => {
   setRequestOperation(req, 'helm.release.history');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = ['history', req.params.name, '--output', 'json', ...(await helmFlags(req, true))];
   const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   res.json({ history: JSON.parse(stdout || '[]') });
 }));
 
 helmRouter.get('/releases/:name/values', withRouteErrorLogging('helm', 'GET /releases/:name/values', async (req, res) => {
   setRequestOperation(req, 'helm.release.values');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = ['get', 'values', req.params.name, '--output', 'yaml', ...(await helmFlags(req, true))];
   const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   res.json({ values: stdout });
 }));
 
 helmRouter.get('/releases/:name/manifest', withRouteErrorLogging('helm', 'GET /releases/:name/manifest', async (req, res) => {
   setRequestOperation(req, 'helm.release.manifest');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-    azureLogin: req.userSession.azureLogin,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = ['get', 'manifest', req.params.name, ...(await helmFlags(req, true))];
   const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   res.json({ manifest: stdout });
 }));
 
 helmRouter.post('/releases/:name/rollback', withRouteErrorLogging('helm', 'POST /releases/:name/rollback', async (req, res) => {
   setRequestOperation(req, 'helm.release.rollback');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
   const body = z.object({ revision: z.number().int().positive() }).safeParse(req.body);
   if (!body.success) throw badRequest('revision (positive integer) is required');
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
   const args = [
     'rollback',
     req.params.name,
@@ -246,7 +149,7 @@ helmRouter.post('/releases/:name/rollback', withRouteErrorLogging('helm', 'POST 
     ...(await helmFlags(req, true)),
   ];
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   if (result.code !== 0) throw badRequest('Helm rollback failed', (result.stderr || result.stdout).trim());
   res.json({ ok: true, output: (result.stdout || result.stderr).trim() });
@@ -263,19 +166,8 @@ helmRouter.post('/releases', withRouteErrorLogging('helm', 'POST /releases', asy
   }).safeParse(req.body);
   if (!body.success) throw badRequest('Invalid install request');
 
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
-  });
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
 
   const args = ['install', body.data.releaseName, body.data.chart, '--namespace', body.data.namespace];
   if (body.data.version) args.push('--version', body.data.version);
@@ -283,7 +175,7 @@ helmRouter.post('/releases', withRouteErrorLogging('helm', 'POST /releases', asy
   args.push(...(await helmFlags(req)));
 
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
     input: body.data.values || undefined,
   });
   if (result.code !== 0) throw badRequest('Helm install failed', (result.stderr || result.stdout).trim());
@@ -298,23 +190,15 @@ helmRouter.post('/releases/:name', async (req, res) => {
   }).safeParse(req.body);
   if (!body.success) throw badRequest('Invalid upgrade request');
 
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
+  const scoped = await resolveScopedRequestContext(req, {
+    context: requestedContextFromQuery(req),
+    source: requestedSourceFromQuery(req),
   });
+  await ensureScopedContextAuth(req, scoped);
 
   // Get current release info to find the chart name
   const releaseHistory = await runOrThrow('helm', ['history', req.params.name, '--max', '1', '--output', 'json', ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   const history = JSON.parse(releaseHistory.stdout || '[]');
   if (history.length === 0) throw badRequest('Release not found');
@@ -332,7 +216,7 @@ helmRouter.post('/releases/:name', async (req, res) => {
   args.push(...(await helmFlags(req, true)));
 
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
     input: body.data.values || undefined,
   });
   if (result.code !== 0) throw badRequest('Helm upgrade failed', (result.stderr || result.stdout).trim());
@@ -341,22 +225,14 @@ helmRouter.post('/releases/:name', async (req, res) => {
 
 helmRouter.get('/releases/:name/diff', async (req, res) => {
   setRequestOperation(req, 'helm.release.diff');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
+  const scoped = await resolveScopedRequestContext(req, {
+    context: requestedContextFromQuery(req),
+    source: requestedSourceFromQuery(req),
   });
+  await ensureScopedContextAuth(req, scoped);
 
   const currentManifest = await runOrThrow('helm', ['get', 'manifest', req.params.name, ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
 
   const comparisonRevision = req.query.revision ? String(req.query.revision) : undefined;
@@ -366,7 +242,7 @@ helmRouter.get('/releases/:name/diff', async (req, res) => {
   }
 
   const comparisonManifest = await runOrThrow('helm', ['get', 'manifest', req.params.name, '--revision', comparisonRevision, ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
 
   res.json({ currentManifest: currentManifest.stdout, comparisonManifest: comparisonManifest.stdout });
@@ -384,22 +260,14 @@ helmRouter.get('/charts/:name/values', async (req, res) => {
 
 helmRouter.delete('/releases/:name', async (req, res) => {
   setRequestOperation(req, 'helm.release.uninstall');
-  const requestedContext = (req.query.context as string) || undefined;
-  const requestedSource = (req.query.source as string) || undefined;
-  const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
-  const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
-  await ensureContextAuthReady({
-    context: requestedContext,
-    kubeconfigPath: selectedKubeconfigPath,
-    fallbackContext: req.userSession.activeContext,
-    azureConfigDir: selectedAzureConfigDir,
-    source: selectedScope,
-    userId: req.authUser?.id,
+  const scoped = await resolveScopedRequestContext(req, {
+    context: requestedContextFromQuery(req),
+    source: requestedSourceFromQuery(req),
   });
+  await ensureScopedContextAuth(req, scoped);
   const args = ['uninstall', req.params.name, ...(await helmFlags(req, true))];
   const result = await run('helm', args, {
-    env: sessionEnvForSource(req, selectedScope),
+    env: sessionEnvForSource(req, scoped.selectedScope),
   });
   if (result.code !== 0) throw badRequest('Helm uninstall failed', (result.stderr || result.stdout).trim());
   res.json({ ok: true, output: (result.stdout || result.stderr).trim() });

@@ -11,6 +11,14 @@ interface InformerCacheEntry {
   lastKnownState: Map<string, any>;
 }
 
+type ScopeMode = 'cluster' | 'namespace';
+
+function isForbiddenError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /forbidden/i.test(msg) || /status code\s*403/i.test(msg);
+}
+
 export class Recording {
   private informers: Map<string, InformerCacheEntry> = new Map();
   private flushQueue: any[] = [];
@@ -22,6 +30,8 @@ export class Recording {
   private readonly fallbackContext?: string;
   private readonly retentionMs: number;
   private serverUrl?: string;
+  private informerScopeMode: ScopeMode = 'cluster';
+  private namespaceForScope?: string;
 
   constructor(
     recordingId: string,
@@ -49,6 +59,16 @@ export class Recording {
         fallbackContext: this.fallbackContext,
       });
 
+      this.namespaceForScope = await this.resolveNamespace(kubeConfig);
+      this.informerScopeMode = await this.resolveScopeMode(kubeConfig);
+
+      logInfo('observability.recording.scope_mode', {
+        recordingId: this.recordingId,
+        context: this.context,
+        scopeMode: this.informerScopeMode,
+        namespace: this.namespaceForScope,
+      });
+
       for (const kind of WATCHED_KINDS) {
         await this.startInformer(kubeConfig, kind.id, kind.resourceKind.plural);
       }
@@ -70,7 +90,10 @@ export class Recording {
   }
 
   private async startInformer(kubeConfig: k8s.KubeConfig, kindId: string, plural: string): Promise<void> {
-    const watchPath = resourceWatchPath(plural);
+    const watchPath =
+      this.informerScopeMode === 'namespace' && this.namespaceForScope
+        ? resourceWatchPath(plural, this.namespaceForScope)
+        : resourceWatchPath(plural);
     const resourceKind = WATCHED_KINDS.find((k) => k.id === kindId)?.resourceKind;
 
     const listFn = async (): Promise<any> => {
@@ -82,17 +105,29 @@ export class Recording {
         let result: any;
         if (resourceKind.apiVersion === 'v1') {
           const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
-          const methodName = `list${resourceKind.kind}ForAllNamespaces`;
+          const methodName =
+            this.informerScopeMode === 'namespace'
+              ? `listNamespaced${resourceKind.kind}`
+              : `list${resourceKind.kind}ForAllNamespaces`;
           const method = (coreApi as any)[methodName];
           if (typeof method === 'function') {
-            result = await method.call(coreApi);
+            result =
+              this.informerScopeMode === 'namespace' && this.namespaceForScope
+                ? await method.call(coreApi, this.namespaceForScope)
+                : await method.call(coreApi);
           }
         } else if (resourceKind.apiVersion === 'apps/v1') {
           const appsApi = kubeConfig.makeApiClient(k8s.AppsV1Api);
-          const methodName = `list${resourceKind.kind}ForAllNamespaces`;
+          const methodName =
+            this.informerScopeMode === 'namespace'
+              ? `listNamespaced${resourceKind.kind}`
+              : `list${resourceKind.kind}ForAllNamespaces`;
           const method = (appsApi as any)[methodName];
           if (typeof method === 'function') {
-            result = await method.call(appsApi);
+            result =
+              this.informerScopeMode === 'namespace' && this.namespaceForScope
+                ? await method.call(appsApi, this.namespaceForScope)
+                : await method.call(appsApi);
           }
         }
 
@@ -178,6 +213,7 @@ export class Recording {
         recordingId: this.recordingId,
         context: this.context,
         kind: kindId,
+        scopeMode: this.informerScopeMode,
         error: err instanceof Error ? err.message : String(err),
       });
     });
@@ -187,12 +223,18 @@ export class Recording {
   }
 
   private async startEventInformer(kubeConfig: k8s.KubeConfig): Promise<void> {
-    const watchPath = resourceWatchPath('events');
+    const watchPath =
+      this.informerScopeMode === 'namespace' && this.namespaceForScope
+        ? resourceWatchPath('events', this.namespaceForScope)
+        : resourceWatchPath('events');
 
     const listFn = async (): Promise<any> => {
       try {
         const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
-        const result = await coreApi.listEventForAllNamespaces();
+        const result =
+          this.informerScopeMode === 'namespace' && this.namespaceForScope
+            ? await coreApi.listNamespacedEvent(this.namespaceForScope)
+            : await coreApi.listEventForAllNamespaces();
         const body = (result && typeof result === 'object' && 'body' in result) ? result.body : result;
         return { response: { statusCode: 200 } as any, body: body || { items: [] } };
       } catch (err) {
@@ -221,12 +263,46 @@ export class Recording {
       logError('observability.event_informer.error', {
         recordingId: this.recordingId,
         context: this.context,
+        scopeMode: this.informerScopeMode,
         error: err instanceof Error ? err.message : String(err),
       });
     });
 
     await informer.start();
     this.informers.set('events', { informer, lastKnownState: new Map() });
+  }
+
+  private async resolveNamespace(kubeConfig: k8s.KubeConfig): Promise<string | undefined> {
+    try {
+      const current = kubeConfig.getCurrentContext();
+      const ctx = kubeConfig.getContexts().find((c) => c.name === current);
+      if (ctx?.namespace) return ctx.namespace;
+    } catch {
+      // Ignore and continue with default fallback.
+    }
+    return 'default';
+  }
+
+  private async resolveScopeMode(kubeConfig: k8s.KubeConfig): Promise<ScopeMode> {
+    const namespace = this.namespaceForScope;
+    if (!namespace) return 'cluster';
+
+    try {
+      const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
+      await coreApi.listPodForAllNamespaces(undefined, undefined, undefined, undefined, 1);
+      return 'cluster';
+    } catch (err) {
+      if (!isForbiddenError(err)) {
+        throw err;
+      }
+      logWarn('observability.recording.cluster_scope_forbidden', {
+        recordingId: this.recordingId,
+        context: this.context,
+        namespace,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return 'namespace';
+    }
   }
 
   private queueChanges(changes: any[]): void {

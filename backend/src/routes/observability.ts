@@ -1,34 +1,19 @@
 import { Router } from 'express';
-import { getChangeEventStore } from '../observability/store.js';
-import { RecordingLifecycle } from '../observability/lifecycle.js';
-import { correlateEvents } from '../observability/correlate.js';
-import { activeSessionKubeconfigPath, activeSessionAzureConfigDir, resolveSessionScopeForContext } from '../auth/session.js';
-import { ensureContextAuthReady } from '../kube/authGuard.js';
-import { badRequest, notFound } from '../util/httpError.js';
+import { badRequest } from '../util/httpError.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { logInfo, logError } from '../util/logger.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
+import { observabilityService } from '../services/observabilityService.js';
+import { ensureScopedContextAuth, resolveScopedRequestContext } from './requestContext.js';
+import type { RecordingLifecycle } from '../observability/lifecycle.js';
 
 export const observabilityRouter = Router();
-
-let lifecycle: RecordingLifecycle | null = null;
-
-function initLifecycle(): RecordingLifecycle {
-  if (!lifecycle) {
-    lifecycle = new RecordingLifecycle(getChangeEventStore());
-  }
-  return lifecycle;
-}
-
-function isObservabilityAvailable(): boolean {
-  return true;
-}
 
 // GET /api/observability/status — check availability (never throws)
 observabilityRouter.get('/status', withRouteErrorLogging('observability', 'GET /status', async (req, res) => {
   setRequestOperation(req, 'observability.status');
 
-  const available = isObservabilityAvailable();
+  const available = observabilityService.isAvailable();
 
   if (!available) {
     return res.json({
@@ -41,8 +26,7 @@ observabilityRouter.get('/status', withRouteErrorLogging('observability', 'GET /
   try {
     const context = req.query.context as string | undefined;
     const userId = req.authUser?.id;
-    const lifecycle_ = initLifecycle();
-    const status = await lifecycle_.getStatus(context, userId);
+    const status = await observabilityService.getStatus(context, userId);
 
     res.json({
       available: true,
@@ -63,7 +47,7 @@ observabilityRouter.get('/status', withRouteErrorLogging('observability', 'GET /
 observabilityRouter.post('/recordings/start', withRouteErrorLogging('observability', 'POST /recordings/start', async (req, res) => {
   setRequestOperation(req, 'observability.recordings.start');
 
-  if (!isObservabilityAvailable()) {
+  if (!observabilityService.isAvailable()) {
     return res.status(503).json({
       error: 'OBSERVABILITY_UNAVAILABLE',
       reason: 'desktop-mode',
@@ -72,24 +56,21 @@ observabilityRouter.post('/recordings/start', withRouteErrorLogging('observabili
 
   const { context } = req.body || {};
   const session = req.userSession;
-  const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const userId = req.authUser?.id;
 
   if (!context) throw badRequest('context is required');
   if (!userId) throw badRequest('user not authenticated');
 
   try {
-    await ensureContextAuthReady({
-      context,
-      kubeconfigPath,
-      fallbackContext: session.activeContext,
-      azureConfigDir,
-      userId,
-    });
+    const scoped = await resolveScopedRequestContext(req, { context });
+    await ensureScopedContextAuth(req, scoped);
 
-    const lifecycle_ = initLifecycle();
-    const result = await lifecycle_.startRecording(context, userId, kubeconfigPath, session.activeContext ?? undefined);
+    const result = await observabilityService.startRecording(
+      context,
+      userId,
+      scoped.selectedKubeconfigPath,
+      session.activeContext ?? undefined,
+    );
 
     res.json(result);
   } catch (err) {
@@ -105,7 +86,7 @@ observabilityRouter.post('/recordings/start', withRouteErrorLogging('observabili
 observabilityRouter.post('/recordings/stop', withRouteErrorLogging('observability', 'POST /recordings/stop', async (req, res) => {
   setRequestOperation(req, 'observability.recordings.stop');
 
-  if (!isObservabilityAvailable()) {
+  if (!observabilityService.isAvailable()) {
     return res.status(503).json({
       error: 'OBSERVABILITY_UNAVAILABLE',
       reason: 'desktop-mode',
@@ -119,8 +100,7 @@ observabilityRouter.post('/recordings/stop', withRouteErrorLogging('observabilit
   if (!userId) throw badRequest('user not authenticated');
 
   try {
-    const lifecycle_ = initLifecycle();
-    await lifecycle_.stopRecording(context, userId, serverUrl);
+    await observabilityService.stopRecording(context, userId, serverUrl);
     res.json({ status: 'stopped', context, userId });
   } catch (err) {
     logError('observability.recording.stop_failed', {
@@ -136,7 +116,7 @@ observabilityRouter.post('/recordings/stop', withRouteErrorLogging('observabilit
 observabilityRouter.get('/events', withRouteErrorLogging('observability', 'GET /events', async (req, res) => {
   setRequestOperation(req, 'observability.events');
 
-  if (!isObservabilityAvailable()) {
+  if (!observabilityService.isAvailable()) {
     return res.status(503).json({
       error: 'OBSERVABILITY_UNAVAILABLE',
       reason: 'desktop-mode',
@@ -150,8 +130,7 @@ observabilityRouter.get('/events', withRouteErrorLogging('observability', 'GET /
   if (!context) throw badRequest('context is required');
 
   try {
-    const store = getChangeEventStore();
-    const events = await store.queryEvents(context, from, to, {
+    const events = await observabilityService.queryEvents(context, from, to, {
       namespace: req.query.namespace as string | undefined,
       category: req.query.category as string | undefined,
       severity: req.query.severity as string | undefined,
@@ -171,7 +150,7 @@ observabilityRouter.get('/events', withRouteErrorLogging('observability', 'GET /
 observabilityRouter.get('/state-at', withRouteErrorLogging('observability', 'GET /state-at', async (req, res) => {
   setRequestOperation(req, 'observability.state_at');
 
-  if (!isObservabilityAvailable()) {
+  if (!observabilityService.isAvailable()) {
     return res.status(503).json({
       error: 'OBSERVABILITY_UNAVAILABLE',
       reason: 'desktop-mode',
@@ -184,8 +163,7 @@ observabilityRouter.get('/state-at', withRouteErrorLogging('observability', 'GET
   if (!context) throw badRequest('context is required');
 
   try {
-    const store = getChangeEventStore();
-    const state = await store.queryStateAt(context, timestamp, req.query.namespace as string | undefined);
+    const state = await observabilityService.queryStateAt(context, timestamp, req.query.namespace as string | undefined);
 
     res.json(state);
   } catch (err) {
@@ -201,7 +179,7 @@ observabilityRouter.get('/state-at', withRouteErrorLogging('observability', 'GET
 observabilityRouter.get('/correlation', withRouteErrorLogging('observability', 'GET /correlation', async (req, res) => {
   setRequestOperation(req, 'observability.correlation');
 
-  if (!isObservabilityAvailable()) {
+  if (!observabilityService.isAvailable()) {
     return res.status(503).json({
       error: 'OBSERVABILITY_UNAVAILABLE',
       reason: 'desktop-mode',
@@ -215,9 +193,7 @@ observabilityRouter.get('/correlation', withRouteErrorLogging('observability', '
   if (!context) throw badRequest('context is required');
 
   try {
-    const store = getChangeEventStore();
-    const events = await store.queryEvents(context, from, to);
-    const correlated = correlateEvents(events);
+    const correlated = await observabilityService.correlate(context, from, to);
 
     res.json(correlated);
   } catch (err) {
@@ -230,5 +206,5 @@ observabilityRouter.get('/correlation', withRouteErrorLogging('observability', '
 }));
 
 export function getRecordingLifecycle(): RecordingLifecycle | null {
-  return lifecycle;
+  return observabilityService.getLifecycleInstance();
 }
