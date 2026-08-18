@@ -1,6 +1,6 @@
 # K8 Explorer
 
-K8 Explorer is an open-source Kubernetes operations tool that combines a web UI, a Node.js backend, and a Windows desktop shell into one workspace. It is designed for browsing cluster state, inspecting workloads, managing Helm releases, and working with Azure and AWS-backed Kubernetes contexts from a single interface.
+K8 Explorer is an open-source Kubernetes Desktop operations tool that combines a web UI, a Node.js backend, and a Windows desktop shell into one workspace. It is designed for browsing cluster state, inspecting workloads, managing Helm releases, and working with Azure and AWS-backed Kubernetes contexts from a single interface.
 
 ## Features
 
