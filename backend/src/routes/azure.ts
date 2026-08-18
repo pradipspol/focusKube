@@ -37,6 +37,11 @@ const azureAccountCaches = new Map<string, AsyncRefreshCache<{ account: unknown 
 const azureAccountsCaches = new Map<string, AsyncRefreshCache<{ accounts: AzureAccountGroup[] }>>();
 const azureSubscriptionsCaches = new Map<string, AsyncRefreshCache<{ subscriptions: unknown[] }>>();
 const azureAksCaches = new Map<string, AsyncRefreshCache<{ clusters: unknown[] }>>();
+// `az aks get-credentials --file <path>` doesn't lock the target kubeconfig file,
+// so two concurrent imports of the same cluster (e.g. a double-click) can race and
+// leave a duplicated context entry behind. Join concurrent identical requests onto
+// one in-flight import instead of letting them both run.
+const aksCredentialsInflight = new Map<string, Promise<{ contexts: Awaited<ReturnType<typeof kube.getContexts>>; activeContext: string | null | undefined }>>();
 
 type SubscriptionSummary = {
   id: string;
@@ -271,7 +276,7 @@ azureRouter.post('/accounts/disconnect', withRouteErrorLogging('azure', 'POST /a
   const activeRemoved = !!req.userSession.activeContext && contextNames.has(req.userSession.activeContext);
   await removeContextsFromKubeconfigFile(req.userSession.cloudKubeconfigPath, contextNames);
   if (activeRemoved) req.userSession.activeContext = null;
-  await deleteDesktopContextSourcesForNames(userId, contextNames);
+  await deleteDesktopContextSourcesForNames(userId, 'azure', contextNames);
   invalidateContextsCache(req);
   invalidateAzureSessionCaches(req);
   res.json({ ok: true, removed: Array.from(contextNames) });
@@ -327,47 +332,64 @@ azureRouter.post('/aks/credentials', async (req, res) => {
   const userId = req.authUser?.id;
   if (!userId) throw badRequest('Authentication required');
 
-  const before = new Set(
-    (await kube.getContexts(req.userSession.cloudKubeconfigPath, req.userSession.activeContext)).map((ctx) => ctx.name),
-  );
+  const kubeconfigPath = kubeconfigPathForSource(req.userSession, source);
+  const inflightKey = [userId, kubeconfigPath, body.data.resourceGroup, body.data.name, !!body.data.admin].join('::');
+  const existingImport = aksCredentialsInflight.get(inflightKey);
+  const importPromise =
+    existingImport ??
+    (async () => {
+      const before = new Set(
+        (await kube.getContexts(req.userSession.cloudKubeconfigPath, req.userSession.activeContext)).map((ctx) => ctx.name),
+      );
 
-  const subscriptions = (await azListSubscriptions({ env: envForSource(req, source) })) as SubscriptionSummary[];
-  const selectedSubscription = body.data.subscription
-    ? subscriptions.find((sub) => sub.id === body.data.subscription)
-    : subscriptions.find((sub) => sub.isDefault) ?? subscriptions[0];
+      const subscriptions = (await azListSubscriptions({ env: envForSource(req, source) })) as SubscriptionSummary[];
+      const selectedSubscription = body.data.subscription
+        ? subscriptions.find((sub) => sub.id === body.data.subscription)
+        : subscriptions.find((sub) => sub.isDefault) ?? subscriptions[0];
 
-  await azGetAksCredentials({
-    ...body.data,
-    kubeconfigPath: kubeconfigPathForSource(req.userSession, source),
-    env: envForSource(req, source),
-  });
-
-  invalidateAzureSessionCaches(req);
-  kube.invalidateLoadConfigCache(req.userSession.cloudKubeconfigPath);
-
-  const contexts = await kube.getContexts(req.userSession.cloudKubeconfigPath, req.userSession.activeContext);
-  const imported = contexts.filter((ctx) => !before.has(ctx.name));
-  const contextCandidates = contexts.filter((ctx) => {
-    const match = /^cluster(?:User|Admin)_(.+?)_(.+)$/.exec(ctx.user ?? '');
-    if (!match) return false;
-    return match[1] === body.data.resourceGroup && match[2] === body.data.name;
-  });
-  const contextsToTag = contextCandidates.length > 0 ? contextCandidates : imported;
-  const activeContext =
-    contextsToTag.find((ctx) => ctx.name === body.data.name)?.name ?? contextsToTag[0]?.name ?? req.userSession.activeContext;
-
-  if (contextsToTag.length > 0) {
-    for (const ctx of contextsToTag) {
-      await upsertDesktopContextSource(userId, {
-        contextName: ctx.name,
-        source: 'aks',
-        subscriptionId: selectedSubscription?.id,
-        subscriptionName: selectedSubscription?.name,
-        resourceGroup: body.data.resourceGroup,
-        clusterName: body.data.name,
+      await azGetAksCredentials({
+        ...body.data,
+        kubeconfigPath,
+        env: envForSource(req, source),
       });
-    }
+
+      invalidateAzureSessionCaches(req);
+      kube.invalidateLoadConfigCache(req.userSession.cloudKubeconfigPath);
+
+      const contexts = await kube.getContexts(req.userSession.cloudKubeconfigPath, req.userSession.activeContext);
+      const imported = contexts.filter((ctx) => !before.has(ctx.name));
+      const contextCandidates = contexts.filter((ctx) => {
+        const match = /^cluster(?:User|Admin)_(.+?)_(.+)$/.exec(ctx.user ?? '');
+        if (!match) return false;
+        return match[1] === body.data.resourceGroup && match[2] === body.data.name;
+      });
+      const contextsToTag = contextCandidates.length > 0 ? contextCandidates : imported;
+      const activeContext =
+        contextsToTag.find((ctx) => ctx.name === body.data.name)?.name ?? contextsToTag[0]?.name ?? req.userSession.activeContext;
+
+      if (contextsToTag.length > 0) {
+        for (const ctx of contextsToTag) {
+          await upsertDesktopContextSource(userId, {
+            contextName: ctx.name,
+            scope: 'azure',
+            source: 'aks',
+            subscriptionId: selectedSubscription?.id,
+            subscriptionName: selectedSubscription?.name,
+            resourceGroup: body.data.resourceGroup,
+            clusterName: body.data.name,
+          });
+        }
+      }
+
+      return { contexts, activeContext };
+    })();
+
+  if (!existingImport) {
+    aksCredentialsInflight.set(inflightKey, importPromise);
+    importPromise.finally(() => aksCredentialsInflight.delete(inflightKey));
   }
+
+  const { contexts, activeContext } = await importPromise;
 
   if (activeContext) {
     req.userSession.activeContext = activeContext;

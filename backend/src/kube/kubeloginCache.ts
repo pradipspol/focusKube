@@ -166,97 +166,73 @@ async function fetchAndCacheKubeloginTokenInternal(
     await fsp.copyFile(kubeconfigPath, tempConfigPath);
     logInfo('kubelogin.fetch.copy_complete', { tempConfigPath });
 
-    // Run kubelogin to update the kubeconfig with the token
-    logInfo('kubelogin.fetch.exec_start', { context, tempConfigPath, args: execArgs });
-    const result = await run('kubelogin', execArgs, {
-      env: {
-        KUBECONFIG: tempConfigPath,
-        AZURE_CONFIG_DIR: azureConfigDir,
-      },
-      timeoutMs: 30_000, // 30 second timeout for kubelogin
-    });
+    try {
+      // Run kubelogin to update the kubeconfig with the token
+      logInfo('kubelogin.fetch.exec_start', { context, tempConfigPath, args: execArgs });
+      const result = await run('kubelogin', execArgs, {
+        env: {
+          KUBECONFIG: tempConfigPath,
+          AZURE_CONFIG_DIR: azureConfigDir,
+        },
+        timeoutMs: 30_000, // 30 second timeout for kubelogin
+      });
 
-    // const result1 = await run('kubelogin', ['convert-kubeconfig', '-l', 'devicecode'], {
-    //   env: {
-    //     KUBECONFIG: tempConfigPath,
-    //     AZURE_CONFIG_DIR: azureConfigDir,
-    //   },
-    //   timeoutMs: 30_000, // 30 second timeout for kubelogin
-    // });
-
-    logInfo('kubelogin.fetch.exec_complete', {
-      context,
-      code: result.code,
-      stdoutLen: result.stdout.length,
-      stderrLen: result.stderr.length,
-    });
-
-    if (result.code !== 0) {
-      logError('kubelogin.fetch.exec_failed', {
+      logInfo('kubelogin.fetch.exec_complete', {
         context,
         code: result.code,
-        stderr: result.stderr.slice(0, 500), // First 500 chars
-        stdout: result.stdout.slice(0, 500),
+        stdoutLen: result.stdout.length,
+        stderrLen: result.stderr.length,
       });
-      return null;
-    }
 
-    // write token to temp tempConfigPath file
-    const response = result.stdout.toString().trim();
-    const js = JSON.parse(response); // Ensure it's valid JSON
-    const token = js?.status?.token;
-    const expiresIn = js?.status?.expirationTimestamp;
-    logInfo('kubelogin.fetch.token_extracted', { context, hasToken: !!token, expiresIn });
-    // Read the updated kubeconfig to extract the token
-    // logInfo('kubelogin.fetch.parse_start', { tempConfigPath });
-    // const kc = new k8s.KubeConfig();
-    // const configContent = await fsp.readFile(tempConfigPath, 'utf8');
-    // kc.loadFromString(configContent);
-    // logInfo('kubelogin.fetch.parse_complete', { contexts: kc.contexts.length, users: kc.users.length });
+      if (result.code !== 0) {
+        logError('kubelogin.fetch.exec_failed', {
+          context,
+          code: result.code,
+          stderr: result.stderr.slice(0, 500), // First 500 chars
+          stdout: result.stdout.slice(0, 500),
+        });
+        return null;
+      }
 
-    // // Get the user for this context
-    // const currentContext = kc.contexts.find((c) => c.name === context);
-    // if (!currentContext) {
-    //   logError('kubelogin.fetch.context_not_found', { context, availableContexts: kc.contexts.map((c) => c.name) });
-    //   return null;
-    // }
+      // write token to temp tempConfigPath file
+      const response = result.stdout.toString().trim();
+      const js = JSON.parse(response); // Ensure it's valid JSON
+      const token = js?.status?.token;
+      const expiresIn = js?.status?.expirationTimestamp;
+      logInfo('kubelogin.fetch.token_extracted', { context, hasToken: !!token, expiresIn });
 
-    // logInfo('kubelogin.fetch.context_found', { context, userName: currentContext.user });
+      if (!token) {
+        logError('kubelogin.fetch.no_token', {
+          context,
+        });
+        return null;
+      }
 
-    // const user = kc.users.find((u) => u.name === currentContext.user);
-    // const token = user?.token;
-
-    // logInfo('kubelogin.fetch.token_check', { context, hasToken: !!token });
-
-    if (!token) {
-      logError('kubelogin.fetch.no_token', {
+      // Cache the token with a 1-hour expiry
+      const cacheFile = path.join(azureConfigDir, '.kube', `token`);
+      const entry: KubeloginCacheEntry = {
+        token,
+        expiresAt: Date.parse(expiresIn), // Convert expirationTimestamp to a timestamp in milliseconds
         context,
-      });
-      return null;
+      };
+
+      logInfo('kubelogin.fetch.write_cache_start', { cacheFile });
+      await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
+      await fsp.writeFile(cacheFile, JSON.stringify(entry, null, 2));
+      logInfo('kubelogin.fetch.write_cache_complete', { cacheFile, expiresAt: entry.expiresAt });
+
+      logInfo('kubelogin.fetch.success', { context });
+      return token;
+    } finally {
+      // Always clean up the temp config, regardless of how the attempt ended,
+      // so failed/timed-out kubelogin runs don't leak files into azureConfigDir.
+      try {
+        await fsp.unlink(tempConfigPath);
+        logInfo('kubelogin.fetch.cleanup_complete', { tempConfigPath });
+      } catch (cleanupErr) {
+        logError('kubelogin.fetch.cleanup_failed', { tempConfigPath, error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
+      }
     }
-
-    // Cache the token with a 1-hour expiry
-    const cacheFile = path.join(azureConfigDir, '.kube', `token`);
-    const entry: KubeloginCacheEntry = {
-      token,
-      expiresAt: Date.parse(expiresIn), // Convert expirationTimestamp to a timestamp in milliseconds
-      context,
-    };
-
-    logInfo('kubelogin.fetch.write_cache_start', { cacheFile });
-    await fsp.writeFile(cacheFile, JSON.stringify(entry, null, 2));
-    logInfo('kubelogin.fetch.write_cache_complete', { cacheFile, expiresAt: entry.expiresAt });
-
-    // Clean up temp config
-    try {
-      await fsp.unlink(tempConfigPath);
-      logInfo('kubelogin.fetch.cleanup_complete', { tempConfigPath });
-    } catch (cleanupErr) {
-      logError('kubelogin.fetch.cleanup_failed', { tempConfigPath, error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
-    }
-
-    logInfo('kubelogin.fetch.success', { context });
-    return token;
   } catch (err) {
     logError('kubelogin.fetch.error', {
       context,

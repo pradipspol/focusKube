@@ -100,13 +100,25 @@ class KubeManager {
     const selected =
       activeContext !== undefined ? activeContext || undefined : await this.defaultContext(kc);
 
-    return kc.getContexts().map((ctx) => ({
-      name: ctx.name,
-      cluster: ctx.cluster,
-      user: ctx.user,
-      namespace: ctx.namespace,
-      active: !!selected && ctx.name === selected,
-    }));
+    // A context `name` is the unique key for a context within a single kubeconfig
+    // file per the kubeconfig spec, so two entries sharing one here are always a
+    // data-integrity bug (e.g. a race between concurrent `az aks get-credentials`
+    // writes), never a legitimate distinct context. Keep the first occurrence.
+    const seen = new Set<string>();
+    return kc
+      .getContexts()
+      .filter((ctx) => {
+        if (seen.has(ctx.name)) return false;
+        seen.add(ctx.name);
+        return true;
+      })
+      .map((ctx) => ({
+        name: ctx.name,
+        cluster: ctx.cluster,
+        user: ctx.user,
+        namespace: ctx.namespace,
+        active: !!selected && ctx.name === selected,
+      }));
   }
 
   async isContextConnected(contextName: string, kubeconfigPath?: string): Promise<boolean> {

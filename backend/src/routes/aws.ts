@@ -217,6 +217,7 @@ awsRouter.post('/eks/credentials', withRouteErrorLogging('aws', 'POST /eks/crede
     for (const ctx of contextsToTag) {
       await upsertDesktopContextSource(userId, {
         contextName: ctx.name,
+        scope: 'aws',
         source: 'eks',
         accountId: accountIdentity?.account,
         region: body.data.region,

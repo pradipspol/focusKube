@@ -89,10 +89,14 @@ async function listLocalKubeconfigsForUser(userKey: string) {
   }));
 }
 
-async function removeContextSourcesForNames(userKey: string, names: Iterable<string>): Promise<void> {
+async function removeContextSourcesForNames(
+  userKey: string,
+  scope: SessionScope,
+  names: Iterable<string>,
+): Promise<void> {
   const contextNames = Array.from(new Set(Array.from(names).filter((name) => !!name)));
   if (contextNames.length === 0) return;
-  await deleteDesktopContextSourcesForNames(userKey, contextNames);
+  await deleteDesktopContextSourcesForNames(userKey, scope, contextNames);
 }
 
 async function contextsPayload(req: any, options: { skipConnectivity?: boolean } = {}) {
@@ -132,9 +136,15 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
 
   const names = contexts.map((ctx) => ctx.name);
 
+  // Keyed by (scope, name): a context name is only unique within one kubeconfig
+  // file, so the same name in two different scopes must not share source metadata
+  // (e.g. an unrelated local context must not inherit another cluster's AKS tag
+  // just because it happens to have the same name as one imported via Azure).
+  const entryKeys = new Set(entries.map((entry) => `${entry.scope}::${entry.ctx.name}`));
+
   const sourcesStartedHr = process.hrtime.bigint();
   const sourceDocs = names.length
-    ? (await listDesktopContextSources(userKey)).filter((doc) => names.includes(doc.contextName))
+    ? (await listDesktopContextSources(userKey)).filter((doc) => entryKeys.has(`${doc.scope}::${doc.contextName}`))
     : [];
   logInfo('contexts.payload.step', {
     reqId: req.logRequestId ?? null,
@@ -143,7 +153,7 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
     elapsedMs: Number((Number(process.hrtime.bigint() - sourcesStartedHr) / 1_000_000).toFixed(1)),
   });
 
-  const sourceByContext = new Map(sourceDocs.map((doc) => [doc.contextName, doc]));
+  const sourceByContext = new Map(sourceDocs.map((doc) => [`${doc.scope}::${doc.contextName}`, doc]));
 
   const connectivityStartedHr = process.hrtime.bigint();
   const connectivity = skipConnectivity
@@ -176,41 +186,44 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
 
   return {
     active: req.userSession.activeContext ?? undefined,
-    contexts: entries.map(({ ctx, scope }) => ({
-      ...ctx,
-      connected: connectedByName.get(ctx.name) ?? false,
-      source: sourceByContext.get(ctx.name)
-        ? sourceByContext.get(ctx.name)?.source === 'eks'
-          ? {
-              provider: 'eks' as const,
-              accountId: sourceByContext.get(ctx.name)?.accountId,
-              region: sourceByContext.get(ctx.name)?.region,
-              clusterName: sourceByContext.get(ctx.name)?.clusterName,
-            }
-          : {
-              provider: 'aks' as const,
-              subscriptionId: sourceByContext.get(ctx.name)?.subscriptionId,
-              subscriptionName: sourceByContext.get(ctx.name)?.subscriptionName,
-              resourceGroup: sourceByContext.get(ctx.name)?.resourceGroup,
-              clusterName: sourceByContext.get(ctx.name)?.clusterName,
-            }
-        : scope === 'local'
-          ? { provider: 'local' as const }
-          : scope === 'aws'
+    contexts: entries.map(({ ctx, scope }) => {
+      const sourceDoc = sourceByContext.get(`${scope}::${ctx.name}`);
+      return {
+        ...ctx,
+        connected: connectedByName.get(ctx.name) ?? false,
+        source: sourceDoc
+          ? sourceDoc.source === 'eks'
             ? {
                 provider: 'eks' as const,
-                // `aws eks update-kubeconfig --alias <name>` writes context names that
-                // match the cluster name in this app; when explicit source docs are
-                // missing, infer clusterName from context name so the sidebar can match.
-                clusterName: ctx.name,
+                accountId: sourceDoc.accountId,
+                region: sourceDoc.region,
+                clusterName: sourceDoc.clusterName,
               }
-            : scope === 'azure'
+            : {
+                provider: 'aks' as const,
+                subscriptionId: sourceDoc.subscriptionId,
+                subscriptionName: sourceDoc.subscriptionName,
+                resourceGroup: sourceDoc.resourceGroup,
+                clusterName: sourceDoc.clusterName,
+              }
+          : scope === 'local'
+            ? { provider: 'local' as const }
+            : scope === 'aws'
               ? {
-                  provider: 'aks' as const,
+                  provider: 'eks' as const,
+                  // `aws eks update-kubeconfig --alias <name>` writes context names that
+                  // match the cluster name in this app; when explicit source docs are
+                  // missing, infer clusterName from context name so the sidebar can match.
                   clusterName: ctx.name,
                 }
-              : undefined,
-    })),
+              : scope === 'azure'
+                ? {
+                    provider: 'aks' as const,
+                    clusterName: ctx.name,
+                  }
+                : undefined,
+      };
+    }),
     localKubeconfigs,
   };
 }
@@ -444,7 +457,7 @@ contextsRouter.post('/local-kubeconfigs/:id/connect', withRouteErrorLogging('con
 
   // Local kubeconfigs should not inherit stale AKS source tags from a previous
   // imported context with the same name.
-  await removeContextSourcesForNames(userKey, local.contexts);
+  await removeContextSourcesForNames(userKey, 'local', local.contexts);
 
   if (targetContext) {
     logInfo('contexts.connect.step', {
@@ -483,7 +496,7 @@ contextsRouter.delete('/local-kubeconfigs/:id', async (req, res) => {
     const activeRemoved = !!req.userSession.activeContext && names.has(req.userSession.activeContext);
     await removeContextsFromKubeconfigFile(req.userSession.cloudKubeconfigPath, names);
     await removeContextsFromKubeconfigFile(req.userSession.awsKubeconfigPath, names);
-    await removeContextSourcesForNames(userKey, names);
+    await removeContextSourcesForNames(userKey, 'local', names);
     if (activeRemoved) {
       req.userSession.activeContext = null;
       req.userSession.activeContextSource = null;
@@ -521,7 +534,7 @@ contextsRouter.delete('/local-kubeconfigs/:id/contexts/:contextName', async (req
   // so it disappears from the active contexts list (not just the stored file).
   await removeContextsFromKubeconfigFile(req.userSession.cloudKubeconfigPath, new Set([contextName]));
   await removeContextsFromKubeconfigFile(req.userSession.awsKubeconfigPath, new Set([contextName]));
-  await removeContextSourcesForNames(userKey, [contextName]);
+  await removeContextSourcesForNames(userKey, 'local', [contextName]);
 
   if (remaining.length === 0) {
     // Last context removed — drop the whole kubeconfig.

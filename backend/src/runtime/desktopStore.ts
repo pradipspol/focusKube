@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import type { SessionScope } from '../auth/session.js';
 
 export interface DesktopLocalKubeconfigDoc {
   id: string;
@@ -16,6 +17,11 @@ export interface DesktopLocalKubeconfigDoc {
 
 export interface DesktopContextSourceDoc {
   contextName: string;
+  // Which per-scope kubeconfig file this context lives in. Context names are only
+  // unique within a single kubeconfig file, so a name alone is not a safe key: the
+  // same string can name two entirely different clusters in the local vs. the
+  // azure/aws-managed kubeconfig files.
+  scope: SessionScope;
   source: 'aks' | 'eks';
   subscriptionId?: string;
   subscriptionName?: string;
@@ -56,6 +62,13 @@ function contextSourcesFor(userId: string): Map<string, DesktopContextSourceDoc>
   return created;
 }
 
+// Context names are only unique within a single kubeconfig file. Key the store by
+// (scope, name) so a same-named context in a different scope's kubeconfig never
+// shares or overwrites another scope's source metadata.
+function contextSourceKey(scope: SessionScope, contextName: string): string {
+  return `${scope}::${contextName}`;
+}
+
 function stateFilePath(): string {
   return path.join(config.sessionStorageDir, 'desktop-state.json');
 }
@@ -90,8 +103,13 @@ async function ensureLoaded(): Promise<void> {
 
       const sourceMap = contextSourcesFor(userId);
       for (const source of userState.contextSources ?? []) {
-        sourceMap.set(source.contextName, {
+        // Older persisted state predates per-scope keying; back-fill scope from the
+        // provider, since 'aks' docs were always written for the azure scope and
+        // 'eks' docs for the aws scope.
+        const scope: SessionScope = source.scope ?? (source.source === 'eks' ? 'aws' : 'azure');
+        sourceMap.set(contextSourceKey(scope, source.contextName), {
           contextName: source.contextName,
+          scope,
           source: source.source,
           subscriptionId: source.subscriptionId,
           subscriptionName: source.subscriptionName,
@@ -128,6 +146,7 @@ async function persistState(): Promise<void> {
         })),
         contextSources: Array.from(contextSourcesFor(userId).values()).map((doc) => ({
           contextName: doc.contextName,
+          scope: doc.scope,
           source: doc.source,
           subscriptionId: doc.subscriptionId,
           subscriptionName: doc.subscriptionName,
@@ -225,8 +244,9 @@ export async function upsertDesktopContextSource(
   await ensureLoaded();
   const now = new Date();
   const store = contextSourcesFor(userId);
-  const existing = store.get(source.contextName);
-  store.set(source.contextName, {
+  const key = contextSourceKey(source.scope, source.contextName);
+  const existing = store.get(key);
+  store.set(key, {
     ...source,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -234,12 +254,16 @@ export async function upsertDesktopContextSource(
   void persistState();
 }
 
-export async function deleteDesktopContextSourcesForNames(userId: string, names: Iterable<string>): Promise<void> {
+export async function deleteDesktopContextSourcesForNames(
+  userId: string,
+  scope: SessionScope,
+  names: Iterable<string>,
+): Promise<void> {
   await ensureLoaded();
   const store = contextSourcesFor(userId);
   let changed = false;
   for (const name of names) {
-    changed = store.delete(name) || changed;
+    changed = store.delete(contextSourceKey(scope, name)) || changed;
   }
   if (changed) void persistState();
 }

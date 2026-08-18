@@ -41,10 +41,13 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
   // Warm the Azure exec-token cache before any watch/client object is built.
   // This avoids the first watch request falling through to a cold Azure CLI
   // credential path and surfacing a misleading az login error.
+  // Only attempt this once the user has actually signed in to Azure - otherwise
+  // every call before sign-in spawns a doomed kubelogin attempt (and its temp
+  // kubeconfig file) that can never succeed.
   if (options.kubeconfigPath && options.azureConfigDir && options.userId) {
     try {
       const cachedToken = await getCachedKubeloginToken(options.azureConfigDir, context);
-      if (!cachedToken) {
+      if (!cachedToken && (await hasAzureCliLogin(options.azureConfigDir))) {
         await fetchAndCacheKubeloginToken(
           options.azureConfigDir,
           options.kubeconfigPath,

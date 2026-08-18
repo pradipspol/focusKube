@@ -721,6 +721,11 @@ export function SidebarProviderSources({
                                                       const nextExpanded = isGroupCollapsed(clusterNodeKey);
                                                       toggleGroup(clusterNodeKey);
                                                       if (!nextExpanded) return;
+                                                      // Guard against firing a second `az aks get-credentials` while one
+                                                      // is still in flight for this cluster (e.g. a rapid double-click) -
+                                                      // two concurrent writes to the same kubeconfig file can race and
+                                                      // leave a duplicated context entry behind.
+                                                      if (clusterLoading) return;
 
                                                       void (async () => {
                                                         setLoadingImportedContexts((current) => ({
