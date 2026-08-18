@@ -103,13 +103,21 @@ export async function handleObservabilityUpgrade(ws: WebSocket, req: any): Promi
   const context = url.searchParams.get('context');
 
   if (!context) {
+    logError('observability.ws.no_context', {
+      url: req.url,
+    });
     ws.send(JSON.stringify({
       type: 'error',
       error: 'context query parameter is required',
     }));
-    ws.close();
+    ws.close(4000, 'Missing context parameter');
     return;
   }
+
+  logInfo('observability.ws.upgrade', {
+    context,
+    userId: req.authUser?.id,
+  });
 
   startEventWatch(context, ws);
 

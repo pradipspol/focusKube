@@ -15,8 +15,15 @@ type ScopeMode = 'cluster' | 'namespace';
 
 function isForbiddenError(err: unknown): boolean {
   if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
-  return /forbidden/i.test(msg) || /status code\s*403/i.test(msg);
+  const candidate = err as any;
+  const status = candidate.statusCode ?? candidate.status ?? candidate.response?.statusCode ?? candidate.response?.status;
+  if (Number(status) === 403) return true;
+  const body = candidate.body ?? candidate.response?.body;
+  const msg = [
+    err instanceof Error ? err.message : String(err),
+    typeof body === 'string' ? body : JSON.stringify(body ?? ''),
+  ].join(' ');
+  return /forbidden/i.test(msg) || /status(?: code)?\s*[:=]?\s*403/i.test(msg);
 }
 
 export class Recording {
@@ -79,11 +86,15 @@ export class Recording {
         recordingId: this.recordingId,
         context: this.context,
         informerCount: this.informers.size,
+        scopeMode: this.informerScopeMode,
+        namespace: this.namespaceForScope,
       });
     } catch (err) {
       logError('observability.recording.start_failed', {
+        recordingId: this.recordingId,
         context: this.context,
         error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
       });
       throw err;
     }
@@ -145,7 +156,7 @@ export class Recording {
           plural,
           error: err instanceof Error ? err.message : String(err),
         });
-        return { response: { statusCode: 200 } as any, body: { items: [], metadata: {} } as any };
+        throw err;
       }
     };
 
@@ -162,6 +173,11 @@ export class Recording {
 
       const changes = kind.extractChanges(undefined, obj);
       if (changes.length > 0) {
+        logInfo('observability.informer.event_add', {
+          recordingId: this.recordingId,
+          kind: kindId,
+          changeCount: changes.length,
+        });
         this.queueChanges(changes);
       }
       cache.set(uid, obj);
@@ -177,6 +193,11 @@ export class Recording {
       const prev = cache.get(uid);
       const changes = kind.extractChanges(prev, obj);
       if (changes.length > 0) {
+        logInfo('observability.informer.event_update', {
+          recordingId: this.recordingId,
+          kind: kindId,
+          changeCount: changes.length,
+        });
         this.queueChanges(changes);
       }
       cache.set(uid, obj);
@@ -191,6 +212,12 @@ export class Recording {
       const kind = WATCHED_KINDS.find((k) => k.id === kindId)?.resourceKind.kind;
 
       if (kind && name && namespace) {
+        logInfo('observability.informer.event_delete', {
+          recordingId: this.recordingId,
+          kind: kindId,
+          name,
+          namespace,
+        });
         this.queueChanges([
           {
             kind: kind as any,
@@ -220,8 +247,14 @@ export class Recording {
 
     await informer.start();
     this.informers.set(kindId, { informer, lastKnownState: cache });
-  }
 
+    logInfo('observability.informer.started', {
+      recordingId: this.recordingId,
+      context: this.context,
+      kind: kindId,
+      scopeMode: this.informerScopeMode,
+    });
+  }
   private async startEventInformer(kubeConfig: k8s.KubeConfig): Promise<void> {
     const watchPath =
       this.informerScopeMode === 'namespace' && this.namespaceForScope
@@ -243,7 +276,7 @@ export class Recording {
           context: this.context,
           error: err instanceof Error ? err.message : String(err),
         });
-        return { response: { statusCode: 200 } as any, body: { items: [], metadata: {} } as any };
+        throw err;
       }
     };
 
@@ -270,6 +303,12 @@ export class Recording {
 
     await informer.start();
     this.informers.set('events', { informer, lastKnownState: new Map() });
+
+    logInfo('observability.event_informer.started', {
+      recordingId: this.recordingId,
+      context: this.context,
+      scopeMode: this.informerScopeMode,
+    });
   }
 
   private async resolveNamespace(kubeConfig: k8s.KubeConfig): Promise<string | undefined> {
@@ -329,16 +368,27 @@ export class Recording {
     const batch = this.flushQueue.splice(0, this.flushQueue.length);
     this.flushTimer = null;
 
+    logInfo('observability.recording.flush_start', {
+      recordingId: this.recordingId,
+      context: this.context,
+      batchSize: batch.length,
+    });
+
     try {
       for (const change of batch) {
         if (change.isEvent) {
           await this.store.upsertEvent(this.recordingId, change, this.retentionMs, this.context);
-          broadcastObservabilityEvent(this.context, change);
         } else {
           await this.store.insertChanges(this.recordingId, [change], this.retentionMs, this.context);
-          broadcastObservabilityEvent(this.context, change);
         }
+        broadcastObservabilityEvent(this.context, change);
       }
+
+      logInfo('observability.recording.flush_complete', {
+        recordingId: this.recordingId,
+        context: this.context,
+        batchSize: batch.length,
+      });
     } catch (err) {
       logError('observability.recording.flush_failed', {
         recordingId: this.recordingId,

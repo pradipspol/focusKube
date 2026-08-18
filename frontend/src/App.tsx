@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from './api/client';
+import { api, ApiError, setDesktopEmail } from './api/client';
 import type { AzureScope, ContextScope } from './api/client';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
@@ -293,6 +293,9 @@ export default function App() {
     queryFn: async () => {
       try {
         const response = await api.authMe();
+        if (response.user?.email) {
+          setDesktopEmail(response.user.email);
+        }
         return response.user;
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {

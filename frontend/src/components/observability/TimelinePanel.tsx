@@ -43,6 +43,8 @@ export function TimelinePanel({ scope }: Props) {
       }),
     staleTime: Infinity,
     gcTime: Infinity,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   // Subscribe to real-time WebSocket events
@@ -69,30 +71,9 @@ export function TimelinePanel({ scope }: Props) {
     requestStateAt(new Date(ts));
   };
 
-  // Combine historical and live events, deduplicating by uid
+  // Combine historical and live events without removing repeated records.
   const allEvents = useMemo(() => {
-    const seen = new Set<string>();
-    const result: ChangeEventDoc[] = [];
-
-    // Add historical events first
-    for (const event of historicalEvents) {
-      const key = event.uid || event.name;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(event);
-      }
-    }
-
-    // Add live events that aren't already in historical
-    for (const event of liveEvents) {
-      const key = event.uid || event.name;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(event);
-      }
-    }
-
-    return result;
+    return [...historicalEvents, ...liveEvents];
   }, [historicalEvents, liveEvents]);
 
   const ticks = useMemo(() => {

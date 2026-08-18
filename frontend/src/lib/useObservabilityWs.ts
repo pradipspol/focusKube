@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { wsUrl } from '../api/client';
 
 interface SubscriptionMessage {
   type: 'subscribe' | 'unsubscribe' | 'state-at';
@@ -20,6 +21,8 @@ type ContextSocketClient = {
   handlers: Set<MessageHandler>;
   refCount: number;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
+  disconnectTimer: ReturnType<typeof setTimeout> | null;
+  pendingMessages: SubscriptionMessage[];
   reconnectAttempt: number;
   shouldReconnect: boolean;
   connect: () => void;
@@ -39,6 +42,8 @@ function createClient(context: string): ContextSocketClient {
     handlers: new Set(),
     refCount: 0,
     reconnectTimer: null,
+    disconnectTimer: null,
+    pendingMessages: [],
     reconnectAttempt: 0,
     shouldReconnect: false,
     connect: () => {
@@ -51,13 +56,15 @@ function createClient(context: string): ContextSocketClient {
       }
 
       try {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/observability?context=${encodeURIComponent(context)}`;
-        const ws = new WebSocket(wsUrl);
+        const url = wsUrl('/ws/observability', { context });
+        console.log('[ObservabilityWs] Connecting to', { context, url });
+        const ws = new WebSocket(url);
 
         ws.onopen = () => {
           client.reconnectAttempt = 0;
           console.log('[ObservabilityWs] Connected to', context);
+          const pending = client.pendingMessages.splice(0);
+          pending.forEach((message) => ws.send(JSON.stringify(message)));
         };
 
         ws.onmessage = (event) => {
@@ -108,9 +115,15 @@ function createClient(context: string): ContextSocketClient {
         client.ws.close();
         client.ws = null;
       }
+      client.pendingMessages = [];
     },
     send: (message: SubscriptionMessage) => {
       if (!client.ws || client.ws.readyState !== WebSocket.OPEN) {
+        if (client.shouldReconnect) {
+          client.pendingMessages.push(message);
+          client.connect();
+          return;
+        }
         console.warn('[ObservabilityWs] Not connected, cannot send message', message.type);
         return;
       }
@@ -132,6 +145,10 @@ function acquireClient(context: string): ContextSocketClient {
   }
   client.refCount += 1;
   client.shouldReconnect = true;
+  if (client.disconnectTimer) {
+    clearTimeout(client.disconnectTimer);
+    client.disconnectTimer = null;
+  }
   client.connect();
   return client;
 }
@@ -139,8 +156,15 @@ function acquireClient(context: string): ContextSocketClient {
 function releaseClient(client: ContextSocketClient): void {
   client.refCount = Math.max(0, client.refCount - 1);
   if (client.refCount > 0) return;
-  client.disconnect();
-  clientsByContext.delete(client.context);
+  // React Strict Mode briefly releases and reacquires effects during its
+  // development probe. Keep the connecting socket alive across that cycle.
+  client.disconnectTimer = setTimeout(() => {
+    client.disconnectTimer = null;
+    if (client.refCount === 0) {
+      client.disconnect();
+      clientsByContext.delete(client.context);
+    }
+  }, 100);
 }
 
 export function useObservabilityWs(context?: string) {

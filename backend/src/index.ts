@@ -168,9 +168,13 @@ app.use((err: unknown, req: express.Request, res: express.Response, _next: expre
 const server = http.createServer(app);
 
 server.on('upgrade', (req, socket, head) => {
-  if (!routeUpgrade(req, socket, head)) {
+  routeUpgrade(req, socket, head).catch((err) => {
+    logError('ws.upgrade.error', {
+      path: req.url,
+      error: err instanceof Error ? err.message : String(err),
+    });
     socket.destroy();
-  }
+  });
 });
 
 async function start(): Promise<void> {

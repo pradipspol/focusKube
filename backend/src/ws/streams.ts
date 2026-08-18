@@ -22,7 +22,7 @@ const watchWss = new WebSocketServer({ noServer: true });
 const metricsWss = new WebSocketServer({ noServer: true });
 
 /** Decide which WS server should handle an HTTP upgrade based on the path. */
-export function routeUpgrade(req: any, socket: any, head: Buffer): boolean {
+export async function routeUpgrade(req: any, socket: any, head: Buffer): Promise<boolean> {
   const url = new URL(req.url, 'http://localhost');
   const { pathname } = url;
   const upgradeHeaders = {
@@ -30,61 +30,83 @@ export function routeUpgrade(req: any, socket: any, head: Buffer): boolean {
     'x-k8-explorer-email': url.searchParams.get('email') ?? undefined,
   };
 
-  resolveAuthFromHeaders(upgradeHeaders)
-    .then(({ user, state }) => {
-      if (!state || !user) {
-        socket.destroy();
-        return;
-      }
-      req.authUser = user;
-      req.userSession = state;
-      if (pathname === '/ws/logs') {
-        logsWss.handleUpgrade(req, socket, head, (ws) => handleLogs(ws, req));
-        return;
-      }
-      if (pathname === '/ws/exec') {
-        // Exec into a pod is a write-capable action; read-only roles are denied.
-        if (!hasCapability(user.role, 'write')) {
-          socket.destroy();
-          return;
-        }
-        execWss.handleUpgrade(req, socket, head, (ws) => handleExec(ws, req));
-        return;
-      }
-      if (pathname === '/ws/port-forward') {
-        // Port-forward changes access to pod/service ports, so keep it on the write path.
-        if (!hasCapability(user.role, 'write')) {
-          socket.destroy();
-          return;
-        }
-        portForwardWss.handleUpgrade(req, socket, head, (ws) => handlePortForward(ws, req));
-        return;
-      }
-      if (pathname === '/ws/terminal') {
-        if (!hasCapability(user.role, 'write')) {
-          socket.destroy();
-          return;
-        }
-        terminalWss.handleUpgrade(req, socket, head, (ws) => handleTerminal(ws, req));
-        return;
-      }
-      if (pathname === '/ws/watch') {
-        watchWss.handleUpgrade(req, socket, head, (ws) => handleWatch(ws, req));
-        return;
-      }
-      if (pathname === '/ws/metrics') {
-        metricsWss.handleUpgrade(req, socket, head, (ws) => handleMetrics(ws, req));
-        return;
-      }
-      if (pathname === '/ws/observability') {
-        observabilityWss.handleUpgrade(req, socket, head, (ws) => handleObservabilityUpgrade(ws, req));
-        return;
-      }
+  try {
+    const { user, state } = await resolveAuthFromHeaders(upgradeHeaders);
+    if (!state || !user) {
+      logWarn('ws.auth.failed', {
+        pathname,
+        userResolved: !!user,
+        stateResolved: !!state,
+      });
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
-    })
-    .catch(() => socket.destroy());
-
-  return pathname === '/ws/logs' || pathname === '/ws/exec' || pathname === '/ws/port-forward' || pathname === '/ws/terminal' || pathname === '/ws/watch' || pathname === '/ws/metrics' || pathname === '/ws/observability';
+      return true;
+    }
+    req.authUser = user;
+    req.userSession = state;
+    if (pathname === '/ws/logs') {
+      logsWss.handleUpgrade(req, socket, head, (ws) => handleLogs(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/exec') {
+      // Exec into a pod is a write-capable action; read-only roles are denied.
+      if (!hasCapability(user.role, 'write')) {
+        socket.destroy();
+        return true;
+      }
+      execWss.handleUpgrade(req, socket, head, (ws) => handleExec(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/port-forward') {
+      // Port-forward changes access to pod/service ports, so keep it on the write path.
+      if (!hasCapability(user.role, 'write')) {
+        socket.destroy();
+        return true;
+      }
+      portForwardWss.handleUpgrade(req, socket, head, (ws) => handlePortForward(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/terminal') {
+      if (!hasCapability(user.role, 'write')) {
+        socket.destroy();
+        return true;
+      }
+      terminalWss.handleUpgrade(req, socket, head, (ws) => handleTerminal(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/watch') {
+      watchWss.handleUpgrade(req, socket, head, (ws) => handleWatch(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/metrics') {
+      metricsWss.handleUpgrade(req, socket, head, (ws) => handleMetrics(ws, req));
+      return true;
+    }
+    if (pathname === '/ws/observability') {
+      observabilityWss.handleUpgrade(req, socket, head, (ws) => {
+        handleObservabilityUpgrade(ws, req).catch((err) => {
+          logError('observability.ws.handler_error', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', error: 'Internal server error' }));
+            ws.close(1011, 'Handler error');
+          }
+        });
+      });
+      return true;
+    }
+    socket.destroy();
+    return false;
+  } catch (err) {
+    logError('ws.auth.error', {
+      pathname,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return true;
+  }
 }
 
 function params(req: any) {

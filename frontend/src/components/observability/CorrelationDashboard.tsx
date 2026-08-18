@@ -66,6 +66,8 @@ export function CorrelationDashboard({ scope }: Props) {
     queryFn: () => api.observabilityCorrelation(scope, { from, to }),
     staleTime: Infinity,
     gcTime: Infinity,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   });
 
   // Subscribe to real-time WebSocket events
@@ -78,31 +80,20 @@ export function CorrelationDashboard({ scope }: Props) {
     return unsubscribe;
   }, [subscribe]);
 
-  // Combine historical and live events, filter by time range, deduplicate
+  // Combine historical and live events, preserving every record.
   const events = useMemo(() => {
-    const seen = new Set<string>();
     const result: ChangeEventDoc[] = [];
     const fromTime = from.getTime();
     const toTime = to.getTime();
 
-    // Add historical events first
     for (const e of historicalEvents) {
-      const key = e.uid || `${e.kind}/${e.namespace}/${e.name}`;
       const eventTime = new Date(e.ts).getTime();
-      if (eventTime >= fromTime && eventTime <= toTime && !seen.has(key)) {
-        seen.add(key);
-        result.push(e);
-      }
+      if (eventTime >= fromTime && eventTime <= toTime) result.push(e);
     }
 
-    // Add live events that aren't already in historical
     for (const e of liveEvents) {
-      const key = e.uid || `${e.kind}/${e.namespace}/${e.name}`;
       const eventTime = new Date(e.ts).getTime();
-      if (eventTime >= fromTime && eventTime <= toTime && !seen.has(key)) {
-        seen.add(key);
-        result.push(e);
-      }
+      if (eventTime >= fromTime && eventTime <= toTime) result.push(e);
     }
 
     return result;

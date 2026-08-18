@@ -9,6 +9,29 @@ import type { RecordingLifecycle } from '../observability/lifecycle.js';
 
 export const observabilityRouter = Router();
 
+// GET /api/observability/debug/recordings — list all active recordings (debug only)
+observabilityRouter.get('/debug/recordings', withRouteErrorLogging('observability', 'GET /debug/recordings', async (req, res) => {
+  setRequestOperation(req, 'observability.debug.recordings');
+
+  try {
+    const lifecycle = observabilityService.getLifecycleInstance();
+    if (!lifecycle) {
+      return res.json({ error: 'No lifecycle instance' });
+    }
+
+    // Access the internal recordings collection via getter if available
+    // For now, return available status
+    res.json({
+      message: 'Check backend logs for: observability.recording.started, observability.recording.scope_mode, observability.informer.event_*',
+    });
+  } catch (err) {
+    logError('observability.debug.recordings_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({ error: 'Failed to get recordings' });
+  }
+}));
+
 // GET /api/observability/status — check availability (never throws)
 observabilityRouter.get('/status', withRouteErrorLogging('observability', 'GET /status', async (req, res) => {
   setRequestOperation(req, 'observability.status');
@@ -63,7 +86,13 @@ observabilityRouter.post('/recordings/start', withRouteErrorLogging('observabili
 
   try {
     const scoped = await resolveScopedRequestContext(req, { context });
+    logInfo('observability.recording.auth_scope_resolved', {
+      context,
+      selectedScope: scoped.selectedScope,
+      kubeconfigPath: scoped.selectedKubeconfigPath,
+    });
     await ensureScopedContextAuth(req, scoped);
+    logInfo('observability.recording.auth_complete', { context, userId });
 
     const result = await observabilityService.startRecording(
       context,
@@ -71,6 +100,7 @@ observabilityRouter.post('/recordings/start', withRouteErrorLogging('observabili
       scoped.selectedKubeconfigPath,
       session.activeContext ?? undefined,
     );
+    logInfo('observability.recording.start_complete', { context, userId, recordingId: result.recordingId });
 
     res.json(result);
   } catch (err) {

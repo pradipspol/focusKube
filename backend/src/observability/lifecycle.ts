@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { Collection } from '../db/localStore.js';
-import { ensureContextAuthReady } from '../kube/authGuard.js';
 import { kube } from '../kube/client.js';
 import type { ChangeEventStore } from './store.js';
 import type { RecordingSessionDoc } from './types.js';
@@ -53,17 +52,14 @@ export class RecordingLifecycle {
     fallbackContext?: string,
     retentionMs = 72 * 60 * 60 * 1000,
   ): Promise<{ recordingId: string; status: string }> {
+    let recordingId: string | undefined;
     try {
-      // Pre-flight auth check
-      await ensureContextAuthReady({
-        context,
-        kubeconfigPath,
-        fallbackContext,
-        userId,
-      });
+      logInfo('observability.recording.lifecycle_start', { context, userId });
 
       // Get server URL to ensure unique recording per cluster
+      logInfo('observability.recording.server_url_lookup_start', { context, userId });
       const serverUrl = await this.getServerUrl(context, kubeconfigPath, fallbackContext);
+      logInfo('observability.recording.server_url_lookup_complete', { context, userId, serverUrl: serverUrl ?? null });
       const recordingKey = computeRecordingKey(userId, context, serverUrl);
 
       // Check if already recording for this user+context+server combo
@@ -72,19 +68,33 @@ export class RecordingLifecycle {
       );
 
       if (existing) {
-        logInfo('observability.recording.already_active', {
+        const liveRecording = this.activeRecordings.get(recordingKey);
+        if (liveRecording) {
+          logInfo('observability.recording.already_active', {
+            recordingId: existing.id,
+            userId,
+            context,
+            serverUrl,
+          });
+          return {
+            recordingId: existing.id,
+            status: 'active',
+          };
+        }
+
+        recordings().updateOne(
+          (doc) => doc.id === existing.id,
+          { status: 'error', errorMessage: 'Persisted recording had no live informer process' },
+        );
+        logWarn('observability.recording.stale_persisted_record', {
           recordingId: existing.id,
           userId,
           context,
           serverUrl,
         });
-        return {
-          recordingId: existing.id,
-          status: 'active',
-        };
       }
 
-      const recordingId = crypto.randomUUID();
+      recordingId = crypto.randomUUID();
       const now = new Date();
 
       // Create recording doc with full context for multi-user, multi-cluster support
@@ -101,7 +111,9 @@ export class RecordingLifecycle {
 
       // Create and start informers
       const recording = new Recording(recordingId, context, userId, this.store, kubeconfigPath, fallbackContext, retentionMs, serverUrl);
+      logInfo('observability.recording.informers_start', { recordingId, context, userId });
       await recording.start();
+      logInfo('observability.recording.informers_start_complete', { recordingId, context, userId });
 
       this.activeRecordings.set(recordingKey, recording);
 
@@ -126,7 +138,14 @@ export class RecordingLifecycle {
         status: 'active',
       };
     } catch (err) {
+      if (recordingId) {
+        recordings().updateOne(
+          (doc) => doc.id === recordingId,
+          { status: 'error', errorMessage: err instanceof Error ? err.message : String(err) },
+        );
+      }
       logError('observability.recording.start_failed', {
+        recordingId: recordingId ?? null,
         context,
         userId,
         error: err instanceof Error ? err.message : String(err),

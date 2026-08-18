@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { Scope } from '../../api/client';
 import type { ToastMessage } from '../ToastViewport';
@@ -20,6 +20,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [wsStatus, setWsStatus] = useState<any>(null);
+  const queryClient = useQueryClient();
 
   const { subscribe } = useObservabilityWs(scope.context ?? undefined);
 
@@ -66,6 +67,8 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
           recordingId: result.recordingId
         }
       });
+      await queryClient.invalidateQueries({ queryKey: ['observability', 'events', scope.context] });
+      await queryClient.invalidateQueries({ queryKey: ['observability', 'correlation', scope.context] });
       onToast('success', 'Recording started', 3000);
     } catch (err) {
       onToast('error', `Failed to start recording: ${err instanceof Error ? err.message : String(err)}`, 5000);
