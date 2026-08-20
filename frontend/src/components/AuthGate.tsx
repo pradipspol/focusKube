@@ -28,7 +28,7 @@ export function AuthGate({ onSignedIn }: Props) {
   return (
     <div className="auth-shell">
       <div className="auth-card">
-        <div className="auth-brand">K8s Explorer</div>
+        <div className="auth-brand">K8 Explorer</div>
         <h1>Sign in</h1>
         <p className="auth-copy">Enter your email to continue.</p>
 
