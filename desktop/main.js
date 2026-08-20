@@ -308,7 +308,7 @@ async function createWindow(url) {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: path.join(__dirname, 'assets/icons/app.png'),
+    icon: path.join(__dirname, 'assets/icons/app_150.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

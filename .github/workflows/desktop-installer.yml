@@ -63,7 +63,7 @@ jobs:
         id: installer
         shell: pwsh
         run: |
-          $installer = Get-ChildItem -Path desktop/installer -File | Where-Object { $_.Name -match '\.(exe|msi)$' } | Select-Object -First 1
+          $installer = Get-ChildItem -Path desktop/installer -File | Where-Object { $_.Name -match '\.(exe)$' } | Select-Object -First 1
           if (-not $installer) {
             throw 'No installer package was produced in desktop/installer.'
           }
