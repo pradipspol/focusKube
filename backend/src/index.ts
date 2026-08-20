@@ -25,7 +25,7 @@ import { getRequestOperation, setRequestOperation } from './util/requestOp.js';
 const app = express();
 
 
-var limiter = rateLimit({
+const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // max 100 requests per windowMs
   standardHeaders: 'draft-8',
