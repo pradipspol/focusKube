@@ -90,7 +90,7 @@ export function TopBar({
 
   return (
     <div className="topbar">
-      <span className="brand">⎈ K8s Explorer</span>
+      <span className="brand">⎈ K8 Explorer</span>
 
       {/* <button onClick={() => reload.mutate()} title="Reload kubeconfig">
         ⟳ Refresh

@@ -999,7 +999,7 @@ export default function App() {
                 <div className="main-content-body">
                   {tabs.length === 0 && (
                     <div className="main-empty-state" aria-label="empty workspace">
-                      <div className="main-empty-brand">K8S Explorer</div>
+                      <div className="main-empty-brand">K8 Explorer</div>
                     </div>
                   )}
 

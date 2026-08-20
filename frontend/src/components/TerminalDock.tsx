@@ -321,7 +321,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
       };
 
       const printBanner = () => {
-        term.writeln('K8s Explorer terminal');
+        term.writeln('K8 Explorer terminal');
         term.writeln('Direct commands only: kubectl and helm.');
         term.writeln(scope.context ? `Context: ${scope.context}` : 'Context: current session');
         term.writeln(scope.namespace ? `Namespace: ${scope.namespace}` : 'Namespace: all');
