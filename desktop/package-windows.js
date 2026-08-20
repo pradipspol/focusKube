@@ -117,7 +117,7 @@ async function run() {
     return false;
   }
 
-  if (!exeExistsInPath('candle.exe') || !exeExistsInPath('light.exe')) {
+  if (!exeExistsInPath('candle.exe') || !exeExistsInPath('light.exe') || true) {
     console.warn('WiX toolset not found in PATH. Attempting fallback to NSIS artifact if present.');
     // Try to find an NSIS installer produced by electron-builder in the dist folder
     const distFiles = (fs.readdirSync(path.join(desktopDir, 'dist')) || []).filter(f => f.endsWith('.exe'));
