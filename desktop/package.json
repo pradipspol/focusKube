@@ -20,7 +20,8 @@
     "afterPack": "./afterPack.js",
     "files": [
       "main.js",
-      "assets/icons/app.png",
+      "assets/icons/app_150.png",
+      "assets/icons/app512.ico",
       "package.json",
       "node_modules/"
     ],
@@ -32,7 +33,7 @@
       }
     ],
     "win": {
-      "icon": "assets/icons/app.png",
+      "icon": "assets/icons/app512.ico",
       "target": ["nsis"],
       "artifactName": "${productName}-Setup-${version}.exe"
     }
@@ -40,6 +41,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "installerIcon": "assets/icons/app512.ico",
+      "uninstallerIcon": "assets/icons/app512.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "include": "installer/nsis-installer-hook.nsh"
