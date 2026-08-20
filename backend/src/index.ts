@@ -2,6 +2,7 @@ import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
+import { rateLimit } from 'express-rate-limit';
 import { config } from './config.js';
 import { HttpError } from './util/httpError.js';
 import { contextsRouter } from './routes/contexts.js';
@@ -20,7 +21,20 @@ import { logError, logInfo, logWarn } from './util/logger.js';
 import { runWithLogContext, setLogContext } from './util/logger.js';
 import { getRequestOperation, setRequestOperation } from './util/requestOp.js';
 
+
 const app = express();
+
+
+var limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // max 100 requests per windowMs
+  standardHeaders: 'draft-8',
+  legacyHeaders: false
+});
+
+// apply rate limiter to all requests
+app.use(limiter);
+
 
 app.use(cors({
   origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(','),
