@@ -1,36 +1,13 @@
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const { MSICreator } = require('electron-wix-msi');
 
 function ensureMsiIconFile() {
-  const iconDir = path.join(os.tmpdir(), 'k8-explorer-msi');
-  const iconPath = path.join(iconDir, 'app.ico');
-  if (fs.existsSync(iconPath)) {
-    return iconPath;
+  const iconPath = path.join(__dirname, 'assets', 'icons', 'app512.ico');
+  if (!fs.existsSync(iconPath)) {
+    throw new Error(`MSI icon not found at ${iconPath}`);
   }
-
-  fs.mkdirSync(iconDir, { recursive: true });
-
-  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z/C/HgAGgwJ/lQm8WQAAAABJRU5ErkJggg==';
-  const pngBuffer = Buffer.from(pngBase64, 'base64');
-  const iconBuffer = Buffer.alloc(6 + 16 + pngBuffer.length);
-
-  iconBuffer.writeUInt16LE(0, 0);
-  iconBuffer.writeUInt16LE(1, 2);
-  iconBuffer.writeUInt16LE(1, 4);
-  iconBuffer.writeUInt8(1, 6);
-  iconBuffer.writeUInt8(1, 7);
-  iconBuffer.writeUInt8(0, 8);
-  iconBuffer.writeUInt8(0, 9);
-  iconBuffer.writeUInt16LE(1, 10);
-  iconBuffer.writeUInt16LE(32, 12);
-  iconBuffer.writeUInt32LE(pngBuffer.length, 14);
-  iconBuffer.writeUInt32LE(22, 18);
-  pngBuffer.copy(iconBuffer, 22);
-
-  fs.writeFileSync(iconPath, iconBuffer);
   return iconPath;
 }
 
