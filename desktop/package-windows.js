@@ -117,6 +117,11 @@ async function run() {
     return false;
   }
 
+  if (exeExistsInPath('candle.exe') || exeExistsInPath('light.exe')){
+      await creator.compile();
+      console.log('MSI created in', msiOutputDir);
+  }
+
   if (!exeExistsInPath('candle.exe') || !exeExistsInPath('light.exe') || true) {
     console.warn('WiX toolset not found in PATH. Attempting fallback to NSIS artifact if present.');
     // Try to find an NSIS installer produced by electron-builder in the dist folder
@@ -142,9 +147,7 @@ async function run() {
     process.exit(1);
   }
 
-  await creator.compile();
-
-  console.log('MSI created in', msiOutputDir);
+  
 }
 
 run().catch(err => { console.error(err); process.exit(1); });
