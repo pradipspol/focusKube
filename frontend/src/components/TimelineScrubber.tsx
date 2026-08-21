@@ -126,9 +126,9 @@ export function TimelineScrubber({
           {Array.from(densityMap.entries()).map(([bucketIdx, { weight, maxSeverity }]) => {
             const heightPercent = (weight / maxWeight) * 100;
             const colors: Record<string, string> = {
-              error: '#d32f2f',
-              warning: '#f57c00',
-              info: '#1976d2',
+              error: 'var(--severity-error)',
+              warning: 'var(--severity-warning)',
+              info: 'var(--severity-info)',
             };
             return (
               <div
@@ -138,7 +138,7 @@ export function TimelineScrubber({
                   height: '100%',
                   display: 'flex',
                   alignItems: 'flex-end',
-                  borderRight: '1px solid rgba(255,255,255,0.1)',
+                  borderRight: '1px solid var(--border)',
                 }}
               >
                 <div
@@ -167,8 +167,8 @@ export function TimelineScrubber({
                   top: 0,
                   width: '2px',
                   height: '100%',
-                  backgroundColor: '#fff',
-                  borderLeft: '1px solid #ff9800',
+                  backgroundColor: 'var(--text-on-accent)',
+                  borderLeft: '1px solid var(--severity-warning)',
                   cursor: 'pointer',
                   opacity: 0.8,
                 }}
@@ -207,8 +207,8 @@ export function TimelineScrubber({
               top: 0,
               width: '2px',
               height: '100%',
-              backgroundColor: '#fff',
-              boxShadow: '0 0 4px rgba(255,255,255,0.8)',
+              backgroundColor: 'var(--text-on-accent)',
+              boxShadow: '0 0 4px var(--accent)',
               pointerEvents: 'none',
               transform: 'translateX(-50%)',
             }}

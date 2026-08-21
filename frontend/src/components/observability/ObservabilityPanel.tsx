@@ -150,7 +150,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
                     width: '10px',
                     height: '10px',
                     borderRadius: '50%',
-                    backgroundColor: '#d32f2f',
+                    backgroundColor: 'var(--severity-error)',
                     animation: 'pulse 1.5s infinite',
                   }}
                 />
@@ -162,7 +162,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
             </>
           ) : recordingError ? (
             <>
-              <div style={{ fontSize: '0.9em', color: '#d32f2f' }}>
+              <div style={{ fontSize: '0.9em', color: 'var(--severity-error)' }}>
                 <strong>Error:</strong> {recordingError}
               </div>
               <button onClick={handleStartRecording} disabled={isStarting} className="action-button">
@@ -227,31 +227,31 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
           50% { opacity: 0.5; }
         }
         .row-warning {
-          background-color: rgba(245, 127, 23, 0.1);
+          background-color: color-mix(in srgb, var(--severity-warning) 10%, transparent);
         }
         .row-error {
-          background-color: rgba(211, 47, 47, 0.1);
+          background-color: color-mix(in srgb, var(--severity-error) 10%, transparent);
         }
         .row-info {
-          background-color: rgba(25, 118, 210, 0.05);
+          background-color: color-mix(in srgb, var(--severity-info) 5%, transparent);
         }
         .badge.severity-error {
-          background-color: #d32f2f;
-          color: white;
+          background-color: var(--severity-error);
+          color: var(--text-on-accent);
           padding: 0.25rem 0.5rem;
           border-radius: 0.25rem;
           font-size: 0.85em;
         }
         .badge.severity-warning {
-          background-color: #f57c00;
-          color: white;
+          background-color: var(--severity-warning);
+          color: var(--text-on-accent);
           padding: 0.25rem 0.5rem;
           border-radius: 0.25rem;
           font-size: 0.85em;
         }
         .badge.severity-info {
-          background-color: #1976d2;
-          color: white;
+          background-color: var(--severity-info);
+          color: var(--text-on-accent);
           padding: 0.25rem 0.5rem;
           border-radius: 0.25rem;
           font-size: 0.85em;

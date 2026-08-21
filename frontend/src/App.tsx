@@ -117,7 +117,15 @@ const TABS_STORAGE_KEY = 'k8sExplorer.openTabs';
 const ACTIVE_TAB_STORAGE_KEY = 'k8sExplorer.activeTab';
 const NAMESPACE_SELECTIONS_STORAGE_KEY = 'k8sExplorer.namespacesByContext';
 // Where the footer "Support" button points. Update to your team's support channel.
-const SUPPORT_URL = 'mailto:support@k8-explorer.local?subject=K8S%20Explorer%20Support';
+const SUPPORT_URL = 'https://github.com/pradipspol/k8-explorer/issues';
+const THEME_STORAGE_KEY = 'k8sExplorer.theme';
+
+export type Theme = 'dark' | 'light' | 'contrast';
+
+function loadStoredTheme(): Theme {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === 'light' || stored === 'contrast' ? stored : 'dark';
+}
 
 function isView(value: unknown): value is View {
   if (!value || typeof value !== 'object') return false;
@@ -238,6 +246,7 @@ function namespaceSelectionKeyForContext(
 
 export default function App() {
   const queryClient = useQueryClient();
+  const [theme, setTheme] = useState<Theme>(() => loadStoredTheme());
   const [route, setRoute] = useState<UiRoute>(() => routeFromPath(window.location.pathname));
   const SIDEBAR_DEFAULT_WIDTH_VW = 15;
   const SIDEBAR_MIN_WIDTH_VW = 12;
@@ -277,6 +286,11 @@ export default function App() {
   const terminalSessionCounterRef = useRef(1);
   const [terminalSessions, setTerminalSessions] = useState<DockSession[]>(() => []);
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState('');
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   const navigateToRoute = (nextRoute: UiRoute, replace = false) => {
     const nextPath = pathForRoute(nextRoute);
@@ -915,6 +929,8 @@ export default function App() {
     <div className="app">
       <TopBar
         user={user}
+        theme={theme}
+        onThemeChange={setTheme}
         onContextsRefetch={() => contextsQuery.refetch()}
         onSignOut={handleSignOut}
       />
