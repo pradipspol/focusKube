@@ -82,7 +82,7 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
               return;
             }
 
-            const sourceColor = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#a29bfe'][
+            const sourceColor = ['var(--danger)', 'var(--accent)', 'var(--info-soft)', 'var(--warn)', 'var(--brand)', 'var(--accent-bright)'][
               [...podSelection].findIndex((s) => s.pod === selection.pod) % 6
             ];
 
@@ -191,8 +191,8 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
         style={{
           flex: 1,
           overflow: 'auto',
-          backgroundColor: '#1a1a1a',
-          color: '#d4d4d4',
+          backgroundColor: 'var(--surface-deepest)',
+          color: 'var(--logs-text)',
           fontFamily: 'monospace',
           fontSize: '0.85em',
           padding: '0.5rem',
@@ -210,7 +210,7 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
             const isMatch = matchingLineKeys.has(`${idx}`);
             const podColors: Record<string, string> = {};
             podSelection.forEach((s, i) => {
-              podColors[s.pod] = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#a29bfe'][i % 6];
+              podColors[s.pod] = ['var(--danger)', 'var(--accent)', 'var(--info-soft)', 'var(--warn)', 'var(--brand)', 'var(--accent-bright)'][i % 6];
             });
 
             return (
@@ -218,15 +218,15 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
                 key={idx}
                 style={{
                   padding: '0.25rem 0.5rem',
-                  backgroundColor: isMatch ? 'rgba(255, 193, 7, 0.2)' : undefined,
-                  borderLeft: `3px solid ${podColors[line.podName] || '#666'}`,
+                  backgroundColor: isMatch ? 'var(--highlight-soft)' : undefined,
+                  borderLeft: `3px solid ${podColors[line.podName] || 'var(--state-off)'}`,
                   marginBottom: '0.25rem',
                 }}
               >
-                <span style={{ color: podColors[line.podName] || '#999', fontWeight: 'bold' }}>
+                <span style={{ color: podColors[line.podName] || 'var(--icon-muted)', fontWeight: 'bold' }}>
                   {line.podName}
                 </span>{' '}
-                <span style={{ color: '#888' }}>
+                <span style={{ color: 'var(--text-dim)' }}>
                   {line.ts.toLocaleTimeString()}
                 </span>{' '}
                 <span>{line.raw}</span>

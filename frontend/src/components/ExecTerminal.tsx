@@ -6,6 +6,22 @@ import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import type { OpenPodTerminalRequest } from './TerminalDock';
 
+function closeSocket(socket: WebSocket | null): void {
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => socket.close();
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    return;
+  }
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  socket.close();
+}
+
 interface Props {
   pod: K8sObject;
   context?: string;
@@ -22,6 +38,8 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
+  const themeColor = (variable: string) => getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+
   useEffect(() => {
     if (!container || !hostRef.current) return;
 
@@ -29,12 +47,23 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
       cursorBlink: true,
       fontFamily: 'SFMono-Regular, Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#000000' },
+      theme: { background: themeColor('--black'), foreground: '#fff' },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
     fit.fit();
+
+    const updateTerminalTheme = () => {
+      term.options.theme = {
+        ...term.options.theme,
+        background: themeColor('--black'),
+        foreground: '#fff',
+      };
+    };
+    const themeObserver = new MutationObserver(updateTerminalTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
     termRef.current = term;
     fitRef.current = fit;
 
@@ -71,14 +100,17 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
     });
 
     const onResize = () => {
+      if (!termRef.current) return;
       fit.fit();
       sendResize();
     };
     window.addEventListener('resize', onResize);
 
     return () => {
+      themeObserver.disconnect();
       window.removeEventListener('resize', onResize);
-      ws.close();
+      fit.dispose();
+      closeSocket(ws);
       term.dispose();
     };
   }, [container, shell, context, pod]);

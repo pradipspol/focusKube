@@ -145,15 +145,15 @@ export function CorrelationDashboard({ scope }: Props) {
         <div style={{ display: 'flex', gap: '2rem', fontSize: '0.9em', marginLeft: '2rem' }}>
           <div>
             <span style={{ color: 'var(--text-secondary)' }}>Workload Changes:</span>
-            <strong style={{ marginLeft: '0.5rem', color: '#1976d2' }}>{workloadChanges}</strong>
+            <strong style={{ marginLeft: '0.5rem', color: 'var(--severity-info)' }}>{workloadChanges}</strong>
           </div>
           <div>
             <span style={{ color: 'var(--text-secondary)' }}>Warning Events:</span>
-            <strong style={{ marginLeft: '0.5rem', color: '#f57c00' }}>{warningEvents}</strong>
+            <strong style={{ marginLeft: '0.5rem', color: 'var(--severity-warning)' }}>{warningEvents}</strong>
           </div>
           <div>
             <span style={{ color: 'var(--text-secondary)' }}>Correlated:</span>
-            <strong style={{ marginLeft: '0.5rem', color: '#388e3c' }}>{correlatedEvents}</strong>
+            <strong style={{ marginLeft: '0.5rem', color: 'var(--ok)' }}>{correlatedEvents}</strong>
           </div>
         </div>
       </div>
@@ -211,8 +211,8 @@ export function CorrelationDashboard({ scope }: Props) {
               <div
                 style={{
                   padding: '0.75rem',
-                  backgroundColor: '#e8f5e9',
-                  color: '#1b5e20',
+                  backgroundColor: 'var(--success-soft)',
+                  color: 'var(--ok)',
                   borderRadius: '0.25rem',
                   marginTop: '0.5rem',
                 }}

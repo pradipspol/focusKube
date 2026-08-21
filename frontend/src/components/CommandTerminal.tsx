@@ -17,6 +17,22 @@ type TerminalSocketMessage =
 
 const PROMPT = 'k8-explorer> ';
 
+function closeSocket(socket: WebSocket | null): void {
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => socket.close();
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    return;
+  }
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  socket.close();
+}
+
 export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -30,6 +46,8 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
   const [connected, setConnected] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
 
+  const themeColor = (variable: string) => getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+
   useEffect(() => {
     if (!hostRef.current) return;
 
@@ -37,12 +55,22 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
       cursorBlink: true,
       fontFamily: 'SFMono-Regular, Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#000000' },
+      theme: { background: themeColor('--black'), foreground: '#fff' },
       scrollback: 4000,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(hostRef.current);
+
+    const updateTerminalTheme = () => {
+      term.options.theme = {
+        ...term.options.theme,
+        background: themeColor('--black'),
+        foreground: '#fff',
+      };
+    };
+    const themeObserver = new MutationObserver(updateTerminalTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     termRef.current = term;
     fitRef.current = fit;
@@ -67,8 +95,13 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
       writePrompt();
     };
 
+    let fitFrame: number | null = null;
     const fitTerminal = () => {
-      window.requestAnimationFrame(() => {
+      if (disposedRef.current) return;
+      if (fitFrame !== null) window.cancelAnimationFrame(fitFrame);
+      fitFrame = window.requestAnimationFrame(() => {
+        fitFrame = null;
+        if (disposedRef.current) return;
         try {
           fit.fit();
         } catch {
@@ -222,9 +255,12 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
 
     return () => {
       disposedRef.current = true;
+      if (fitFrame !== null) window.cancelAnimationFrame(fitFrame);
+      themeObserver.disconnect();
       observer.disconnect();
       window.removeEventListener('resize', fitTerminal);
-      socket.close();
+      fit.dispose();
+      closeSocket(socket);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

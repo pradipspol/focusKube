@@ -62,6 +62,26 @@ interface Props {
   onCloseSession: (id: string) => void;
 }
 
+function themeColor(variable: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+}
+
+function closeSocket(socket: WebSocket | null): void {
+  if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
+  if (socket.readyState === WebSocket.CONNECTING) {
+    socket.onopen = () => socket.close();
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    return;
+  }
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  socket.close();
+}
+
 type GeneralMessage =
   | { type: 'OUTPUT'; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'DONE'; code: number }
@@ -211,12 +231,12 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
 
   const searchDecorationOptions = useMemo(
     () => ({
-      matchBackground: '#f2c94c44',
-      matchBorder: '#f2c94c',
-      matchOverviewRuler: '#f2c94c',
-      activeMatchBackground: '#3d9df688',
-      activeMatchBorder: '#3d9df6',
-      activeMatchColorOverviewRuler: '#3d9df6',
+      matchBackground: themeColor('--highlight'),
+      matchBorder: themeColor('--star'),
+      matchOverviewRuler: themeColor('--star'),
+      activeMatchBackground: themeColor('--accent-soft-strong'),
+      activeMatchBorder: themeColor('--accent'),
+      activeMatchColorOverviewRuler: themeColor('--accent'),
     }),
     [],
   );
@@ -284,7 +304,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
       cursorBlink: true,
       fontFamily: 'SFMono-Regular, Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#000000' },
+      theme: { background: themeColor('--black'), foreground: '#fff' },
       scrollback: 4000,
     });
     const fit = new FitAddon();
@@ -293,13 +313,28 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
     term.loadAddon(searchAddon);
     term.open(hostRef.current);
 
+    const updateTerminalTheme = () => {
+      term.options.theme = {
+        ...term.options.theme,
+        background: themeColor('--black'),
+        foreground: '#fff',
+      };
+    };
+    const themeObserver = new MutationObserver(updateTerminalTheme);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
     termRef.current = term;
     fitRef.current = fit;
     searchAddonRef.current = searchAddon;
     disposedRef.current = false;
+    let fitFrame: number | null = null;
 
     const fitTerminal = () => {
-      window.requestAnimationFrame(() => {
+      if (disposedRef.current) return;
+      if (fitFrame !== null) window.cancelAnimationFrame(fitFrame);
+      fitFrame = window.requestAnimationFrame(() => {
+        fitFrame = null;
+        if (disposedRef.current) return;
         try {
           fit.fit();
         } catch {
@@ -520,10 +555,14 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
 
     return () => {
       disposedRef.current = true;
+      themeObserver.disconnect();
       resizeObserver.disconnect();
+      if (fitFrame !== null) window.cancelAnimationFrame(fitFrame);
       window.removeEventListener('resize', fitTerminal);
-      wsRef.current?.close();
+      closeSocket(wsRef.current);
       wsRef.current = null;
+      fit.dispose();
+      searchAddon.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -533,7 +572,9 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
 
   useEffect(() => {
     if (!active) return;
-    window.requestAnimationFrame(() => {
+    let focusFrame: number | null = window.requestAnimationFrame(() => {
+      focusFrame = null;
+      if (disposedRef.current) return;
       try {
         fitRef.current?.fit();
       } catch {
@@ -544,6 +585,9 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
         wsRef.current.send(JSON.stringify({ type: 'resize', cols: termRef.current.cols, rows: termRef.current.rows }));
       }
     });
+    return () => {
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
+    };
   }, [active, session.kind]);
 
   return (
@@ -583,7 +627,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
             {searchQuery.trim() ? `${searchHits ? `${Math.min(searchIndex + 1, searchHits)}/${searchHits}` : '0/0'} matches` : 'scrollback'}
           </span>
           <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'connected' : 'disconnected'}</span>
-          <span className="terminal-session-status">{statusText}</span>
+          {/* <span className="terminal-session-status">{statusText}</span> */}
         </div>
       </div>
       <div className="terminal-session-body">
@@ -629,7 +673,7 @@ function DockedPodLogsSessionPane({ session, active }: { session: Extract<LogsTe
       shouldScrollRef.current = follow && atBottom;
       setLogText((current) => `${current}${chunk}`);
     };
-    return () => ws.close();
+    return () => closeSocket(ws);
   }, [container, follow, session]);
 
   useEffect(() => {

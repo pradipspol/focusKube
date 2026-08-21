@@ -4,15 +4,20 @@ import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import type { LogLevel } from '../api/types';
 import { ROLE_LABELS, describePermissions } from '../auth/permissions';
+import type { Theme } from '../App';
 
 interface Props {
   user: AuthUser;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
   onContextsRefetch: () => void;
   onSignOut: () => Promise<void>;
 }
 
 export function TopBar({
   user,
+  theme,
+  onThemeChange,
   onContextsRefetch,
   onSignOut,
 }: Props) {
@@ -20,6 +25,7 @@ export function TopBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState<LogLevel>('info');
+  const [selectedTheme, setSelectedTheme] = useState<Theme>(theme);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const authConfigQuery = useQuery({
@@ -77,16 +83,23 @@ export function TopBar({
 
   const handleOpenSettings = async () => {
     setMenuOpen(false);
+    setSelectedTheme(theme);
     setSettingsOpen(true);
     await queryClient.invalidateQueries({ queryKey: ['settings', 'log-level'] });
   };
 
   const handleSaveSettings = async () => {
     await updateLogLevel.mutateAsync(selectedLevel);
+    onThemeChange(selectedTheme);
     setSettingsOpen(false);
   };
 
   const levelOptions: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+  const themeOptions: Array<{ value: Theme; label: string }> = [
+    { value: 'dark', label: 'Dark' },
+    { value: 'light', label: 'Light' },
+    { value: 'contrast', label: 'Contrast' },
+  ];
 
   return (
     <div className="topbar">
@@ -157,39 +170,58 @@ export function TopBar({
         <div className="overlay center" onClick={() => setSettingsOpen(false)}>
           <div className="modal-card settings-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Desktop Settings</h3>
+              <h3 className="modal-title">Preferences</h3>
               <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">✕</button>
             </div>
             <div className="modal-body settings-modal-body">
               {logLevelQuery.isLoading ? (
-                <div className="dim">Loading log settings...</div>
+                <div className="dim">Loading settings...</div>
               ) : (
                 <>
-                  <label className="settings-field" htmlFor="desktop-log-level">
-                    Log level
-                  </label>
-                  <select
-                    id="desktop-log-level"
-                    value={selectedLevel}
-                    onChange={(event) => setSelectedLevel(event.target.value as LogLevel)}
-                    disabled={!logLevelQuery.data?.editable || updateLogLevel.isPending}
-                  >
-                    {levelOptions.map((level) => (
-                      <option key={level} value={level}>
-                        {level.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="dim">
+                  <div className="settings-row">
+                    <label className="settings-field" htmlFor="desktop-theme">
+                      Theme
+                    </label>
+                    <select
+                      id="desktop-theme"
+                      value={selectedTheme}
+                      onChange={(event) => setSelectedTheme(event.target.value as Theme)}
+                      disabled={updateLogLevel.isPending}
+                    >
+                      {themeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="settings-row">
+                    <label className="settings-field" htmlFor="desktop-log-level">
+                      Log level
+                    </label>
+                    <select
+                      id="desktop-log-level"
+                      value={selectedLevel}
+                      onChange={(event) => setSelectedLevel(event.target.value as LogLevel)}
+                      disabled={!logLevelQuery.data?.editable || updateLogLevel.isPending}
+                    >
+                      {levelOptions.map((level) => (
+                        <option key={level} value={level}>
+                          {level.toUpperCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="dim settings-message">
                     Effective: {logLevelQuery.data?.level?.toUpperCase() ?? 'N/A'}
                     {logLevelQuery.data?.envLevel ? ` | ENV: ${logLevelQuery.data.envLevel.toUpperCase()}` : ''}
                     {logLevelQuery.data?.overriddenByUi ? ' | UI override active' : ''}
                   </div>
                   {!logLevelQuery.data?.editable && (
-                    <div className="dim">Log level is editable only in desktop mode.</div>
+                    <div className="dim settings-message">Log level is editable only in desktop mode.</div>
                   )}
                   {updateLogLevel.error && (
-                    <div className="notice error">
+                    <div className="notice error settings-message">
                       {updateLogLevel.error instanceof Error ? updateLogLevel.error.message : 'Failed to update log level.'}
                     </div>
                   )}
