@@ -1,5 +1,7 @@
 {
   "name": "k8-explorer-desktop",
+  "author": "TechAvise", 
+  "description": "Kubernetes Explorer Desktop Client",
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
@@ -34,10 +36,9 @@
     ],
     "win": {
       "icon": "assets/icons/app512.ico",
-      "target": ["nsis"],
-      "artifactName": "${productName}-Setup-${version}.exe"
-    }
-    ,
+      "target": ["nsis", "msi"],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -46,6 +47,11 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "include": "installer/nsis-installer-hook.nsh"
+    },
+    "msi": {
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "perMachine": false
     }
   },
   "devDependencies": {
