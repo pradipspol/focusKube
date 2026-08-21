@@ -88,4 +88,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true
-          files: ${{ steps.installer.outputs.path }}, ${{ steps.installer.outputs.exe_path }}
+          files: |
+            ${{ steps.installer.outputs.path }}
+            ${{ steps.installer.outputs.exe_path }}
