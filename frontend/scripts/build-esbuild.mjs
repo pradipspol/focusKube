@@ -41,6 +41,7 @@ const sharedOptions = {
     'import.meta.env.PROD': 'true',
     'import.meta.env.DEV': 'false',
     'import.meta.env.SSR': 'false',
+    'import.meta.env.K8_EXPLORER_DESKTOP': JSON.stringify(process.env.K8_EXPLORER_DESKTOP === 'true' ? 'true' : 'false'),
   },
   assetNames: 'assets/asset-[hash]',
   logLevel: 'info',

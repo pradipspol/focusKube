@@ -1,11 +1,63 @@
 // CommonJS wrapper to dynamically import ESM main module
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, net, nativeTheme } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const getPort = require('get-port');
 const fs = require('fs');
+
+const GITHUB_REPOSITORY = 'pradipspol/k8-explorer';
+
+async function fetchGithub(url, parseJson = false) {
+  const response = await net.fetch(url, {
+    headers: { 'User-Agent': 'k8-explorer-desktop' },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub request failed with status ${response.status}`);
+  }
+  const body = await response.text();
+  return parseJson ? JSON.parse(body) : body;
+}
+
+ipcMain.handle('open-external', async (_event, url) => {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
+    throw new Error('Only approved HTTPS GitHub links can be opened.');
+  }
+  await shell.openExternal(parsed.toString());
+});
+ipcMain.handle('fetch-github-file', (_event, filePath) => {
+  if (filePath !== 'LICENSE') throw new Error('Unsupported GitHub file.');
+  return fetchGithub(`https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/${filePath}`);
+});
+ipcMain.handle('fetch-latest-release', async () => {
+  const releases = await fetchGithub(`https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20`, true);
+  const release = releases.find((entry) => !entry.draft);
+  if (!release) throw new Error('No published GitHub releases are available.');
+  return { name: release.name || release.tag_name || 'Latest release', body: release.body || 'No release notes available.' };
+});
+ipcMain.handle('get-app-info', () => ({
+  name: 'K8 Explorer',
+  version: app.getVersion(),
+  description: 'Kubernetes Explorer Desktop Client',
+}));
+
+// App background per theme, mirrored from the --bg token in index.css.
+const THEME_BACKGROUNDS = {
+  dark: '#0c1117',
+  light: '#f7f9fb',
+  contrast: '#000000',
+};
+
+ipcMain.handle('set-native-theme', (event, theme) => {
+  const normalized = theme === 'light' ? 'light' : 'dark';
+  nativeTheme.themeSource = normalized;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    win.setBackgroundColor(THEME_BACKGROUNDS[theme] || THEME_BACKGROUNDS.dark);
+  }
+});
 
 let backendProc = null;
 let server = null;
@@ -309,11 +361,15 @@ async function createWindow(url) {
     width: 1200,
     height: 800,
     icon: path.join(__dirname, 'assets/icons/app_150.png'),
+    frame: true,
     webPreferences: {
-      nodeIntegration: false,
+      nodeIntegration: true,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
+  // set background color of windows as frame color; updated per-theme via set-native-theme
+  win.setBackgroundColor('#0c1117');
   win.webContents.on('crashed', () => {
     console.error('Window crashed');
   });
@@ -326,7 +382,30 @@ async function createWindow(url) {
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error('did-fail-load:', errorCode, errorDescription, validatedURL);
   });
-  Menu.setApplicationMenu(null);
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '',
+      enabled: false
+    },
+    {
+      label: 'File',
+      submenu: [
+        { label: 'Preferences', click: () => win.webContents.send('desktop-menu-action', 'preferences') },
+        { role: 'quit', label: 'Exit' },
+      ],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Documents', click: () => shell.openExternal(`https://github.com/${GITHUB_REPOSITORY}#readme`) },
+        { label: 'Release Notes', click: () => win.webContents.send('desktop-menu-action', 'release-notes') },
+        { type: 'separator' },
+        { label: 'License', click: () => win.webContents.send('desktop-menu-action', 'license') },
+        { label: 'About', click: () => win.webContents.send('desktop-menu-action', 'about') },
+      ],
+    },
+  ]);
+  Menu.setApplicationMenu(menu);
   try {
     await win.loadURL(url);
   } catch (err) {

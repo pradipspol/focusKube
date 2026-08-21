@@ -73,6 +73,7 @@ interface Props {
     originKubeconfigId?: string,
   ) => React.ReactNode;
   onContextChange: (name?: string) => Promise<void> | void;
+  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
@@ -104,6 +105,7 @@ export function SidebarProviderSources({
   ensureLocalAzureConnected,
   renderContextNode,
   onContextChange,
+  onPin,
   onUploadLocalKubeconfig,
   onConnectLocalKubeconfig,
   onDeleteLocalKubeconfig,
@@ -1067,69 +1069,45 @@ export function SidebarProviderSources({
                       <span>{collapsed ? item.name.charAt(0) : item.name}</span>
                     </span>
                     {!collapsed && (
-                      <span className="context-meta">
-                        <button
-                          className="action-trigger sidebar-action-trigger"
-                          title={`Actions for ${item.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setMenuLocalKubeconfigId((current) => (current === item.id ? undefined : item.id));
-                          }}
-                        >
-                          ⋮
-                        </button>
-                      </span>
+                      <div className="context-meta">
+                        <div className="action-trigger-wrap">
+                          <button
+                            className="action-trigger sidebar-action-trigger"
+                            title={`Actions for ${item.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setMenuLocalKubeconfigId((current) => (current === item.id ? undefined : item.id));
+                            }}
+                          >
+                            ⋮
+                          </button>
+                          {isMenuOpen && (
+                            <div className="action-menu sidebar-action-menu">
+                              <button
+                                className="action-menu-item danger"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setMenuLocalKubeconfigId(undefined);
+                                  if (
+                                    !confirm(
+                                      `Remove local kubeconfig "${item.name}" and all its contexts?\n\nThis cannot be undone.`,
+                                    )
+                                  ) {
+                                    return;
+                                  }
+                                  onDeleteLocalKubeconfig(item.id).catch((err) => {
+                                    console.error('Failed to remove local kubeconfig:', err);
+                                  });
+                                }}
+                              >
+                                Remove Config
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
-                  {!collapsed && isMenuOpen && (
-                    <div className="action-menu sidebar-action-menu">
-                      <button
-                        className="action-menu-item"
-                        onClick={async (event) => {
-                          event.stopPropagation();
-                          setMenuLocalKubeconfigId(undefined);
-                          const ok = await ensureLocalAzureConnected(item.contexts[0]);
-                          if (!ok) return;
-                          onConnectLocalKubeconfig(item.id).catch((err) => {
-                            console.error('Failed to connect local kubeconfig:', err);
-                          });
-                        }}
-                      >
-                        Connect
-                      </button>
-                      {!!scope.context && item.contexts.includes(scope.context) && (
-                        <button
-                          className="action-menu-item"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setMenuLocalKubeconfigId(undefined);
-                            onContextChange(undefined);
-                          }}
-                        >
-                          Disconnect
-                        </button>
-                      )}
-                      <button
-                        className="action-menu-item danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setMenuLocalKubeconfigId(undefined);
-                          if (
-                            !confirm(
-                              `Remove local kubeconfig "${item.name}" and all its contexts?\n\nThis cannot be undone.`,
-                            )
-                          ) {
-                            return;
-                          }
-                          onDeleteLocalKubeconfig(item.id).catch((err) => {
-                            console.error('Failed to remove local kubeconfig:', err);
-                          });
-                        }}
-                      >
-                        Remove Config
-                      </button>
-                    </div>
-                  )}
                   {(collapsed || expanded) && (
                     <div className="aks-tree-children">
                       {localAzureAuthInProgress && !collapsed && (
@@ -1194,52 +1172,54 @@ export function SidebarProviderSources({
                                   <span>{collapsed ? ctxName.charAt(0) : ctxName}</span>
                                 </span>
                                 {!collapsed && (
-                                  <span className="context-meta">
+                                  <div className="context-meta">
                                     <span
                                       className="context-status-dot disconnected"
                                       title="Disconnected — click to connect"
                                     />
-                                    <button
-                                      className="action-trigger sidebar-action-trigger"
-                                      title={`Actions for ${ctxName}`}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        setMenuLocalContextKey((current) => (current === stubKey ? undefined : stubKey));
-                                      }}
-                                    >
-                                      ⋮
-                                    </button>
-                                  </span>
+                                    <div className="action-trigger-wrap">
+                                      <button
+                                        className="action-trigger sidebar-action-trigger"
+                                        title={`Actions for ${ctxName}`}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          setMenuLocalContextKey((current) => (current === stubKey ? undefined : stubKey));
+                                        }}
+                                      >
+                                        ⋮
+                                      </button>
+                                      {stubMenuOpen && (
+                                        <div className="action-menu sidebar-action-menu">
+                                          <button
+                                            className="action-menu-item"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              setMenuLocalContextKey(undefined);
+                                              const ok = await ensureLocalAzureConnected(ctxName);
+                                              if (!ok) return;
+                                              onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
+                                                console.error('Failed to connect local kubeconfig context:', err);
+                                              });
+                                            }}
+                                          >
+                                            Connect
+                                          </button>
+                                          <button
+                                            className="action-menu-item danger"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              setMenuLocalContextKey(undefined);
+                                              removeContext();
+                                            }}
+                                          >
+                                            Remove context
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
-                              {!collapsed && stubMenuOpen && (
-                                <div className="action-menu sidebar-action-menu">
-                                  <button
-                                    className="action-menu-item"
-                                    onClick={async (event) => {
-                                      event.stopPropagation();
-                                      setMenuLocalContextKey(undefined);
-                                      const ok = await ensureLocalAzureConnected(ctxName);
-                                      if (!ok) return;
-                                      onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
-                                        console.error('Failed to connect local kubeconfig context:', err);
-                                      });
-                                    }}
-                                  >
-                                    Connect
-                                  </button>
-                                  <button
-                                    className="action-menu-item danger"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setMenuLocalContextKey(undefined);
-                                      removeContext();
-                                    }}
-                                  >
-                                    Remove context
-                                  </button>
-                                </div>
-                              )}
                             </div>
                           );
                         })}

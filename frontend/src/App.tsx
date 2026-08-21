@@ -14,6 +14,7 @@ import { ApplicationsPanel } from './components/ApplicationsPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
+import { Modal } from './components/Modal';
 import {
   TerminalDock,
   type DockSession,
@@ -54,6 +55,7 @@ interface ViewTab {
   id: string;
   label: string;
   view: View;
+  pinned?: boolean;
   originContext?: string;
   originSource?: 'aks' | 'eks' | 'local';
   originKubeconfigId?: string;
@@ -162,6 +164,7 @@ function loadStoredTabs(): ViewTab[] {
         id,
         label: viewLabel(view, tab?.originContext),
         view,
+        pinned: tab?.pinned === true,
         originContext: tab?.originContext,
         originSource: tab?.originSource,
         originKubeconfigId: tab?.originKubeconfigId,
@@ -246,6 +249,12 @@ function namespaceSelectionKeyForContext(
 
 export default function App() {
   const queryClient = useQueryClient();
+  const isDesktopBuild = import.meta.env.K8_EXPLORER_DESKTOP === 'true';
+  const [desktopDialog, setDesktopDialog] = useState<{
+    title: string;
+    content: string;
+    loading?: boolean;
+  } | null>(null);
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme());
   const [route, setRoute] = useState<UiRoute>(() => routeFromPath(window.location.pathname));
   const SIDEBAR_DEFAULT_WIDTH_VW = 15;
@@ -288,8 +297,46 @@ export default function App() {
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState('');
 
   useEffect(() => {
+    const desktopMenu = window.desktopMenu;
+    if (!desktopMenu) return;
+    return desktopMenu.onAction(async (action) => {
+      if (action === 'preferences') return;
+      if (action === 'release-notes') {
+        setDesktopDialog({ title: 'Release Notes', content: 'Loading release notes...', loading: true });
+        try {
+          const release = await desktopMenu.fetchLatestRelease();
+          setDesktopDialog({ title: release.name, content: release.body || 'No release notes available.' });
+        } catch (error) {
+          setDesktopDialog({ title: 'Release Notes', content: error instanceof Error ? error.message : 'Unable to load release notes.' });
+        }
+        return;
+      }
+      if (action === 'license') {
+        setDesktopDialog({ title: 'License', content: 'Loading license...', loading: true });
+        try {
+          const license = await desktopMenu.fetchGithubFile('LICENSE');
+          setDesktopDialog({ title: 'License', content: license });
+        } catch (error) {
+          setDesktopDialog({ title: 'License', content: error instanceof Error ? error.message : 'Unable to load the license.' });
+        }
+        return;
+      }
+      if (action === 'about') {
+        setDesktopDialog({ title: 'About K8 Explorer', content: 'Loading application information...', loading: true });
+        try {
+          const info = await desktopMenu.getAppInfo();
+          setDesktopDialog({ title: info.name, content: `${info.description}\n\nVersion ${info.version}` });
+        } catch (error) {
+          setDesktopDialog({ title: 'About K8 Explorer', content: error instanceof Error ? error.message : 'Unable to load application information.' });
+        }
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
+    void window.desktopMenu?.setTheme(theme);
   }, [theme]);
 
   const navigateToRoute = (nextRoute: UiRoute, replace = false) => {
@@ -646,8 +693,12 @@ export default function App() {
       : undefined);
     const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId);
     setTabs((current) => {
-      if (current.some((tab) => tab.id === id)) {
-        return current.map((tab) => {
+      const activeTab = current.find((tab) => tab.id === activeTabId);
+      const withoutTemporaryActiveTab = activeTab && activeTab.id !== id && !activeTab.pinned
+        ? current.filter((tab) => tab.id !== activeTab.id)
+        : current;
+      if (withoutTemporaryActiveTab.some((tab) => tab.id === id)) {
+        return withoutTemporaryActiveTab.map((tab) => {
           if (tab.id !== id) return tab;
           const nextOriginContext = originContext ?? tab.originContext;
           const nextOriginSource = resolvedOriginSource ?? tab.originSource;
@@ -662,7 +713,7 @@ export default function App() {
         });
       }
       return [
-        ...current,
+        ...withoutTemporaryActiveTab,
         {
           id,
           label: viewLabel(view, originContext, resolvedOriginSource),
@@ -674,6 +725,19 @@ export default function App() {
       ];
     });
     setActiveTabId(id);
+  };
+
+  const pinView = (
+    view: View,
+    originContext?: string,
+    originSource?: 'aks' | 'eks' | 'local',
+    originKubeconfigId?: string,
+  ) => {
+    const resolvedOriginSource = originSource ?? (originContext
+      ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | undefined)
+      : undefined);
+    const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId);
+    setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, pinned: true } : tab)));
   };
 
   const closeTabsByOriginSource = (originSource: 'aks' | 'eks' | 'local') => {
@@ -926,13 +990,15 @@ export default function App() {
 
   return (
     <PermissionsProvider value={permissions}>
-    <div className="app">
+    <div className={`app ${isDesktopBuild ? 'desktop-app' : ''}`}>
+    {/* <div className="app"> */}
       <TopBar
         user={user}
         theme={theme}
         onThemeChange={setTheme}
-        onContextsRefetch={() => contextsQuery.refetch()}
-        onSignOut={handleSignOut}
+        hideBar={isDesktopBuild}
+        // onContextsRefetch={() => contextsQuery.refetch()}
+        // onSignOut={handleSignOut}
       />
       <div
         className={`body ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
@@ -944,6 +1010,7 @@ export default function App() {
           activeTabOriginSource={activeTab?.originSource}
           activeTabOriginKubeconfigId={activeTab?.originKubeconfigId}
           onSelect={openView}
+          onPin={pinView}
           onOpenExplorer={activateExplorerRoute}
           scope={scope}
           contexts={contexts}
@@ -982,12 +1049,17 @@ export default function App() {
                         <div
                           key={tab.id}
                           ref={tab.id === activeTabId ? activeTabRef : undefined}
-                          className={`main-tab ${tab.id === activeTabId ? 'active' : ''}`}
+                          className={`main-tab ${tab.id === activeTabId ? 'active' : ''} ${tab.pinned ? 'pinned' : 'unpinned'}`}
                           onClick={() => {
                             setActiveTabId(tab.id);
                             if (tab.originContext && tab.originContext !== context) {
                               void handleContextChange(tab.originContext);
                             }
+                          }}
+                          onDoubleClick={() => {
+                            setTabs((current) => current.map((currentTab) => (
+                              currentTab.id === tab.id ? { ...currentTab, pinned: true } : currentTab
+                            )));
                           }}
                           onContextMenu={(event) => {
                             event.preventDefault();
@@ -1180,6 +1252,12 @@ export default function App() {
           onClose={() => setCreateResourceOpen(false)}
           onToast={pushToast}
         />
+      )}
+      {desktopDialog && (
+        <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>
+          <pre className="desktop-help-content">{desktopDialog.content}</pre>
+          {desktopDialog.loading && <div className="dim">Loading...</div>}
+        </Modal>
       )}
       {tabMenu && (
         <div

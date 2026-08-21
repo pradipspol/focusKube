@@ -1,9 +1,9 @@
-name: Desktop Installer
+name: Publish Release
 
 on:
   push:
     branches:
-      - main
+      - release/*
   workflow_dispatch:
 
 jobs:
@@ -71,6 +71,7 @@ jobs:
           "path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "name=$($installer.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "exe_path=$($exeInstaller.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      
       - name: Read desktop package version
         id: version
         shell: pwsh

@@ -659,7 +659,7 @@ async function handleWatch(ws: WebSocket, req: any) {
           );
         }
         if (err && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'ERROR', message: err.message ?? String(err) }));
+          ws.send(JSON.stringify({ type: 'ERROR', message: err.message ?? String(err), status: statusCode || undefined }));
         }
         try {
           ws.close();

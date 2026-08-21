@@ -10,16 +10,22 @@ interface Props {
   user: AuthUser;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
-  onContextsRefetch: () => void;
-  onSignOut: () => Promise<void>;
+  onOpenSettings?: () => void;
+  // Hides the visual bar (used in desktop builds) while keeping the
+  // menu-action listener and Preferences modal mounted.
+  hideBar?: boolean;
+  // onContextsRefetch: () => void;
+  // onSignOut: () => Promise<void>;
 }
 
 export function TopBar({
   user,
   theme,
   onThemeChange,
-  onContextsRefetch,
-  onSignOut,
+  onOpenSettings,
+  hideBar,
+  // onContextsRefetch,
+  // onSignOut,
 }: Props) {
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -68,10 +74,10 @@ export function TopBar({
     };
   }, [menuOpen]);
 
-  const reload = useMutation({
-    mutationFn: () => api.reloadContexts(),
-    onSuccess: () => onContextsRefetch(),
-  });
+  // const reload = useMutation({
+  //   mutationFn: () => api.reloadContexts(),
+  //   onSuccess: () => onContextsRefetch(),
+  // });
 
   const updateLogLevel = useMutation({
     mutationFn: (level: LogLevel) => api.setLogLevel(level),
@@ -88,6 +94,18 @@ export function TopBar({
     await queryClient.invalidateQueries({ queryKey: ['settings', 'log-level'] });
   };
 
+  useEffect(() => {
+    if (!window.desktopMenu) return;
+    return window.desktopMenu.onAction((action) => {
+      if (action === 'preferences') {
+        setMenuOpen(false);
+        setSettingsOpen(true);
+        setSelectedTheme(theme);
+        onOpenSettings?.();
+      }
+    });
+  }, [onOpenSettings, theme]);
+
   const handleSaveSettings = async () => {
     await updateLogLevel.mutateAsync(selectedLevel);
     onThemeChange(selectedTheme);
@@ -102,6 +120,8 @@ export function TopBar({
   ];
 
   return (
+    <>
+    {!hideBar && (
     <div className="topbar">
       <span className="brand">⎈ K8 Explorer</span>
 
@@ -165,6 +185,8 @@ export function TopBar({
           </div>
         )}
       </div>
+    </div>
+    )}
 
       {settingsOpen && (
         <div className="overlay center" onClick={() => setSettingsOpen(false)}>
@@ -244,6 +266,6 @@ export function TopBar({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
