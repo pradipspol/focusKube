@@ -6,7 +6,8 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "clean": "node -e \"require('fs').rmSync('./dist', { recursive: true, force: true })\"",
+    "dev": "npm run clean && tsc -p tsconfig.json && node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "build:bundle": "tsc -p tsconfig.json --noEmit && node ./scripts/build-esbuild.mjs",
     "lint": "eslint .",

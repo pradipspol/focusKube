@@ -1,0 +1,45 @@
+name: Build and package k8-explorer desktop app
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - release/*
+  workflow_dispatch:
+
+jobs:
+  lint-and-build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint backend
+        run: npm --workspace backend run lint
+
+      - name: Lint frontend
+        run: npm --workspace frontend run lint
+
+      - name: Build backend
+        run: npm --workspace backend run build
+
+      - name: Build frontend
+        run: npm --workspace frontend run build
+
+      - name: Build and package desktop app
+        run: npm run desktop:package
+
+
+      

@@ -13,7 +13,7 @@ type OutboundMessage =
   | { type: 'state'; state: 'connecting' | 'live' | 'disconnected' }
   | { type: 'event'; eventType: string; object: any }
   | { type: 'resync' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; forbidden?: boolean };
 
 let socket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
@@ -22,6 +22,9 @@ let disposed = false;
 let reconnectAttempts = 0;
 let currentConnectionOpened = false;
 let hadFatalError = false;
+// RBAC will never allow this watch to succeed until the caller starts a fresh
+// subscription (namespace change or explicit refresh) — never auto-reconnect.
+let isForbidden = false;
 let lastResourceVersion: string | undefined;
 let pendingStopTimer: number | null = null;
 
@@ -77,6 +80,7 @@ function connect() {
   if (disposed || !activePayload) return;
   currentConnectionOpened = false;
   hadFatalError = false;
+  isForbidden = false;
   post({ type: 'state', state: 'connecting' });
   socket = new WebSocket(wsUrl(activePayload));
 
@@ -96,8 +100,9 @@ function connect() {
       }
       if (payload?.type === 'ERROR') {
         hadFatalError = true;
+        isForbidden = payload.status === 403 || /forbidden/i.test(String(payload.message ?? ''));
         post({ type: 'state', state: 'disconnected' });
-        post({ type: 'error', message: payload.message ?? 'Watch error' });
+        post({ type: 'error', message: payload.message ?? 'Watch error', forbidden: isForbidden });
         return;
       }
       const rv = payload?.object?.metadata?.resourceVersion;
@@ -134,6 +139,11 @@ function connect() {
     // a fatal error (e.g. 403 Forbidden — RBAC will never allow this watch to
     // succeed). Back off and give up after the cap instead of retrying forever;
     // the main thread can restart us with a fresh 'start' (manual retry).
+    if (isForbidden) {
+      // Forbidden is permanent for this namespace/context — don't burn attempts
+      // retrying it; wait for an explicit restart instead.
+      return;
+    }
     reconnectAttempts += 1;
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       post({ type: 'error', message: `Stopped reconnecting after ${MAX_RECONNECT_ATTEMPTS} attempts.` });
@@ -167,6 +177,7 @@ self.onmessage = (event: MessageEvent<InboundMessage>) => {
     clearPendingStop();
     disposed = false;
     reconnectAttempts = 0;
+    isForbidden = false;
     lastResourceVersion = undefined;
     activePayload = msg.payload;
     clearReconnect();

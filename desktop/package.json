@@ -7,7 +7,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "package": "npm --prefix .. run build:bundle:prod && node ./package-windows.js"
+    "package": "set K8_EXPLORER_DESKTOP=true&& npm --prefix .. run build:bundle:prod && node ./package-windows.js"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -17,11 +17,12 @@
   "build": {
     "appId": "com.k8-explorer.desktop",
     "productName": "k8-explorer",
-    "electronVersion": "25.0.0",
+    "electronVersion": "39.8.10",
     "npmRebuild": false,
     "afterPack": "./afterPack.js",
     "files": [
       "main.js",
+      "preload.js",
       "assets/icons/app_150.png",
       "assets/icons/app512.ico",
       "package.json",

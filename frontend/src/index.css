@@ -484,6 +484,9 @@ a {
   grid-template-rows: auto 1fr auto;
   height: 100%;
 }
+.app.desktop-app {
+  grid-template-rows: 1fr auto;
+}
 
 /* Page bottom footer — kept as slim as possible */
 .app-footer {
@@ -3191,6 +3194,16 @@ code.inline {
   color: var(--text-dim);
   font-size: var(--fs-sm);
   text-transform: uppercase;
+}
+.desktop-help-content {
+  margin: 0;
+  max-height: 65vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--mono);
+  line-height: 1.5;
 }
 .settings-message {
   grid-column: 1 / -1;

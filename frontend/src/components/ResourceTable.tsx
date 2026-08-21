@@ -356,6 +356,12 @@ const POLL_INTERVAL_MS = 1000;
 const WATCH_FALLBACK_POLL_MS = 1500;
 const WATCH_RESYNC_THROTTLE_MS = 5000;
 
+// RBAC will never grant this on its own — auto-retrying it just hammers the
+// cluster. Stop immediately and wait for a namespace change or explicit Refresh.
+function isForbiddenError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403;
+}
+
 type ResourceListResult = { items: K8sObject[] };
 type PagedResourceListResult = { items: K8sObject[]; continue?: string };
 
@@ -432,13 +438,15 @@ export function ResourceTable({
   const queryKey = ['resource', plural, scope.context, scope.namespace, namespaceSelectionSignature];
   const pagedQueryKey = [...queryKey, 'paged'];
   const listNamespaces = async (namespacesToFetch: string[]) => {
-    const responses = await Promise.all(
+    const responses = await Promise.allSettled(
       namespacesToFetch.map(async (namespaceName) => {
         const data = await api.listResource(plural, { ...effectiveScope, namespace: namespaceName });
         return data.items;
       }),
     );
-    const items = responses.flat();
+    // Best-effort merge: a namespace the user can't access (403) shouldn't
+    // block the ones they can — just skip it rather than failing the whole list.
+    const items = responses.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
     return Array.from(
       new Map(
         items.map((item) => {
@@ -529,11 +537,18 @@ export function ResourceTable({
   });
 
   // Count consecutive failures; stop auto-retrying after MAX_CONNECT_RETRIES.
+  // A Forbidden (403) response never resolves itself on retry — stop immediately
+  // instead of burning the retry budget hammering an endpoint the user can't access.
   useEffect(() => {
     if (!list.isError) return;
+    if (isForbiddenError(list.error)) {
+      failureCountRef.current = MAX_CONNECT_RETRIES;
+      setConnectionState('stopped');
+      return;
+    }
     failureCountRef.current += 1;
     setConnectionState(failureCountRef.current >= MAX_CONNECT_RETRIES ? 'stopped' : 'retrying');
-  }, [list.isError, list.errorUpdatedAt]);
+  }, [list.isError, list.errorUpdatedAt, list.error]);
 
   // Any successful fetch resets the failure budget.
   useEffect(() => {
@@ -679,6 +694,7 @@ export function ResourceTable({
     return () => window.clearTimeout(timer);
   }, [focusContext, focusName, sortedItems]);
   const errorMessage = list.isError ? (list.error as Error).message : '';
+  const isForbiddenNow = list.isError && isForbiddenError(list.error);
   const needsNamespaceHint =
     !scope.namespace &&
     !CLUSTER_SCOPED_TYPES.has(plural) &&
@@ -1172,7 +1188,9 @@ export function ResourceTable({
       {list.isError && (
         <div className="notice error">
           {errorMessage}
-          {connectionState === 'stopped' &&
+          {connectionState === 'stopped' && isForbiddenNow &&
+            ' — access denied, so automatic retries were stopped. Pick a different namespace or click Refresh.'}
+          {connectionState === 'stopped' && !isForbiddenNow &&
             ` — stopped after ${MAX_CONNECT_RETRIES} attempts. Click Retry to try again.`}
         </div>
       )}
