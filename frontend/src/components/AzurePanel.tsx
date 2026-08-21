@@ -227,7 +227,7 @@ export function AzurePanel({
         )}
       </section>
 
-      {loggedIn && (
+      {/* {loggedIn && (
         <>
           <section style={{ marginBottom: 24 }}>
             <h3>Subscription</h3>
@@ -297,7 +297,7 @@ export function AzurePanel({
             )}
           </section>
         </>
-      )}
+      )} */}
     </div>
   );
 }
