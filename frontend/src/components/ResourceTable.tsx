@@ -9,6 +9,7 @@ import { getWatchWorker, releaseWatchWorker } from '../utils/workerRuntime';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
 import { ResourceDetail } from './ResourceDetail';
+import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 
 interface Props {
@@ -116,7 +117,7 @@ const POD_COLUMNS: ColumnDef[] = [
   { key: 'qos', label: 'QoS', width: 80 },
   { key: 'status', label: 'Status', width: 80 },
   { key: 'age', label: 'Age', width: 70 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const DEPLOYMENT_COLUMNS: ColumnDef[] = [
@@ -127,7 +128,7 @@ const DEPLOYMENT_COLUMNS: ColumnDef[] = [
   { key: 'replicas', label: 'Replicas', width: 100 },
   { key: 'age', label: 'Age', width: 90 },
   { key: 'status', label: 'Status', width: 120 },
-  { key: 'actions', label: '⋮', width: 220, resizable: false },
+  { key: 'actions', label: '', width: 220, resizable: false },
 ];
 
 const DAEMONSET_COLUMNS: ColumnDef[] = [
@@ -141,7 +142,7 @@ const DAEMONSET_COLUMNS: ColumnDef[] = [
   { key: 'available', label: 'Available', width: 110 },
   { key: 'nodeSelector', label: 'Node Selector', width: 180 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const STATEFULSET_COLUMNS: ColumnDef[] = [
@@ -152,7 +153,7 @@ const STATEFULSET_COLUMNS: ColumnDef[] = [
   { key: 'current', label: 'Current', width: 100 },
   { key: 'ready', label: 'Ready', width: 100 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const REPLICASET_COLUMNS: ColumnDef[] = [
@@ -162,7 +163,7 @@ const REPLICASET_COLUMNS: ColumnDef[] = [
   { key: 'pods', label: 'Pods', width: 90 },
   { key: 'replicas', label: 'Replicas', width: 100 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const JOB_COLUMNS: ColumnDef[] = [
@@ -172,7 +173,7 @@ const JOB_COLUMNS: ColumnDef[] = [
   { key: 'completions', label: 'Completions', width: 110 },
   { key: 'age', label: 'Age', width: 90 },
   { key: 'conditions', label: 'Conditions', width: 160 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const CRONJOB_COLUMNS: ColumnDef[] = [
@@ -186,7 +187,7 @@ const CRONJOB_COLUMNS: ColumnDef[] = [
   { key: 'nextExecution', label: 'Next execution', width: 180 },
   { key: 'timeZone', label: 'Time zone', width: 120 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const CONFIGMAP_COLUMNS: ColumnDef[] = [
@@ -196,7 +197,7 @@ const CONFIGMAP_COLUMNS: ColumnDef[] = [
   { key: 'labels', label: 'Labels', width: 120 },
   { key: 'keys', label: 'Keys', width: 100 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const SECRET_COLUMNS: ColumnDef[] = [
@@ -207,7 +208,7 @@ const SECRET_COLUMNS: ColumnDef[] = [
   { key: 'keys', label: 'Keys', width: 100 },
   { key: 'type', label: 'Type', width: 210 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 120, resizable: false },
+  { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const NAMESPACE_COLUMNS: ColumnDef[] = [
@@ -216,7 +217,7 @@ const NAMESPACE_COLUMNS: ColumnDef[] = [
   { key: 'labels', label: 'Labels', width: 320 },
   { key: 'status', label: 'Status', width: 120 },
   { key: 'age', label: 'Age', width: 90 },
-  { key: 'actions', label: '⋮', width: 92, resizable: false },
+  { key: 'actions', label: '', width: 92, resizable: false },
 ];
 
 const EVENTS_COLUMNS: ColumnDef[] = [
@@ -254,6 +255,41 @@ const COLUMNS_BY_PLURAL: Record<string, ColumnDef[]> = {
   namespaces: NAMESPACE_COLUMNS,
   events: EVENTS_COLUMNS,
 };
+
+const COLUMN_VISIBILITY_STORAGE_PREFIX = 'k8sExplorer.resourceColumns';
+
+function getColumnVisibilityStorageKey(plural: string): string {
+  return `${COLUMN_VISIBILITY_STORAGE_PREFIX}.${plural}`;
+}
+
+function getDefaultVisibleColumns(plural: string): string[] {
+  return (COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS)
+    .filter((column) => column.key !== 'select' && column.key !== 'actions')
+    .map((column) => column.key);
+}
+
+function readVisibleColumns(plural: string): string[] {
+  const defaults = getDefaultVisibleColumns(plural);
+  if (typeof window === 'undefined') {
+    return defaults;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getColumnVisibilityStorageKey(plural));
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaults;
+    const valid = parsed.filter((key): key is string => typeof key === 'string' && defaults.includes(key));
+    return valid.length > 0 ? valid : defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+function persistVisibleColumns(plural: string, next: string[]) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(getColumnVisibilityStorageKey(plural), JSON.stringify(next));
+}
 
 const QUICK_ACTION_KEYS_BY_PLURAL: Record<string, string[]> = {
   pods: ['pods.logs', 'pods.shell', 'common.editYaml'],
@@ -661,9 +697,20 @@ export function ResourceTable({
       return new Map<string, { cpuMillicores: number; memoryBytes: number } | undefined>(rows);
     },
   });
+  const defaultColumnKeys = useMemo(() => getDefaultVisibleColumns(plural), [plural]);
+  const columnVisibilityStorageKey = `k8sExplorer.resourceColumns.${plural}`;
+  const { visibleColumns: visibleColumnKeys, toggleVisibleColumn, resetVisibleColumns, columnMenuOpen, setColumnMenuOpen } = useColumnVisibility(
+    (COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS).filter((column) => column.key !== 'select' && column.key !== 'actions'),
+    columnVisibilityStorageKey,
+  );
+
   const columns = useMemo(() => {
-    return COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS;
-  }, [plural]);
+    const allowed = new Set(visibleColumnKeys);
+    return (COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS).filter(
+      (column) => column.key === 'select' || column.key === 'actions' || allowed.has(column.key),
+    );
+  }, [plural, visibleColumnKeys]);
+
   const sortedItems = useMemo(() => {
     const working = items.slice();
     if (!sortKey) return working;
@@ -729,6 +776,22 @@ export function ResourceTable({
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [openMenuKey]);
+
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.column-picker-button') || target.closest('.column-picker-menu')) {
+        return;
+      }
+      setColumnMenuOpen(false);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [columnMenuOpen]);
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -1215,11 +1278,11 @@ export function ResourceTable({
           <thead>
             <tr>
               {columns.map((column) => (
-                <th key={column.key}>
+                <th key={column.key} className={column.key === 'actions' ? 'column-actions-header' : ''}>
                   <div
                     className={`th-content ${isSortableColumn(column.key) ? 'sortable' : ''}`}
                     title={headerTitle(column.key)}
-                    onClick={() => toggleSort(column.key)}
+                    onClick={() => { if (column.key !== 'actions') toggleSort(column.key); }}
                   >
                     <span
                       className={isSortableColumn(column.key) ? 'th-sort-label sortable' : 'th-sort-label'}
@@ -1229,16 +1292,29 @@ export function ResourceTable({
                         <span className="th-sort-indicator">{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                       )}
                     </span>
-                    {column.resizable !== false && column.label && (
-                      <span
-                        className="col-resizer"
-                        title={`Resize ${column.label} column`}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          startResize(column.key, columnWidths[column.key] ?? column.width, event.clientX);
-                        }}
+                    {column.key === 'actions' ? (
+                      <ColumnVisibilityPicker
+                        columns={(COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS).filter(
+                          (entry) => entry.key !== 'select' && entry.key !== 'actions',
+                        )}
+                        visibleColumns={visibleColumnKeys}
+                        onToggle={toggleVisibleColumn}
+                        onReset={resetVisibleColumns}
+                        isOpen={columnMenuOpen}
+                        onOpenChange={setColumnMenuOpen}
                       />
+                    ) : (
+                      column.resizable !== false && column.label && (
+                        <span
+                          className="col-resizer"
+                          title={`Resize ${column.label} column`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            startResize(column.key, columnWidths[column.key] ?? column.width, event.clientX);
+                          }}
+                        />
+                      )
                     )}
                   </div>
                 </th>

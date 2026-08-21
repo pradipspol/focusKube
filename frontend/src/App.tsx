@@ -55,6 +55,7 @@ interface ViewTab {
   id: string;
   label: string;
   view: View;
+  pinned?: boolean;
   originContext?: string;
   originSource?: 'aks' | 'eks' | 'local';
   originKubeconfigId?: string;
@@ -163,6 +164,7 @@ function loadStoredTabs(): ViewTab[] {
         id,
         label: viewLabel(view, tab?.originContext),
         view,
+        pinned: tab?.pinned === true,
         originContext: tab?.originContext,
         originSource: tab?.originSource,
         originKubeconfigId: tab?.originKubeconfigId,
@@ -691,8 +693,12 @@ export default function App() {
       : undefined);
     const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId);
     setTabs((current) => {
-      if (current.some((tab) => tab.id === id)) {
-        return current.map((tab) => {
+      const activeTab = current.find((tab) => tab.id === activeTabId);
+      const withoutTemporaryActiveTab = activeTab && activeTab.id !== id && !activeTab.pinned
+        ? current.filter((tab) => tab.id !== activeTab.id)
+        : current;
+      if (withoutTemporaryActiveTab.some((tab) => tab.id === id)) {
+        return withoutTemporaryActiveTab.map((tab) => {
           if (tab.id !== id) return tab;
           const nextOriginContext = originContext ?? tab.originContext;
           const nextOriginSource = resolvedOriginSource ?? tab.originSource;
@@ -707,7 +713,7 @@ export default function App() {
         });
       }
       return [
-        ...current,
+        ...withoutTemporaryActiveTab,
         {
           id,
           label: viewLabel(view, originContext, resolvedOriginSource),
@@ -719,6 +725,19 @@ export default function App() {
       ];
     });
     setActiveTabId(id);
+  };
+
+  const pinView = (
+    view: View,
+    originContext?: string,
+    originSource?: 'aks' | 'eks' | 'local',
+    originKubeconfigId?: string,
+  ) => {
+    const resolvedOriginSource = originSource ?? (originContext
+      ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | undefined)
+      : undefined);
+    const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId);
+    setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, pinned: true } : tab)));
   };
 
   const closeTabsByOriginSource = (originSource: 'aks' | 'eks' | 'local') => {
@@ -991,6 +1010,7 @@ export default function App() {
           activeTabOriginSource={activeTab?.originSource}
           activeTabOriginKubeconfigId={activeTab?.originKubeconfigId}
           onSelect={openView}
+          onPin={pinView}
           onOpenExplorer={activateExplorerRoute}
           scope={scope}
           contexts={contexts}
@@ -1029,12 +1049,17 @@ export default function App() {
                         <div
                           key={tab.id}
                           ref={tab.id === activeTabId ? activeTabRef : undefined}
-                          className={`main-tab ${tab.id === activeTabId ? 'active' : ''}`}
+                          className={`main-tab ${tab.id === activeTabId ? 'active' : ''} ${tab.pinned ? 'pinned' : 'unpinned'}`}
                           onClick={() => {
                             setActiveTabId(tab.id);
                             if (tab.originContext && tab.originContext !== context) {
                               void handleContextChange(tab.originContext);
                             }
+                          }}
+                          onDoubleClick={() => {
+                            setTabs((current) => current.map((currentTab) => (
+                              currentTab.id === tab.id ? { ...currentTab, pinned: true } : currentTab
+                            )));
                           }}
                           onContextMenu={(event) => {
                             event.preventDefault();

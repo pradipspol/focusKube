@@ -1524,6 +1524,9 @@ a {
   white-space: nowrap;
   min-width: 0;
 }
+.main-tab.unpinned .main-tab-label {
+  font-style: italic;
+}
 .main-tab.active {
   background: var(--surface-raised);
   color: var(--tab-active-text);
@@ -1544,7 +1547,7 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
+  padding: 2px 0;
   flex-shrink: 0;
   position: relative;
 }
@@ -1667,6 +1670,74 @@ th {
 }
 .th-content.sortable {
   cursor: pointer;
+}
+.column-actions-header {
+  position: relative;
+  /* display: inline-flex; */
+  align-items: center;
+  width: 42px;
+  min-width: 42px;
+}
+.column-picker-button {
+  margin-left: auto;
+  display: inline-flex;
+  /* align-items: center; */
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+}
+.column-picker-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.column-picker-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 180px;
+  background: var(--surface-menu);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px var(--shadow-color-strong);
+  padding: 8px;
+  z-index: 2000;
+}
+.column-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+.column-picker-option:hover {
+  background: var(--surface-menu-hover);
+}
+.column-picker-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.column-picker-reset {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-bright);
+  text-align: left;
+}
+.column-picker-reset:hover {
+  border-color: var(--border);
+  background: var(--surface-menu-hover);
 }
 .th-sort-label {
   display: inline-flex;

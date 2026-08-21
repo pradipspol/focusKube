@@ -7,6 +7,7 @@ import {
   type UIEventHandler,
   type ReactNode,
 } from 'react';
+import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
 
 export interface DataColumn<T> {
   key: string;
@@ -90,7 +91,16 @@ export function DataTable<T>({
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
   const hasActions = !!onShowDetails || actions.length > 0;
-  const colSignature = columns.map((c) => `${c.key}:${c.width ?? ''}`).join('|');
+  const showColumnPicker = true;
+  const storageKey = `k8sExplorer.dataTableColumns.${columns.map((c) => c.key).join('|')}`;
+  const { visibleColumns, toggleVisibleColumn, resetVisibleColumns, columnMenuOpen, setColumnMenuOpen } = useColumnVisibility(columns, storageKey);
+
+  const displayColumns = useMemo(
+    () => columns.filter((column) => visibleColumns.includes(column.key)),
+    [columns, visibleColumns],
+  );
+
+  const colSignature = displayColumns.map((c) => `${c.key}:${c.width ?? ''}`).join('|');
 
   useEffect(() => {
     setSortDir(initialSortDirection);
@@ -239,15 +249,26 @@ export function DataTable<T>({
     return () => window.removeEventListener('pointerdown', onDown);
   }, [openKey]);
 
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.closest('.column-picker-button') || target.closest('.column-picker-menu'))) return;
+      setColumnMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+  }, [columnMenuOpen]);
+
   return (
     <div className="data-table-wrapper" ref={wrapperRef} onScroll={onScroll}>
       <table className="data-table">
         <colgroup>
           {selectable && <col style={{ width: colWidth(SELECT_KEY, SELECT_WIDTH) }} />}
-          {columns.map((c) => (
+          {displayColumns.map((c) => (
             <col key={c.key} style={{ width: colWidth(c.key, c.width) }} />
           ))}
-          {hasActions && <col style={{ width: colWidth(ACTIONS_KEY, ACTIONS_WIDTH) }} />}
+          {(hasActions || showColumnPicker) && <col style={{ width: colWidth(ACTIONS_KEY, ACTIONS_WIDTH) }} />}
         </colgroup>
         <thead>
           <tr>
@@ -262,7 +283,7 @@ export function DataTable<T>({
                 />
               </th>
             )}
-            {columns.map((c) => {
+            {displayColumns.map((c) => {
               const sortable = c.sortable !== false;
               const resizable = c.resizable !== false;
               return (
@@ -293,7 +314,18 @@ export function DataTable<T>({
                 </th>
               );
             })}
-            {hasActions && <th aria-label="Actions"></th>}
+            {(hasActions || showColumnPicker) && (
+              <th aria-label="Actions">
+                <ColumnVisibilityPicker
+                  columns={columns}
+                  visibleColumns={visibleColumns}
+                  onToggle={toggleVisibleColumn}
+                  onReset={resetVisibleColumns}
+                  isOpen={columnMenuOpen}
+                  onOpenChange={setColumnMenuOpen}
+                />
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -316,50 +348,52 @@ export function DataTable<T>({
                     />
                   </td>
                 )}
-                {columns.map((c) => (
+                {displayColumns.map((c) => (
                   <td key={c.key} className={c.className}>
                     {c.render ? c.render(row) : c.value(row)}
                   </td>
                 ))}
-                {hasActions && (
-                  <td className={`actions-cell ${openKey === key ? 'menu-open' : ''}`}>
-                    <div className="row-actions row-actions-visible">
-                      <button className="action-trigger" title="Actions" onClick={(event) => openMenu(key, event)}>
-                        ⋮
-                      </button>
-                      {openKey === key && menuPos && (
-                        <div
-                          className={`action-menu ${menuPos.up ? 'open-up' : ''}`}
-                          style={{ top: menuPos.top, left: menuPos.left }}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {onShowDetails && (
-                            <button
-                              className="action-menu-item"
-                              onClick={() => {
-                                setOpenKey(null);
-                                onShowDetails(row);
-                              }}
-                            >
-                              Show details
-                            </button>
-                          )}
-                          {actions.map((action) => (
-                            <button
-                              key={action.label}
-                              className={`action-menu-item ${action.danger ? 'danger' : ''}`}
-                              disabled={action.disabled?.(row)}
-                              onClick={() => {
-                                setOpenKey(null);
-                                action.onClick(row);
-                              }}
-                            >
-                              {action.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                {(hasActions || showColumnPicker) && (
+                  <td className={hasActions ? `actions-cell ${openKey === key ? 'menu-open' : ''}` : 'table-column-picker-spacer'}>
+                    {hasActions ? (
+                      <div className="row-actions row-actions-visible">
+                        <button className="action-trigger" title="Actions" onClick={(event) => openMenu(key, event)}>
+                          ⋮
+                        </button>
+                        {openKey === key && menuPos && (
+                          <div
+                            className={`action-menu ${menuPos.up ? 'open-up' : ''}`}
+                            style={{ top: menuPos.top, left: menuPos.left }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {onShowDetails && (
+                              <button
+                                className="action-menu-item"
+                                onClick={() => {
+                                  setOpenKey(null);
+                                  onShowDetails(row);
+                                }}
+                              >
+                                Show details
+                              </button>
+                            )}
+                            {actions.map((action) => (
+                              <button
+                                key={action.label}
+                                className={`action-menu-item ${action.danger ? 'danger' : ''}`}
+                                disabled={action.disabled?.(row)}
+                                onClick={() => {
+                                  setOpenKey(null);
+                                  action.onClick(row);
+                                }}
+                              >
+                                {action.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </td>
                 )}
               </tr>

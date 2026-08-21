@@ -11,6 +11,7 @@ interface Props {
   activeTabOriginSource?: 'aks' | 'eks' | 'local';
   activeTabOriginKubeconfigId?: string;
   onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
+  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onOpenExplorer: () => void;
   scope: Scope;
   contexts: KubeContext[];
@@ -151,6 +152,7 @@ export function Sidebar({
   activeTabOriginSource,
   activeTabOriginKubeconfigId,
   onSelect,
+  onPin,
   onOpenExplorer,
   scope,
   contexts,
@@ -447,6 +449,13 @@ export function Sidebar({
                           openExplorerView({ type: 'applications' }, contextName, originSource ?? 'aks', originKubeconfigId);
                         }
                       }}
+                      onDoubleClick={() => {
+                        if (item.disabled) return;
+                        const nextView: View = item.view ?? (item.plural
+                          ? { type: 'resource', plural: item.plural, focusContext: contextName }
+                          : { type: 'applications' });
+                        onPin(nextView, contextName, originSource ?? 'aks', originKubeconfigId);
+                      }}
                       title={item.label}
                     >
                       <span>{collapsed ? item.label.charAt(0) : item.label}</span>
@@ -531,76 +540,78 @@ export function Sidebar({
               />
             )}
             {!collapsed && (
-              <button
-                className="action-trigger sidebar-action-trigger"
-                title={`Actions for ${ctx.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setMenuContextName((current) => (current === ctx.name ? undefined : ctx.name));
-                }}
-              >
-                ⋮
-              </button>
+              <div className="action-trigger-wrap">
+                <button
+                  className="action-trigger sidebar-action-trigger"
+                  title={`Actions for ${ctx.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuContextName((current) => (current === ctx.name ? undefined : ctx.name));
+                  }}
+                >
+                  ⋮
+                </button>
+                {menuContextName === ctx.name && (
+                  <div className="action-menu sidebar-action-menu">
+                    <button
+                      className="action-menu-item"
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        setMenuContextName(undefined);
+                        if (isSelectedContext) {
+                          setConnectingContextName(ctx.name);
+                          try {
+                            await Promise.resolve(onContextChange(undefined));
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                          } finally {
+                            setConnectingContextName(undefined);
+                          }
+                          return;
+                        }
+                        if (isLocalContextNode) {
+                          const ok = await ensureLocalAzureConnected(ctx.name);
+                          if (!ok) return;
+                        }
+                        setConnectingContextName(ctx.name);
+                        try {
+                          await Promise.resolve(onContextChange(ctx.name));
+                          await new Promise(resolve => setTimeout(resolve, 300));
+                        } finally {
+                          setConnectingContextName(undefined);
+                        }
+                        expandGroup(`${nodeKeyPrefix}:${ctx.name}`);
+                      }}
+                    >
+                      {isSelectedContext ? 'Disconnect' : 'Connect'}
+                    </button>
+                    {/* <button
+                      className="action-menu-item"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuContextName(undefined);
+                        toggleStar(ctx.name);
+                      }}
+                    >
+                      {isStarred ? 'Unstar' : 'Star'}
+                    </button> */}
+                    {options?.onRemove && (
+                      <button
+                        className="action-menu-item danger"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuContextName(undefined);
+                          options.onRemove?.();
+                        }}
+                      >
+                        Remove context
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </span>
         </div>
-        {!collapsed && menuContextName === ctx.name && (
-          <div className="action-menu sidebar-action-menu">
-            <button
-              className="action-menu-item"
-              onClick={async (event) => {
-                event.stopPropagation();
-                setMenuContextName(undefined);
-                if (isSelectedContext) {
-                  setConnectingContextName(ctx.name);
-                  try {
-                    await Promise.resolve(onContextChange(undefined));
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                  } finally {
-                    setConnectingContextName(undefined);
-                  }
-                  return;
-                }
-                if (isLocalContextNode) {
-                  const ok = await ensureLocalAzureConnected(ctx.name);
-                  if (!ok) return;
-                }
-                setConnectingContextName(ctx.name);
-                try {
-                  await Promise.resolve(onContextChange(ctx.name));
-                  await new Promise(resolve => setTimeout(resolve, 300));
-                } finally {
-                  setConnectingContextName(undefined);
-                }
-                expandGroup(`${nodeKeyPrefix}:${ctx.name}`);
-              }}
-            >
-              {isSelectedContext ? 'Disconnect' : 'Connect'}
-            </button>
-            <button
-              className="action-menu-item"
-              onClick={(event) => {
-                event.stopPropagation();
-                setMenuContextName(undefined);
-                toggleStar(ctx.name);
-              }}
-            >
-              {isStarred ? 'Unstar' : 'Star'}
-            </button>
-            {options?.onRemove && (
-              <button
-                className="action-menu-item danger"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setMenuContextName(undefined);
-                  options.onRemove?.();
-                }}
-              >
-                Remove context
-              </button>
-            )}
-          </div>
-        )}
         {!collapsed && contextExpanded && canExpandLocalContextNode && renderSectionGroups(ctx.name, originSource ?? ctx.source?.provider, originKubeconfigId)}
       </div>
     );
@@ -661,6 +672,7 @@ export function Sidebar({
                 expandGroup={expandGroup}
                 ensureLocalAzureConnected={ensureLocalAzureConnected}
                 renderContextNode={renderContextNode}
+                onPin={onPin}
                 onContextChange={onContextChange}
                 onUploadLocalKubeconfig={onUploadLocalKubeconfig}
                 onConnectLocalKubeconfig={onConnectLocalKubeconfig}
