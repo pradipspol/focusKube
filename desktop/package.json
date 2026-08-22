@@ -1,13 +1,13 @@
 {
-  "name": "k8-explorer-desktop",
+  "name": "k8-explorer",
   "author": "TechAvise", 
   "description": "Kubernetes Explorer Desktop Client",
-  "version": "0.1.0",
+  "version": "0.1.0-1",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "package": "set K8_EXPLORER_DESKTOP=true&& npm --prefix .. run build:bundle:prod && node ./package-windows.js"
+    "package": "node ./package.js"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -53,6 +53,17 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "perMachine": false
+    },
+    "mac": {
+      "icon": "assets/icons/app512.png",
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "linux": {
+      "icon": "assets/icons/app512.png",
+      "category": "Development",
+      "target": ["AppImage", "deb"],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   },
   "devDependencies": {

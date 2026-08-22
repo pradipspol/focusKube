@@ -1,6 +1,7 @@
 // CommonJS wrapper to dynamically import ESM main module
 const { app, BrowserWindow, Menu, ipcMain, shell, net, nativeTheme } = require('electron');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
@@ -63,77 +64,83 @@ let backendProc = null;
 let server = null;
 
 /**
- * Verify that CLI tools (az, helm, kubectl, kubelogin) are available.
- * Tools are installed by install-extras.ps1 during the NSIS installer setup.
+ * Locate an executable by walking an explicit PATH string, without shelling
+ * out to `where`/`which` (keeps this working identically on every platform).
+ */
+function findOnAugmentedPath(candidate, augmentedPath) {
+  const dirs = (augmentedPath || '').split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const full = path.join(dir, candidate);
+    try {
+      if (fs.existsSync(full)) return full;
+    } catch { /* ignore and keep searching */ }
+  }
+  return null;
+}
+
+/** Per-platform install-extras script + the command used to run it. */
+function resolveExtrasRunner(extrasScript) {
+  if (process.platform === 'win32') {
+    return {
+      cmd: 'powershell.exe',
+      args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', extrasScript, '-Action', 'install'],
+    };
+  }
+  return { cmd: process.platform === 'darwin' ? '/bin/bash' : 'bash', args: [extrasScript, 'install'] };
+}
+
+/**
+ * Verify that CLI tools (az, helm, kubelogin) are available.
+ * Tools are installed by install-extras.ps1 (Windows) / install-extras.sh
+ * (macOS, Linux) during packaging or on first dev-mode launch.
  * At startup we only log their availability — we do NOT re-run the installer.
  * In dev mode (no installer ran), we do run the script once so developers don't
  * need to install tools manually.
  */
 async function ensureCliTools() {
-  if (process.platform !== 'win32') {
-    console.log('[tools] Skipping CLI tool check (not Windows)');
-    return;
-  }
-
   const isPackaged = app.isPackaged;
 
   if (isPackaged) {
-    // In packaged mode tools should already be installed by the NSIS installer.
-    // Verify using the augmented PATH (extras dir + wbin) so bundled .exe files
-    // and az.cmd are visible — the system PATH alone won't include extras dir.
+    // In packaged mode tools should already be installed by the platform
+    // installer's post-install hook. Verify using the augmented PATH (extras
+    // dir + platform tool dirs) so bundled binaries are visible — the system
+    // PATH alone won't include the extras dir.
     const augmented = buildAugmentedPath(process.resourcesPath);
-    const { execSync } = require('child_process');
 
-    // Candidates: bundled exe names and az-specific .cmd variant
-    const toolCandidates = {
-      az:        ['az.cmd', 'az.exe', 'az'],
-      helm:      ['helm.exe', 'helm'],
-      kubelogin: ['kubelogin.exe', 'kubelogin'],
-    };
+    const toolCandidates = process.platform === 'win32'
+      ? { az: ['az.cmd', 'az.exe'], helm: ['helm.exe'], kubelogin: ['kubelogin.exe'] }
+      : { az: ['az'], helm: ['helm'], kubelogin: ['kubelogin'] };
 
     console.log('[tools] Verifying CLI tools via augmented PATH...');
     for (const [tool, candidates] of Object.entries(toolCandidates)) {
-      let found = null;
-      for (const candidate of candidates) {
-        try {
-          const out = execSync(`where ${candidate}`, {
-            encoding: 'utf8',
-            env: { ...process.env, PATH: augmented },
-            stdio: ['ignore', 'pipe', 'ignore'],
-          }).trim();
-          found = out.split('\n')[0];
-          break;
-        } catch { /* try next candidate */ }
-      }
+      const found = candidates.map((c) => findOnAugmentedPath(c, augmented)).find(Boolean);
       if (found) {
         console.log(`[tools] [OK] ${tool}: ${found}`);
       } else {
-        console.warn(`[tools] [--] ${tool}: not found — NSIS hook may not have run`);
+        console.warn(`[tools] [--] ${tool}: not found — installer hook may not have run`);
       }
     }
     return;
   }
 
   // Dev mode: run install script so developers don't need to set up tools manually.
-  let extrasScript = path.join(__dirname, 'extra', 'install-extras.ps1');
+  const scriptName = process.platform === 'win32' ? 'install-extras.ps1' : 'install-extras.sh';
+  let extrasScript = path.join(__dirname, 'extra', scriptName);
   if (!fs.existsSync(extrasScript) && process.resourcesPath) {
-    extrasScript = path.join(process.resourcesPath, 'extras', 'install-extras.ps1');
+    extrasScript = path.join(process.resourcesPath, 'extras', scriptName);
   }
 
   console.log('[tools] Dev mode: running install script at: ' + extrasScript);
   if (!fs.existsSync(extrasScript)) {
     console.log('[tools] Install script not found, skipping. Tried:');
-    console.log('[tools]   - ' + path.join(__dirname, 'extra', 'install-extras.ps1'));
+    console.log('[tools]   - ' + path.join(__dirname, 'extra', scriptName));
     return;
   }
 
+  const { cmd, args } = resolveExtrasRunner(extrasScript);
+
   return new Promise((resolve) => {
-    const proc = spawn('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', extrasScript,
-      '-Action', 'install',
-    ], {
+    const proc = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -168,7 +175,7 @@ async function ensureCliTools() {
  * runnable by the backend process even when the OS session PATH is stale.
  */
 function buildAugmentedPath(resourcesPath) {
-  const sep = process.platform === 'win32' ? ';' : ':';
+  const sep = path.delimiter;
   const extra = [];
 
   console.log('[path] Building augmented PATH...');
@@ -206,19 +213,18 @@ function buildAugmentedPath(resourcesPath) {
   }
 
   // Azure kubelogin is installed by `az aks install-cli` into ~/.azure-kubelogin
-  // This is the correct Azure-specific kubelogin (Azure/kubelogin), distinct from
-  // the OIDC kubelogin (int128/kubelogin). Must be in PATH for AKS authentication.
-  if (process.platform === 'win32' && process.env.USERPROFILE) {
-    const azureKubeloginDir = path.join(process.env.USERPROFILE, '.azure-kubelogin');
-    if (fs.existsSync(azureKubeloginDir)) {
-      extra.push(azureKubeloginDir);
-      console.log('[path] Azure kubelogin dir added to PATH:', azureKubeloginDir);
-    }
+  // on every platform. This is the correct Azure-specific kubelogin
+  // (Azure/kubelogin), distinct from the OIDC kubelogin (int128/kubelogin).
+  // Must be in PATH for AKS authentication.
+  const azureKubeloginDir = path.join(os.homedir(), '.azure-kubelogin');
+  if (fs.existsSync(azureKubeloginDir)) {
+    extra.push(azureKubeloginDir);
+    console.log('[path] Azure kubelogin dir added to PATH:', azureKubeloginDir);
   }
 
-  // Azure CLI installs az.cmd into a wbin directory that may not be in the
-  // inherited session PATH on a freshly provisioned machine.
   if (process.platform === 'win32') {
+    // Azure CLI installs az.cmd into a wbin directory that may not be in the
+    // inherited session PATH on a freshly provisioned machine.
     console.log('[path] Checking for Azure CLI in standard locations...');
     const programRoots = [
       process.env['ProgramFiles(x86)'],
@@ -241,6 +247,16 @@ function buildAugmentedPath(resourcesPath) {
         break; // only need the first match
       } else {
         console.log('[path]   [--] Not found');
+      }
+    }
+  } else {
+    // Common Homebrew (macOS Apple Silicon/Intel) and Linux package manager
+    // install locations that may be missing from a GUI-launched app's PATH.
+    const unixDirs = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/local/sbin'];
+    for (const dir of unixDirs) {
+      if (fs.existsSync(dir)) {
+        extra.push(dir);
+        console.log('[path] Added standard tool dir to PATH:', dir);
       }
     }
   }

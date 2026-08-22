@@ -1,7 +1,6 @@
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { MSICreator } = require('electron-wix-msi');
 
 function ensureMsiIconFile() {
   const iconPath = path.join(__dirname, 'assets', 'icons', 'app512.ico');
@@ -11,11 +10,17 @@ function ensureMsiIconFile() {
   return iconPath;
 }
 
-async function run() {
-  const root = path.resolve(__dirname, '..');
-  const desktopDir = __dirname;
+function buildBundles(rootDir) {
+  console.log('Building backend and frontend bundles for desktop packaging...');
+  execSync('npm run build:bundle:prod', {
+    stdio: 'inherit',
+    cwd: rootDir,
+    env: { ...process.env, K8_EXPLORER_DESKTOP: 'true' },
+  });
+}
 
-  console.log('Building Electron app with electron-builder...');
+async function packageWindows(desktopDir) {
+  console.log('Building Electron app with electron-builder (Windows)...');
   try {
     execSync('npx electron-builder --win --x64', { stdio: 'inherit', cwd: desktopDir });
   } catch (err) {
@@ -37,6 +42,7 @@ async function run() {
   if (!fs.existsSync(msiOutputDir)) fs.mkdirSync(msiOutputDir);
 
   console.log('Creating MSI with electron-wix-msi...');
+  const { MSICreator } = require('electron-wix-msi');
   const creator = new MSICreator({
     appDirectory: winUnpacked,
     outputDirectory: msiOutputDir,
@@ -94,37 +100,71 @@ async function run() {
     return false;
   }
 
-  if (exeExistsInPath('candle.exe') || exeExistsInPath('light.exe')){
-      await creator.compile();
-      console.log('MSI created in', msiOutputDir);
+  if (exeExistsInPath('candle.exe') && exeExistsInPath('light.exe')) {
+    await creator.compile();
+    console.log('MSI created in', msiOutputDir);
+    return;
   }
 
-  if (!exeExistsInPath('candle.exe') || !exeExistsInPath('light.exe') || true) {
-    console.warn('WiX toolset not found in PATH. Attempting fallback to NSIS artifact if present.');
-    // Try to find an NSIS installer produced by electron-builder in the dist folder
-    const distFiles = (fs.readdirSync(path.join(desktopDir, 'dist')) || []).filter(f => f.endsWith('.exe'));
-    if (distFiles.length) {
-      const nsisExe = distFiles.find(f => f.includes('-Setup-')) || distFiles[0];
-      const src = path.join(desktopDir, 'dist', nsisExe);
-      const dest = path.join(msiOutputDir, nsisExe);
-      try {
-        fs.copyFileSync(src, dest);
-        console.log('WiX not installed — copied NSIS installer to', dest);
-        console.log('MSI step skipped. To produce an MSI, install WiX Toolset: https://wixtoolset.org/releases/');
-        process.exit(0);
-      } catch (err) {
-        console.error('Failed to copy NSIS installer as fallback:', err);
-        console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH.');
-        process.exit(1);
-      }
+  console.warn('WiX toolset not found in PATH. Attempting fallback to NSIS artifact if present.');
+  // Try to find an NSIS installer produced by electron-builder in the dist folder
+  const distFiles = (fs.readdirSync(path.join(desktopDir, 'dist')) || []).filter(f => f.endsWith('.exe'));
+  if (distFiles.length) {
+    const nsisExe = distFiles.find(f => f.includes('-Setup-')) || distFiles[0];
+    const src = path.join(desktopDir, 'dist', nsisExe);
+    const dest = path.join(msiOutputDir, nsisExe);
+    try {
+      fs.copyFileSync(src, dest);
+      console.log('WiX not installed — copied NSIS installer to', dest);
+      console.log('MSI step skipped. To produce an MSI, install WiX Toolset: https://wixtoolset.org/releases/');
+      return;
+    } catch (err) {
+      console.error('Failed to copy NSIS installer as fallback:', err);
+      console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH.');
+      process.exit(1);
     }
+  }
 
-    console.error('WiX toolset not found in PATH and no NSIS installer was found in dist.');
-    console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH: https://wixtoolset.org/releases/');
+  console.error('WiX toolset not found in PATH and no NSIS installer was found in dist.');
+  console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH: https://wixtoolset.org/releases/');
+  process.exit(1);
+}
+
+function packageMac(desktopDir) {
+  console.log('Building Electron app with electron-builder (macOS)...');
+  try {
+    execSync('npx electron-builder --mac', { stdio: 'inherit', cwd: desktopDir });
+  } catch (err) {
+    console.error('electron-builder failed. Ensure dependencies are installed.');
     process.exit(1);
   }
+  console.log('macOS package(s) (.dmg/.zip) are available in', path.join(desktopDir, 'dist'));
+}
 
-  
+function packageLinux(desktopDir) {
+  console.log('Building Electron app with electron-builder (Linux)...');
+  try {
+    execSync('npx electron-builder --linux', { stdio: 'inherit', cwd: desktopDir });
+  } catch (err) {
+    console.error('electron-builder failed. Ensure dependencies are installed.');
+    process.exit(1);
+  }
+  console.log('Linux package(s) (.AppImage/.deb) are available in', path.join(desktopDir, 'dist'));
+}
+
+async function run() {
+  const desktopDir = __dirname;
+  const rootDir = path.resolve(desktopDir, '..');
+
+  buildBundles(rootDir);
+
+  if (process.platform === 'win32') {
+    await packageWindows(desktopDir);
+  } else if (process.platform === 'darwin') {
+    packageMac(desktopDir);
+  } else {
+    packageLinux(desktopDir);
+  }
 }
 
 run().catch(err => { console.error(err); process.exit(1); });

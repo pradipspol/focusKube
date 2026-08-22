@@ -17,7 +17,9 @@ function copyRecursiveSync(src, dest) {
 
 module.exports = async function afterPack(context) {
   const projectRoot = path.resolve(context.packager.projectDir, '..');
-  const resourceRoot = path.join(context.appOutDir, 'resources');
+  const resourceRoot = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources');
   const backendSource = path.join(projectRoot, 'backend', 'dist');
   const frontendSource = path.join(projectRoot, 'frontend', 'dist');
 

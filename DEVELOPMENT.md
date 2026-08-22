@@ -4,7 +4,7 @@
 
 - `backend/` - Express API, Kubernetes and Helm integration, auth/session handling, observability, and WebSocket support.
 - `frontend/` - React + Vite UI with the main explorer experience.
-- `desktop/` - Electron wrapper and Windows packaging support.
+- `desktop/` - Electron wrapper and packaging support for Windows, macOS, and Linux.
 - `k8s/` - Kubernetes manifests and RBAC for deployment-related setup.
 
 ## Getting Started
@@ -50,13 +50,13 @@ npm run typecheck
 
 ## Desktop App
 
-The desktop wrapper is intended for Windows and bundles the Electron shell with the backend and frontend build output.
+The desktop wrapper bundles the Electron shell with the backend and frontend build output, and packages for whichever OS you run it on: Windows (NSIS + MSI), macOS (dmg + zip), or Linux (AppImage + deb).
 
 ```bash
 npm run desktop:start
 ```
 
-To produce a packaged Windows installer:
+To produce a packaged installer for the current platform:
 
 ```bash
 npm run desktop:package
@@ -70,7 +70,7 @@ npm run desktop:package
 - `npm run build:bundle:prod` - Build production bundles used by the desktop package flow.
 - `npm run typecheck` - Type-check backend and frontend.
 - `npm run desktop:start` - Launch Electron.
-- `npm run desktop:package` - Build the Windows installer.
+- `npm run desktop:package` - Build the installer for the current platform (Windows/macOS/Linux).
 
 ## Environment Variables
 

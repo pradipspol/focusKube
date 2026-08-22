@@ -1,6 +1,6 @@
 ; Runs the bundled extras provisioning script (helm, az CLI, PATH setup) during
 ; NSIS install/uninstall, mirroring the WiX custom actions used for the MSI
-; installer in package-windows.js.
+; installer in package.js.
 
 !macro customInstall
   DetailPrint "Running k8-explorer extras install script..."

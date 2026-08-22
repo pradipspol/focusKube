@@ -23,12 +23,10 @@ npm install
 npm run start
 ```
 
-Packaging to MSI:
+Packaging:
 
-- This scaffolding includes `electron-wix-msi` as a devDependency in `desktop/package.json`. Building an MSI requires the WiX Toolset to be installed on the machine.
-- A `package-windows.js` helper can be added to call electron-wix-msi to produce an MSI. You will need to provide an Electron build (e.g., via `electron-builder`) and then feed that into `electron-wix-msi`.
-
-If you want, I can:
-- Add an automated `package-windows.js` that invokes electron-builder then electron-wix-msi.
-- Adjust the frontend to use an explicit `VITE_API_BASE` so no proxy is required.
-- Add an option to run backend and static server in a single process (require backend app instead of spawning).
+- `npm run package` (from `desktop/`, or `npm run desktop:package` from the repo root) builds the production bundles and runs `electron-builder` for whichever OS it's invoked on, producing a platform-native installer via `desktop/package.js`:
+  - Windows: NSIS `.exe` and, if the WiX Toolset (`candle.exe`/`light.exe`) is on `PATH`, an MSI via `electron-wix-msi`. Output lands in `desktop/installer` (MSI) and `desktop/dist` (NSIS).
+  - macOS: `.dmg` and `.zip`, output in `desktop/dist`.
+  - Linux: `.AppImage` and `.deb`, output in `desktop/dist`.
+- CLI tools (`az`, `helm`, Azure `kubelogin`) are provisioned by `desktop/extra/install-extras.ps1` (Windows) or `desktop/extra/install-extras.sh` (macOS/Linux), run by the installer's post-install hook and, in dev mode, once on first launch.

@@ -1,7 +1,14 @@
 DESKTOP EXTRAS SETUP GUIDE
 ===========================
 
-This directory must contain required CLI tools before packaging the desktop app.
+NOTE: This guide covers the Windows flow (install-extras.ps1 + offline bundled
+binaries). On macOS and Linux, install-extras.sh installs the same tools
+(node, az, helm, Azure kubelogin) online via Homebrew (macOS) or apt / the
+vendors' install scripts (Linux) — there is no offline-bundling story for
+those platforms since electron-builder does not embed platform-specific
+binaries for them today.
+
+This directory must contain required CLI tools before packaging the desktop app on Windows.
 
 QUICK START CHECKLIST
 =====================
