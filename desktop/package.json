@@ -4,6 +4,7 @@
   "description": "Kubernetes Explorer Desktop Client",
   "version": "0.1.0-1",
   "private": true,
+  "homepage": "https://github.com/pradipspol/k8-explorer",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -63,7 +64,8 @@
       "icon": "assets/icons/app512.png",
       "category": "Development",
       "target": ["AppImage", "deb"],
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "maintainer": "TechAvise"
     }
   },
   "devDependencies": {
