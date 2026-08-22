@@ -41,7 +41,25 @@ async function packageWindows(desktopDir) {
   const msiOutputDir = path.join(desktopDir, 'installer');
   if (!fs.existsSync(msiOutputDir)) fs.mkdirSync(msiOutputDir);
 
+  // Always copy the NSIS .exe installer out of dist/ alongside the MSI, so
+  // both artifacts end up in desktop/installer regardless of whether WiX is
+  // available to build the MSI below.
+  const nsisExeFile = fs
+    .readdirSync(path.join(desktopDir, 'dist'))
+    .filter(f => f.endsWith('.exe'))
+    .find(f => f.includes('-Setup-')) || null;
+  if (nsisExeFile) {
+    fs.copyFileSync(path.join(desktopDir, 'dist', nsisExeFile), path.join(msiOutputDir, nsisExeFile));
+    console.log('Copied NSIS installer to', path.join(msiOutputDir, nsisExeFile));
+  } else {
+    console.error('No NSIS .exe installer found in', path.join(desktopDir, 'dist'));
+    process.exit(1);
+  }
+
   console.log('Creating MSI with electron-wix-msi...');
+  // WiX's ProductVersion must be a plain numeric dotted version; strip any
+  // semver pre-release/build suffix (e.g. "0.1.0-1" -> "0.1.0").
+  const msiVersion = require('./package.json').version.split('-')[0];
   const { MSICreator } = require('electron-wix-msi');
   const creator = new MSICreator({
     appDirectory: winUnpacked,
@@ -49,7 +67,7 @@ async function packageWindows(desktopDir) {
     exe: exeName,
     name: 'k8-explorer',
     manufacturer: 'k8-explorer',
-    version: '0.1.0',
+    version: msiVersion,
     description: 'Kubernetes Explorer packaged as desktop app',
     appIconPath: ensureMsiIconFile(),
     ui: {
@@ -106,28 +124,9 @@ async function packageWindows(desktopDir) {
     return;
   }
 
-  console.warn('WiX toolset not found in PATH. Attempting fallback to NSIS artifact if present.');
-  // Try to find an NSIS installer produced by electron-builder in the dist folder
-  const distFiles = (fs.readdirSync(path.join(desktopDir, 'dist')) || []).filter(f => f.endsWith('.exe'));
-  if (distFiles.length) {
-    const nsisExe = distFiles.find(f => f.includes('-Setup-')) || distFiles[0];
-    const src = path.join(desktopDir, 'dist', nsisExe);
-    const dest = path.join(msiOutputDir, nsisExe);
-    try {
-      fs.copyFileSync(src, dest);
-      console.log('WiX not installed — copied NSIS installer to', dest);
-      console.log('MSI step skipped. To produce an MSI, install WiX Toolset: https://wixtoolset.org/releases/');
-      return;
-    } catch (err) {
-      console.error('Failed to copy NSIS installer as fallback:', err);
-      console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH.');
-      process.exit(1);
-    }
-  }
-
-  console.error('WiX toolset not found in PATH and no NSIS installer was found in dist.');
-  console.error('Please install WiX (v3.11+) and ensure candle.exe and light.exe are on your PATH: https://wixtoolset.org/releases/');
-  process.exit(1);
+  console.warn('WiX toolset (candle.exe/light.exe) not found in PATH — MSI was not built.');
+  console.warn('The NSIS .exe installer is still available in', msiOutputDir);
+  console.warn('To also get an MSI, install WiX Toolset (v3.11+): https://wixtoolset.org/releases/');
 }
 
 function packageMac(desktopDir) {
