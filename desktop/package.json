@@ -2,7 +2,7 @@
   "name": "k8-explorer",
   "author": "TechAvise", 
   "description": "Kubernetes Explorer Desktop Client",
-  "version": "0.1.0-1",
+  "version": "0.1.0-2",
   "private": true,
   "homepage": "https://github.com/pradipspol/k8-explorer",
   "main": "main.js",

@@ -1,7 +1,7 @@
 {
   "name": "k8-explorer",
   "private": true,
-  "version": "0.1.0-1",
+  "version": "0.1.0-2",
   "workspaces": ["backend", "frontend", "desktop"],
   "scripts": {
     "dev:backend": "npm --workspace backend run dev",

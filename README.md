@@ -1,15 +1,60 @@
 # K8 Explorer
 
-K8 Explorer is an open-source Kubernetes Desktop operations tool that combines a web UI, a Node.js backend, and a cross-platform (Windows, macOS, Linux) desktop shell into one workspace. It is designed for browsing cluster state, inspecting workloads, managing Helm releases, and working with Azure and AWS-backed Kubernetes contexts from a single interface.
+**K8 Explorer** is a free, open-source Kubernetes desktop GUI and multi-cluster management tool — a self-hosted alternative to Lens and k9s for teams running Azure AKS, AWS EKS, or local kubeconfig clusters. It pairs a real-time web UI with a Node.js/Express backend and a cross-platform Electron shell (Windows, macOS, Linux) so you can browse cluster state, visualize workload topology, tail live logs over WebSockets, and manage Helm releases from one workspace — without giving up kubectl.
+
+## Why K8 Explorer
+
+Most Kubernetes dashboards stop at listing resources. K8 Explorer is built around the things that are actually hard to do well: keeping several clusters open side by side, watching what changes in real time instead of polling, and understanding *why* a workload behaves the way it does after the fact.
+
+## Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Install the Desktop App](#install-the-desktop-app)
+- [Development](#development)
+- [License](#license)
 
 ## Features
 
-- Browse Kubernetes resources, workloads, and namespaces.
-- Inspect and manage Helm charts and releases.
-- Connect to Azure AKS and AWS EKS environments.
-- View logs, port-forward workloads, and open exec terminals from the UI.
-- Track observability data such as timelines, correlated events, and state snapshots.
-- Run as a desktop app for a tighter local workflow on Windows, macOS, or Linux.
+### Multi-cluster management
+- Connect to any number of **Azure AKS**, **AWS EKS**, and local **kubeconfig** contexts at once, side by side, without re-authenticating each time you switch.
+- Star/pin frequently used contexts, scoped per-source so identically named clusters from different kubeconfigs never collide.
+- Per-context auth probing (Azure CLI / AWS credential checks) with cached auth-check results to avoid hammering cloud APIs.
+
+### Live streaming over WebSockets
+- Dedicated WebSocket channels for **pod logs**, **multi-pod log tailing**, **exec terminals**, **port-forwarding**, **resource watches**, **live metrics**, and an **observability event bus** — all authenticated and RBAC-gated at the upgrade handshake, not just the HTTP layer.
+- Resource lists update live via Kubernetes watch informers instead of polling, so the UI reflects cluster state within milliseconds of a change.
+- Stream container logs from many pods at once in a unified, correlated view instead of tailing one pod at a time.
+
+### Topology & dependency graphs
+- Interactive, auto-laid-out (dagre) **topology graphs** showing how Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, Services, Ingresses, NetworkPolicies, ConfigMaps, Secrets, and Helm releases connect to each other.
+- Filter the graph by application or namespace to isolate just the workload you're debugging, with pan/zoom, minimap, and live layout.
+
+### Event recording & observability timelines
+- Start a **recording session** per cluster/context that watches workload and Kubernetes Event changes (pod phase transitions, restarts, image changes, conditions, warning/normal events) and persists them with automatic retention (default 72h).
+- Replay a **timeline** of what happened across a namespace, correlate related events in a dedicated correlation dashboard, and pick up recordings again after reconnecting — recording state survives client disconnects.
+- Useful for answering "what changed right before this pod crashed?" without having to have been watching at the time.
+
+### Full Helm lifecycle, with diff-before-apply
+- Add repos, install charts, and upgrade releases from the UI, with a **diff viewer** that shows added/removed manifest lines *before* you commit to an upgrade.
+- View release history and roll a release back to a previous revision.
+- Deployment-level actions — **scale**, **rolling restart**, rollout **history**, and **rollback** — available straight from the resource view, no `kubectl` required.
+
+### Built-in kubectl & Helm terminal — sandboxed, not a raw shell
+- A command terminal that runs **only `kubectl` and `helm`** against the currently selected context/namespace over its own WebSocket channel — shell pipes, redirection, and arbitrary executables are rejected server-side, so it can't be turned into a general remote shell.
+- Every command is logged with its outcome (success/failure, duration) for auditability, separate from the full interactive **exec-into-pod** terminal (which uses the pod's own shell and is gated behind write permission).
+
+### Resource editing & creation
+- Create resources from a **Monaco-powered YAML editor** with ready-to-edit sample manifests per kind (Deployment, Pod, and more), or edit any live resource's YAML in place and apply the change.
+- Group workloads by application/Helm release across namespaces in a dedicated **Applications** view, with managed-by and version columns pulled from labels.
+- Multi-namespace selection everywhere — view and filter resources across several namespaces at once instead of switching one at a time.
+- Per-table column visibility that's remembered per view (persisted in local storage), so large resource lists stay readable.
+
+### Day-to-day cluster operations
+- Browse Kubernetes resources, workloads, and namespaces with fast, filterable tables.
+- View logs, port-forward workloads, and open interactive exec terminals directly from the UI.
+- Optional secret value reveal (gated behind an explicit environment flag and RBAC) for teams that want it.
+- Run as a desktop app for a tighter local workflow on Windows, macOS, or Linux — or self-host the backend/frontend for a team-shared deployment.
 
 ## Prerequisites
 
