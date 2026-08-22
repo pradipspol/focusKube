@@ -86,6 +86,7 @@ jobs:
           name: ${{ matrix.artifact }}
           path: release-artifacts/*
           if-no-files-found: error
+          node-version: 24
 
   publish-release:
     runs-on: ubuntu-latest

@@ -17,19 +17,22 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/xterm": "^5.5.0",
+    "@xyflow/react": "^12.11.3",
+    "dagre": "^0.8.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
+    "@types/dagre": "^0.7.54",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "esbuild": "^0.25.12",
-    "globals": "^16.3.0",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "typescript-eslint": "^8.41.0",
+    "globals": "^16.3.0",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.41.0",
     "vite": "^6.0.5"
   }
 }

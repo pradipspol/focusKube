@@ -508,15 +508,7 @@ export function ResourceTable({
         return { items };
       }
 
-      try {
-        return await api.listResource(plural, effectiveScope);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 403 && namespaces.length > 0) {
-          const items = await listNamespaces(namespaces);
-          return { items };
-        }
-        throw error;
-      }
+      return await api.listResource(plural, effectiveScope);
     },
     enabled: !!scope.context && !usesLazyPaging,
     // We drive retry cadence ourselves via refetchInterval, so disable the

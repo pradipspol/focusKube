@@ -63,6 +63,10 @@ ipcMain.handle('set-native-theme', (event, theme) => {
 let backendProc = null;
 let server = null;
 
+// Outside the backend's dynamic port range (11111-48999) so it never collides
+// with whatever port `startBackend` happens to pick.
+const PREFERRED_FRONTEND_PORT = 49500;
+
 /**
  * Locate an executable by walking an explicit PATH string, without shelling
  * out to `where`/`which` (keeps this working identically on every platform).
@@ -362,7 +366,11 @@ async function startStaticServer(proxyTargetPort) {
   // Fallback to index.html
   app.use((req, res) => res.sendFile(path.join(frontendDir, 'index.html')));
 
-  const frontendPort = await getPort({ port: getPort.makeRange(11111, 48999) });
+  // Prefer a fixed port so the window's origin (and thus localStorage-backed
+  // state like starred contexts and sidebar layout) stays the same across app
+  // restarts. Only fall back to scanning a range if that port is unavailable
+  // (e.g. another local process already holds it).
+  const frontendPort = await getPort({ port: [PREFERRED_FRONTEND_PORT, ...getPort.makeRange(11111, 48999)] });
   return new Promise((resolve) => {
     server = app.listen(frontendPort, () => {
       server.on('upgrade', wsProxy.upgrade);

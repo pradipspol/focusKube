@@ -180,9 +180,9 @@ export function AzurePanel({
 
       <section style={{ marginBottom: 24 }}>
         <h3>Account</h3>
-        <div className="dim" style={{ marginBottom: 8 }}>
+        {/* <div className="dim" style={{ marginBottom: 8 }}>
           Scope: <b>{azureScopeLabel}</b>
-        </div>
+        </div> */}
         {(account.isLoading || awaitingAzureAccount) && <div className="dim">Checking…</div>}
         {loggedIn ? (
           <div className="notice">

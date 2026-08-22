@@ -4,12 +4,20 @@ import type { View } from '../App';
 import type { Scope } from '../api/client';
 import type { KubeContext, LocalKubeconfigSummary } from '../api/types';
 import { SidebarProviderSources } from './SidebarProviderSources';
+import kubeCluster from '../../assets/kubernetes.svg';
+import starredIcon from '../../assets/starred.svg';
 
 interface Props {
   view?: View;
   activeTabOriginContext?: string;
   activeTabOriginSource?: 'aks' | 'eks' | 'local';
   activeTabOriginKubeconfigId?: string;
+  /** Origin of whichever context was actually, explicitly connected on the backend —
+   * set only by a deliberate connect action (never by a passive default-context
+   * initialization), so it's the right signal for "should anything be highlighted"
+   * when no tab is open to supply activeTabOrigin* directly. */
+  activeContextOriginSource?: 'aks' | 'eks' | 'local';
+  activeContextOriginKubeconfigId?: string;
   onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onOpenExplorer: () => void;
@@ -22,7 +30,7 @@ interface Props {
   awsRefreshToken?: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onContextChange: (name?: string) => Promise<void> | void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string }) => Promise<void> | void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
@@ -45,6 +53,26 @@ type LocalAzureAuthStatus = 'idle' | 'checking' | 'authenticated' | 'failed';
 const LOCAL_AZURE_AUTH_MAX_RETRIES = 5;
 const LOCAL_AZURE_AUTH_RETRY_DELAY_MS = 1200;
 
+// Keeps starred contexts scoped to their original source so a locally-uploaded
+// kubeconfig context can't collide with an identically-named AKS/EKS context.
+const getStarKey = (provider: 'aks' | 'eks' | 'local', name: string) => `${provider}:${name}`;
+
+// Azure/AWS cloud-tree node keys (accounts, subscriptions, resource groups, regions,
+// clusters) — these should default to collapsed on every load, not remember a stale
+// expand from a previous session.
+function isCloudTreeGroupKey(key: string): boolean {
+  return (
+    key.startsWith('azure-account:') ||
+    key.startsWith('azure-sub:') ||
+    key.startsWith('aws-region:') ||
+    key.startsWith('aws-cluster:') ||
+    key.includes(':rg:') ||
+    key.includes(':cluster:') ||
+    key.startsWith('aks-context:') ||
+    key.startsWith('eks-context:')
+  );
+}
+
 const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   {
     title: 'Applications',
@@ -55,6 +83,11 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
     title: 'Observability',
     icon: '◷',
     items: [{ label: 'Observability', view: { type: 'observability' } }],
+  },
+  {
+    title: 'Topology',
+    icon: '⌬',
+    items: [{ label: 'Topology', view: { type: 'topology' } }],
   },
   {
     title: 'Workloads',
@@ -151,6 +184,8 @@ export function Sidebar({
   activeTabOriginContext,
   activeTabOriginSource,
   activeTabOriginKubeconfigId,
+  activeContextOriginSource,
+  activeContextOriginKubeconfigId,
   onSelect,
   onPin,
   onOpenExplorer,
@@ -175,7 +210,9 @@ export function Sidebar({
 }: Props) {
   const [explorerRootOpen, setExplorerRootOpen] = useState(true);
   const [menuContextName, setMenuContextName] = useState<string | undefined>();
-  const [connectingContextName, setConnectingContextName] = useState<string | undefined>();
+  // Keyed by node identity (not raw context name) so two nodes sharing a name
+  // (e.g. a starred entry and its local-kubeconfig source) don't both spin.
+  const [connectingContextKey, setConnectingContextKey] = useState<string | undefined>();
   const [localAzureAuthenticated, setLocalAzureAuthenticated] = useState(false);
   const [localAzureAuthStatus, setLocalAzureAuthStatus] = useState<LocalAzureAuthStatus>('idle');
   const [localAzureRetryCount, setLocalAzureRetryCount] = useState(0);
@@ -183,7 +220,7 @@ export function Sidebar({
   const localAzureAuthPromiseRef = useRef<Promise<boolean> | null>(null);
   const [starredContexts, setStarredContexts] = useState<Record<string, boolean>>(() => {
     try {
-      const raw = localStorage.getItem('k8sExplorer.starredContexts');
+      const raw = localStorage.getItem('k8sExplorer.starredContexts.v2');
       return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
     } catch {
       return {};
@@ -193,8 +230,15 @@ export function Sidebar({
     try {
       const raw = localStorage.getItem('k8sExplorer.sidebarGroups');
       const parsed = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+      // The Azure/AWS cloud tree (accounts, subscriptions, resource groups, regions,
+      // clusters) should never auto-expand just because it was left open last time —
+      // only an explicit click, or a still-open resource tab, should reveal it. Drop
+      // any persisted state for those keys; everything else keeps its saved state.
+      const sanitized = Object.fromEntries(
+        Object.entries(parsed).filter(([key]) => !isCloudTreeGroupKey(key)),
+      );
       return {
-        ...parsed,
+        ...sanitized,
         azureRoot: true,
         awsRoot: true,
       };
@@ -332,7 +376,7 @@ export function Sidebar({
   }, [collapsedGroups]);
 
   useEffect(() => {
-    localStorage.setItem('k8sExplorer.starredContexts', JSON.stringify(starredContexts));
+    localStorage.setItem('k8sExplorer.starredContexts.v2', JSON.stringify(starredContexts));
   }, [starredContexts]);
 
   useEffect(() => {
@@ -351,29 +395,23 @@ export function Sidebar({
 
   const orderedContexts = useMemo(() => contexts, [contexts]);
   const starredContextList = useMemo(
-    () => orderedContexts.filter((ctx) => starredContexts[ctx.name]),
+    () =>
+      orderedContexts.filter((ctx) => {
+        const provider = ctx.source?.provider;
+        // Starring is only offered for cloud-sourced contexts (aks/eks); this also
+        // guards against local contexts that happen to share a name with a cloud one.
+        if (!provider || provider === 'local') return false;
+        return starredContexts[getStarKey(provider, ctx.name)];
+      }),
     [orderedContexts, starredContexts],
   );
-  const selectedContextName = activeTabOriginContext ?? scope.context;
   const activeResourcePlural = view?.type === 'resource' ? view.plural : undefined;
 
   const computeCollapsed = useCallback((key: string, map: Record<string, boolean>) => {
     const explicit = map[key];
     if (typeof explicit === 'boolean') return explicit;
 
-    if (
-      key === 'azureRoot' ||
-      key === 'awsRoot' ||
-      key.startsWith('azure-account:') ||
-      key.startsWith('azure-sub:') ||
-      key.startsWith('aws-region:') ||
-      key.startsWith('aws-cluster:') ||
-      key.includes(':rg:') ||
-      key.includes(':cluster:') ||
-      key.startsWith('aks-context:') ||
-      key.startsWith('eks-context:') ||
-      key.startsWith('localkube:')
-    ) {
+    if (key === 'azureRoot' || key === 'awsRoot' || key.startsWith('localkube:') || isCloudTreeGroupKey(key)) {
       return true;
     }
 
@@ -394,10 +432,11 @@ export function Sidebar({
     [],
   );
 
-  const toggleStar = (contextName: string) => {
+  const toggleStar = (provider: 'aks' | 'eks' | 'local', contextName: string) => {
+    const key = getStarKey(provider, contextName);
     setStarredContexts((current) => ({
       ...current,
-      [contextName]: !current[contextName],
+      [key]: !current[key],
     }));
   };
 
@@ -438,7 +477,7 @@ export function Sidebar({
                       onClick={() => {
                         if (item.disabled) return;
                         onOpenExplorer();
-                        onContextChange(contextName);
+                        onContextChange(contextName, { source: originSource ?? 'aks', kubeconfigId: originKubeconfigId });
                         if (item.view) {
                           openExplorerView(item.view, contextName, originSource ?? 'aks', originKubeconfigId);
                           return;
@@ -478,14 +517,31 @@ export function Sidebar({
     originSource?: 'aks' | 'eks' | 'local',
     originKubeconfigId?: string,
   ) => {
-    const isSelectedContext = selectedContextName === ctx.name;
+    const resolvedSource = originSource ?? ctx.source?.provider;
+    // When the active tab tracks a specific origin (source + kubeconfig), match on
+    // all three — otherwise contexts sharing a name across sources (e.g. a starred
+    // Azure context and a locally-uploaded one) would all show as "connected" at
+    // once. With no tab open, only trust an explicitly-recorded connect origin —
+    // never highlight from a passive default-context initialization (e.g. on page
+    // load, before the user has opened a resource tab or connected anything).
+    const isSelectedContext = activeTabOriginContext
+      ? activeTabOriginContext === ctx.name &&
+        activeTabOriginSource === resolvedSource &&
+        activeTabOriginKubeconfigId === originKubeconfigId
+      : !!activeContextOriginSource &&
+        scope.context === ctx.name &&
+        activeContextOriginSource === resolvedSource &&
+        activeContextOriginKubeconfigId === originKubeconfigId;
     const contextExpanded = !isGroupCollapsed(`${nodeKeyPrefix}:${ctx.name}`);
-    const isStarred = !!starredContexts[ctx.name];
-    const isLocalContextNode = (originSource ?? ctx.source?.provider) === 'local';
+    const isStarred = !!resolvedSource && !!starredContexts[getStarKey(resolvedSource, ctx.name)];
+    const isLocalContextNode = resolvedSource === 'local';
     const canExpandLocalContextNode = !isLocalContextNode || localAzureAuthenticated;
+    // Distinguishes this rendered node from any other node that happens to share
+    // the same context name (e.g. a starred entry vs. its local-kubeconfig source).
+    const nodeIdentityKey = `${nodeKeyPrefix}:${resolvedSource ?? 'unknown'}:${ctx.name}`;
 
     return (
-      <div key={`${nodeKeyPrefix}:${ctx.name}`} className="context-root">
+      <div key={nodeIdentityKey} className="context-root">
         <div
           className={`nav-item context-item ${isSelectedContext ? 'active' : ''}`}
           onClick={async () => {
@@ -494,12 +550,12 @@ export function Sidebar({
               const ok = await ensureLocalAzureConnected(ctx.name);
               if (!ok) return;
             }
-            setConnectingContextName(ctx.name);
+            setConnectingContextKey(nodeIdentityKey);
             try {
-              await Promise.resolve(onContextChange(ctx.name));
+              await Promise.resolve(onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId }));
               await new Promise(resolve => setTimeout(resolve, 300));
             } finally {
-              setConnectingContextName(undefined);
+              setConnectingContextKey(undefined);
             }
             expandGroup(`${nodeKeyPrefix}:${ctx.name}`);
             setMenuContextName(undefined);
@@ -525,13 +581,14 @@ export function Sidebar({
                 <span className="context-caret">{contextExpanded ? '▾' : '▸'}</span>
               </button>
             )}
+            <img src={kubeCluster} className="svg-inject" alt="Kubernetes" />
             <span>{collapsed ? (labelOverride ?? ctx.name).charAt(0) : (labelOverride ?? ctx.name)}</span>
             {!collapsed && labelOverride && labelOverride !== ctx.name && (
               <span className="context-secondary-label">({ctx.name})</span>
             )}
           </span>
           <span className="context-meta">
-            {connectingContextName === ctx.name ? (
+            {connectingContextKey === nodeIdentityKey ? (
               <span className="tiny-spinner" aria-label="connecting" />
             ) : (
               <span
@@ -546,12 +603,12 @@ export function Sidebar({
                   title={`Actions for ${ctx.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setMenuContextName((current) => (current === ctx.name ? undefined : ctx.name));
+                    setMenuContextName((current) => (current === nodeIdentityKey ? undefined : nodeIdentityKey));
                   }}
                 >
                   ⋮
                 </button>
-                {menuContextName === ctx.name && (
+                {menuContextName === nodeIdentityKey && (
                   <div className="action-menu sidebar-action-menu">
                     <button
                       className="action-menu-item"
@@ -559,12 +616,12 @@ export function Sidebar({
                         event.stopPropagation();
                         setMenuContextName(undefined);
                         if (isSelectedContext) {
-                          setConnectingContextName(ctx.name);
+                          setConnectingContextKey(nodeIdentityKey);
                           try {
                             await Promise.resolve(onContextChange(undefined));
                             await new Promise(resolve => setTimeout(resolve, 300));
                           } finally {
-                            setConnectingContextName(undefined);
+                            setConnectingContextKey(undefined);
                           }
                           return;
                         }
@@ -572,28 +629,30 @@ export function Sidebar({
                           const ok = await ensureLocalAzureConnected(ctx.name);
                           if (!ok) return;
                         }
-                        setConnectingContextName(ctx.name);
+                        setConnectingContextKey(nodeIdentityKey);
                         try {
-                          await Promise.resolve(onContextChange(ctx.name));
+                          await Promise.resolve(onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId }));
                           await new Promise(resolve => setTimeout(resolve, 300));
                         } finally {
-                          setConnectingContextName(undefined);
+                          setConnectingContextKey(undefined);
                         }
                         expandGroup(`${nodeKeyPrefix}:${ctx.name}`);
                       }}
                     >
                       {isSelectedContext ? 'Disconnect' : 'Connect'}
                     </button>
-                    {/* <button
-                      className="action-menu-item"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setMenuContextName(undefined);
-                        toggleStar(ctx.name);
-                      }}
-                    >
-                      {isStarred ? 'Unstar' : 'Star'}
-                    </button> */}
+                    {!isLocalContextNode && resolvedSource && (
+                      <button
+                        className="action-menu-item"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuContextName(undefined);
+                          toggleStar(resolvedSource, ctx.name);
+                        }}
+                      >
+                        {isStarred ? 'Unstar' : 'Star'}
+                      </button>
+                    )}
                     {options?.onRemove && (
                       <button
                         className="action-menu-item danger"
@@ -631,6 +690,7 @@ export function Sidebar({
               }}
             >
               <span>{explorerRootOpen ? '▾' : '▸'}</span>
+              <img src={kubeCluster} className="svg-inject" alt="Kubernetes" />
               <span>K8S Cluster</span>
             </button>
           </div>
@@ -640,6 +700,7 @@ export function Sidebar({
               <div className="k8sexplorer-group">
                 <button className="k8sexplorer-title k8sexplorer-toggle" onClick={() => toggleGroup('contextsRoot')}>
                   <span>{isGroupCollapsed('contextsRoot') ? '▸' : '▾'}</span>
+                  <img src={starredIcon} className="svg-inject" alt="Starred" />
                   <span>STARRED CONTEXTS</span>
                 </button>
                 <div className="k8sexplorer-items">
@@ -658,6 +719,7 @@ export function Sidebar({
                 collapsed={collapsed}
                 scope={scope}
                 view={view}
+                activeTabOriginContext={activeTabOriginContext}
                 activeTabOriginSource={activeTabOriginSource}
                 orderedContexts={orderedContexts}
                 localKubeconfigs={localKubeconfigs}

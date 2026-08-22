@@ -11,6 +11,7 @@ import { AwsPanel } from './components/AwsPanel';
 import { ObservabilityPanel } from './components/observability/ObservabilityPanel';
 import { ToastViewport, type ToastMessage } from './components/ToastViewport';
 import { ApplicationsPanel } from './components/ApplicationsPanel';
+import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
@@ -32,6 +33,7 @@ export type View =
   | { type: 'portForwarding' }
   | { type: 'logs' }
   | { type: 'observability'; tab?: 'timeline' | 'logs' | 'correlation' }
+  | { type: 'topology' }
   | { type: 'azure' }
   | { type: 'aws' };
 
@@ -86,6 +88,7 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   if (view.type === 'applications') return `applications:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'portForwarding') return `portForwarding:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'observability') return `observability:${view.tab ?? 'timeline'}:${sourceKey}:${contextKey}${suffix}`;
+  if (view.type === 'topology') return `topology:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'azure') return 'azure';
   if (view.type === 'aws') return 'aws';
   return view.type;
@@ -105,6 +108,8 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
         ? 'Logs'
       : view.type === 'observability'
         ? 'Observability'
+      : view.type === 'topology'
+        ? 'Topology'
       : view.type === 'azure'
         ? 'Azure / AKS Connections'
       : view.type === 'aws'
@@ -140,7 +145,14 @@ function isView(value: unknown): value is View {
   if (candidate.type === 'azure') {
     return true;
   }
-  return candidate.type === 'applications' || candidate.type === 'portForwarding' || candidate.type === 'logs' || candidate.type === 'azure' || candidate.type === 'aws';
+  return (
+    candidate.type === 'applications' ||
+    candidate.type === 'portForwarding' ||
+    candidate.type === 'logs' ||
+    candidate.type === 'topology' ||
+    candidate.type === 'azure' ||
+    candidate.type === 'aws'
+  );
 }
 
 function loadStoredTabs(): ViewTab[] {
@@ -386,6 +398,11 @@ export default function App() {
   const [azureCloudAccount, setAzureCloudAccount] = useState<AzureAccount | null>(null);
   const [awsIdentity, setAwsIdentity] = useState<AwsIdentity | null>(null);
   const [azureAuthSource, setAzureAuthSource] = useState<AzureScope | null>(null);
+  // Explicit origin (source + kubeconfig) of whatever context handleContextChange most
+  // recently activated. Distinct contexts can share a name (e.g. an AKS-imported context
+  // and a locally-uploaded one both named "prod") — without this, anything that resolved
+  // the active context's source by name alone would be ambiguous between the two.
+  const [activeContextOrigin, setActiveContextOrigin] = useState<{ source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string } | null>(null);
 
   const resolveScopeSource = async (contextName?: string): Promise<ContextScope | null> => {
     if (!contextName) return null;
@@ -418,13 +435,16 @@ export default function App() {
 
   const activeContextSource = useMemo<ContextScope | null>(() => {
     if (!context) return null;
+    // Prefer the explicit origin recorded when this context was activated — falling
+    // back to a name-only lookup is ambiguous whenever two sources share a context name.
+    if (activeContextOrigin?.source) return contextScopeFromOriginSource(activeContextOrigin.source) ?? null;
     const ctx = contextsQuery.data?.contexts.find((entry) => entry.name === context);
     if (!ctx?.source?.provider) return null;
     if (ctx.source.provider === 'local') return 'local';
     if (ctx.source.provider === 'aks') return 'azure';
     if (ctx.source.provider === 'eks') return 'aws';
     return null;
-  }, [contextsQuery.data, context]);
+  }, [contextsQuery.data, context, activeContextOrigin]);
 
   // Azure-specific queries never understand an 'aws' scope — fall back to 'cloud' for them.
   const effectiveAzureScope: AzureScope = azureAuthSource ?? (activeContextSource === 'local' ? 'local' : 'cloud');
@@ -678,8 +698,13 @@ export default function App() {
   // Keep global active context aligned with the active context-scoped tab.
   useEffect(() => {
     const tabContext = activeTab?.originContext;
-    if (!tabContext || tabContext === context) return;
-    void handleContextChange(tabContext);
+    if (!tabContext) return;
+    const alreadyActive =
+      tabContext === context &&
+      (activeTab?.originSource ?? undefined) === (activeContextOrigin?.source ?? undefined) &&
+      (activeTab?.originKubeconfigId ?? undefined) === (activeContextOrigin?.kubeconfigId ?? undefined);
+    if (alreadyActive) return;
+    void handleContextChange(tabContext, { source: activeTab?.originSource, kubeconfigId: activeTab?.originKubeconfigId });
   }, [activeTabId]);
 
   const openView = (
@@ -803,7 +828,7 @@ export default function App() {
     if (source === 'local') {
       const localContext = context ?? contexts.find((ctx) => ctx.source?.provider === 'local')?.name;
       if (localContext && localContext !== context) {
-        void handleContextChange(localContext);
+        void handleContextChange(localContext, { source: 'local' });
       }
     }
     openView({ type: 'azure' });
@@ -847,9 +872,13 @@ export default function App() {
     }, durationMs);
   };
 
-  const handleContextChange = async (name?: string) => {
+  const handleContextChange = async (
+    name?: string,
+    origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string },
+  ) => {
     if (!name) {
       setContext(undefined);
+      setActiveContextOrigin(null);
       await api.clearActiveContext();
       updateContextsCache((current) =>
         current
@@ -863,13 +892,16 @@ export default function App() {
       return;
     }
 
-    const source = await resolveScopeSource(name);
+    // An explicit origin (from whichever sidebar node the user actually clicked) avoids
+    // the by-name lookup below, which can't tell apart two contexts sharing a name.
+    const source = (origin?.source ? contextScopeFromOriginSource(origin.source) : null) ?? (await resolveScopeSource(name));
     if (!source) {
       pushToast('error', `Unable to resolve source for context ${name}. Refresh contexts and retry.`);
       return;
     }
     await api.setActiveContext(name, source);
     setContext(name);
+    setActiveContextOrigin(origin?.source ? { source: origin.source, kubeconfigId: origin.kubeconfigId } : null);
     updateContextsCache((current) =>
       current
         ? {
@@ -1009,6 +1041,8 @@ export default function App() {
           activeTabOriginContext={activeTab?.originContext}
           activeTabOriginSource={activeTab?.originSource}
           activeTabOriginKubeconfigId={activeTab?.originKubeconfigId}
+          activeContextOriginSource={activeContextOrigin?.source}
+          activeContextOriginKubeconfigId={activeContextOrigin?.kubeconfigId}
           onSelect={openView}
           onPin={pinView}
           onOpenExplorer={activateExplorerRoute}
@@ -1052,8 +1086,12 @@ export default function App() {
                           className={`main-tab ${tab.id === activeTabId ? 'active' : ''} ${tab.pinned ? 'pinned' : 'unpinned'}`}
                           onClick={() => {
                             setActiveTabId(tab.id);
-                            if (tab.originContext && tab.originContext !== context) {
-                              void handleContextChange(tab.originContext);
+                            const sameOrigin =
+                              tab.originContext === context &&
+                              (tab.originSource ?? undefined) === (activeContextOrigin?.source ?? undefined) &&
+                              (tab.originKubeconfigId ?? undefined) === (activeContextOrigin?.kubeconfigId ?? undefined);
+                            if (tab.originContext && !sameOrigin) {
+                              void handleContextChange(tab.originContext, { source: tab.originSource, kubeconfigId: tab.originKubeconfigId });
                             }
                           }}
                           onDoubleClick={() => {
@@ -1157,7 +1195,7 @@ export default function App() {
                         queryClient.setQueryData(['contexts'], refreshed);
                       }}
                       onPickContext={(name) => {
-                        void handleContextChange(name);
+                        void handleContextChange(name, { source: 'aks' });
                       }}
                       azureSource={activeTab.originSource === 'local' ? 'local' : azureAuthSource ?? (activeContextSource === 'local' ? 'local' : 'cloud')}
                       onAccountsChanged={(account, scope) => {
@@ -1190,7 +1228,7 @@ export default function App() {
                         queryClient.setQueryData(['contexts'], refreshed);
                       }}
                       onPickContext={(name) => {
-                        void handleContextChange(name);
+                        void handleContextChange(name, { source: 'eks' });
                       }}
                       onAwsAccountsChanged={(identity) => {
                         setAwsIdentity(identity);
@@ -1214,6 +1252,9 @@ export default function App() {
                       selectedNamespaces={selectedNamespaces}
                       onToast={pushToast}
                     />
+                  )}
+                  {activeTab?.view.type === 'topology' && (
+                    <TopologyPanel scope={activeTabScope} namespaces={namespaces} />
                   )}
                 </div>
               </div>

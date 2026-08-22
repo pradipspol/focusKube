@@ -655,7 +655,11 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
+.svg-inject {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
 /* Top bar */
 .topbar {
   display: flex;
@@ -3738,3 +3742,4 @@ code.inline {
   font-size: var(--fs-sm);
   line-height: 1.5;
 }
+

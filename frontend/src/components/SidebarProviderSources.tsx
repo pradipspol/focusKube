@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { View } from '../App';
 import type { Scope } from '../api/client';
 import type { AksCluster, AwsIdentity, EksCluster, KubeContext, LocalKubeconfigSummary } from '../api/types';
+import azureIcon from '../../assets/azure.svg';
+import awsIcon from '../../assets/aws.svg';
+import kubeIcon from '../../assets/local-kubeconfigs.svg';
+
 
 const CLOUD_ACCOUNT_MAX_RETRIES = 5;
 const CLOUD_ACCOUNT_RETRY_DELAY_MS = 1200;
@@ -51,6 +55,7 @@ interface Props {
   collapsed: boolean;
   scope: Scope;
   view?: View;
+  activeTabOriginContext?: string;
   activeTabOriginSource?: 'aks' | 'eks' | 'local';
   orderedContexts: KubeContext[];
   localKubeconfigs: LocalKubeconfigSummary[];
@@ -72,7 +77,7 @@ interface Props {
     originSource?: 'aks' | 'eks' | 'local',
     originKubeconfigId?: string,
   ) => React.ReactNode;
-  onContextChange: (name?: string) => Promise<void> | void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string }) => Promise<void> | void;
   onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
@@ -90,6 +95,7 @@ export function SidebarProviderSources({
   collapsed,
   scope,
   view,
+  activeTabOriginContext,
   activeTabOriginSource,
   orderedContexts,
   localKubeconfigs,
@@ -412,6 +418,110 @@ export function SidebarProviderSources({
     void probeAwsCloudAccounts();
   }, [awsRefreshToken, awsProbeRequested, expandGroup]);
 
+  // Whichever cloud-sourced context the still-open active tab points at (if any). Its
+  // location in the tree is the one thing besides an explicit click that's allowed to
+  // auto-expand — see the effects below.
+  const activeTabTargetContext = useMemo(() => {
+    if (!activeTabOriginContext) return undefined;
+    if (activeTabOriginSource !== 'aks' && activeTabOriginSource !== 'eks') return undefined;
+    return orderedContexts.find(
+      (ctx) => ctx.name === activeTabOriginContext && ctx.source?.provider === activeTabOriginSource,
+    );
+  }, [activeTabOriginContext, activeTabOriginSource, orderedContexts]);
+
+  useEffect(() => {
+    if (activeTabTargetContext?.source?.provider === 'aks') expandGroup('azureRoot');
+    if (activeTabTargetContext?.source?.provider === 'eks') expandGroup('awsRoot');
+  }, [activeTabTargetContext, expandGroup]);
+
+  // Single reactive trigger for probing cloud accounts: fires whenever the root is
+  // expanded (by click or by the effect above) and nothing's been loaded yet.
+  useEffect(() => {
+    if (isGroupCollapsed('azureRoot') || azureAccounts.length > 0 || loadingSubscriptions || aksError) return;
+    void probeAzureCloudAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGroupCollapsed, azureAccounts.length, loadingSubscriptions, aksError]);
+
+  useEffect(() => {
+    if (isGroupCollapsed('awsRoot') || awsAccountNode || loadingAwsTree || awsError) return;
+    void probeAwsCloudAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGroupCollapsed, awsAccountNode, loadingAwsTree, awsError]);
+
+  // Once the matching subscription is known, reveal it (and its owning account) too.
+  useEffect(() => {
+    const ctx = activeTabTargetContext;
+    if (!ctx || ctx.source?.provider !== 'aks') return;
+    for (const account of azureAccounts) {
+      const sub = account.subscriptions.find(
+        (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
+      );
+      if (sub) {
+        expandGroup(`azure-account:${account.email}`);
+        expandGroup(`azure-sub:${sub.id}`);
+        break;
+      }
+    }
+  }, [activeTabTargetContext, azureAccounts, expandGroup]);
+
+  // ...and once that subscription's resource groups load, reveal the matching one.
+  useEffect(() => {
+    const ctx = activeTabTargetContext;
+    if (!ctx || ctx.source?.provider !== 'aks' || !ctx.source.resourceGroup) return;
+    for (const account of azureAccounts) {
+      const sub = account.subscriptions.find(
+        (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
+      );
+      const rg = sub?.resourceGroups.find((r) => r.name === ctx.source?.resourceGroup);
+      if (rg) {
+        expandGroup(`azure-sub:${sub!.id}:rg:${rg.name}`);
+        break;
+      }
+    }
+  }, [activeTabTargetContext, azureAccounts, expandGroup]);
+
+  // AWS has no account/resource-group nesting in the tree — region is the only level.
+  useEffect(() => {
+    const ctx = activeTabTargetContext;
+    if (!ctx || ctx.source?.provider !== 'eks' || !ctx.source.region) return;
+    expandGroup(`aws-region:${ctx.source.region}`);
+  }, [activeTabTargetContext, expandGroup]);
+
+  // Expand/collapse state persists across reloads, but resource groups are only ever
+  // fetched from the subscription toggle's onClick. A subscription restored already
+  // expanded from a previous session would otherwise sit with no data (and, worse,
+  // read as "no resource groups found") until the user collapses and re-expands it.
+  useEffect(() => {
+    for (const account of azureAccounts) {
+      for (const sub of account.subscriptions) {
+        if (isGroupCollapsed(`azure-sub:${sub.id}`) || loadingResourceGroups[sub.id] || subscriptionClusterCache[sub.id]) continue;
+        fetchResourceGroupsForSubscription(sub.id).catch(() => {
+          /* handled in state */
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [azureAccounts, isGroupCollapsed]);
+
+  // Same restored-expanded-with-no-data gap one level down: a resource group left
+  // expanded from a previous session needs its clusters fetched too.
+  useEffect(() => {
+    for (const account of azureAccounts) {
+      for (const sub of account.subscriptions) {
+        for (const rg of sub.resourceGroups) {
+          const rgCacheKey = `${sub.id}:${rg.name}`;
+          if (isGroupCollapsed(`azure-sub:${sub.id}:rg:${rg.name}`) || loadingClusters[rgCacheKey] || resourceGroupClusters[rgCacheKey]) {
+            continue;
+          }
+          fetchClustersForResourceGroup({ subscriptionId: sub.id, resourceGroup: rg.name }).catch(() => {
+            /* handled in state */
+          });
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [azureAccounts, isGroupCollapsed]);
+
   useEffect(() => {
     if (!menuLocalKubeconfigId && !menuLocalContextKey && !azureHeaderMenuOpen && !azureAccountMenuEmail && !awsHeaderMenuOpen) {
       return;
@@ -491,16 +601,11 @@ export function SidebarProviderSources({
         <div className="aks-header-row">
           <button
             className="k8sexplorer-title k8sexplorer-toggle"
-            onClick={() => {
-              const nextExpanded = isGroupCollapsed('azureRoot');
-              toggleGroup('azureRoot');
-              if (nextExpanded) {
-                void probeAzureCloudAccounts();
-              }
-            }}
+            onClick={() => toggleGroup('azureRoot')}
           >
             <span>{isGroupCollapsed('azureRoot') ? '▸' : '▾'}</span>
-            <span>Azure / AKS</span>
+            <img src={azureIcon} className="svg-inject" alt="Azure" />
+            <span> Azure / AKS</span>
             {loadingSubscriptions && <span className="tiny-spinner" aria-label="loading Azure accounts" />}
           </button>
           <div className="action-trigger-wrap">
@@ -527,7 +632,7 @@ export function SidebarProviderSources({
                 >
                   Add Azure connection
                 </button>
-                {hasAzureCloudAccount && (
+                {/* {hasAzureCloudAccount && (
                   <button
                     className="action-menu-item"
                     onClick={() => {
@@ -537,7 +642,7 @@ export function SidebarProviderSources({
                   >
                     Reconnect Azure
                   </button>
-                )}
+                )} */}
                 {hasAzureCloudAccount && (
                   <button
                     className="action-menu-item"
@@ -626,12 +731,12 @@ export function SidebarProviderSources({
                               >
                                 Reconnect
                               </button>
-                              <button
+                              {/* <button
                                 className="action-menu-item"
                                 onClick={() => handleDisconnectAzureAccount(accountNode.email)}
                               >
                                 Disconnect clusters
-                              </button>
+                              </button> */}
                               <button
                                 className="action-menu-item danger"
                                 onClick={() => handleDisconnectAzureAccount(accountNode.email)}
@@ -672,6 +777,11 @@ export function SidebarProviderSources({
                               )}
                               {(collapsed || subExpanded) && (
                                 <div className="aks-tree-children">
+                                  {!collapsed &&
+                                    !loadingResourceGroups[subscriptionNode.id] &&
+                                    subscriptionNode.resourceGroups.length === 0 && (
+                                      <div className="sidebar-hint">No resource groups found.</div>
+                                    )}
                                   {subscriptionNode.resourceGroups.map((resourceGroupNode) => {
                                     const rgKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}`;
                                     const rgExpanded = !isGroupCollapsed(rgKey);
@@ -704,6 +814,9 @@ export function SidebarProviderSources({
                                         )}
                                         {(collapsed || rgExpanded) && (
                                           <div className="aks-tree-children">
+                                            {!collapsed && !loadingClusters[rgCacheKey] && clusters.length === 0 && (
+                                              <div className="sidebar-hint">No clusters found.</div>
+                                            )}
                                             {clusters.map((cluster) => {
                                               const clusterNodeKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}:cluster:${cluster.name}`;
                                               const clusterExpanded = !isGroupCollapsed(clusterNodeKey);
@@ -750,7 +863,7 @@ export function SidebarProviderSources({
                                                             cluster.name,
                                                           )[0]?.name;
                                                         if (selectedContext) {
-                                                          onContextChange(selectedContext);
+                                                          onContextChange(selectedContext, { source: 'aks' });
                                                         }
                                                       })()
                                                         .catch(() => {
@@ -811,15 +924,10 @@ export function SidebarProviderSources({
         <div className="aks-header-row">
           <button
             className="k8sexplorer-title k8sexplorer-toggle"
-            onClick={() => {
-              const nextExpanded = isGroupCollapsed('awsRoot');
-              toggleGroup('awsRoot');
-              if (nextExpanded) {
-                void probeAwsCloudAccounts();
-              }
-            }}
+            onClick={() => toggleGroup('awsRoot')}
           >
             <span>{isGroupCollapsed('awsRoot') ? '▸' : '▾'}</span>
+            <img src={awsIcon} className="svg-inject" alt="AWS" />
             <span>AWS / EKS</span>
             {loadingAwsTree && <span className="tiny-spinner" aria-label="loading AWS clusters" />}
           </button>
@@ -912,6 +1020,9 @@ export function SidebarProviderSources({
                       )}
                       {(collapsed || regionExpanded) && (
                         <div className="aks-tree-children">
+                          {!collapsed && regionNode.clusters.length === 0 && (
+                            <div className="sidebar-hint">No clusters found.</div>
+                          )}
                           {regionNode.clusters.map((cluster) => {
                             const clusterNodeKey = `aws-region:${regionNode.name}:cluster:${cluster.name}`;
                             const clusterExpanded = !isGroupCollapsed(clusterNodeKey);
@@ -949,7 +1060,7 @@ export function SidebarProviderSources({
                                           cluster.name,
                                         )[0]?.name;
                                       if (selectedContext) {
-                                        onContextChange(selectedContext);
+                                        onContextChange(selectedContext, { source: 'eks' });
                                       }
                                     })()
                                       .catch(() => {
@@ -1003,6 +1114,7 @@ export function SidebarProviderSources({
           <div className="local-kubeconfigs-header-row">
             <button className="k8sexplorer-title k8sexplorer-toggle" onClick={() => toggleGroup('localKubeconfigsRoot')}>
               <span>{isGroupCollapsed('localKubeconfigsRoot') ? '▸' : '▾'}</span>
+              <img src={kubeIcon} className="svg-inject" alt="Kubernetes" />
               <span>Local Kubeconfigs</span>
             </button>
             <button
