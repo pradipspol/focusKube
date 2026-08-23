@@ -1,5 +1,11 @@
 # K8 Explorer
 
+[![Platform - Windows](https://shields.io)](#windows)
+[![Platform - macOS](https://shields.io)](#macos)
+[![Platform - Linux](https://shields.io)](#linux)
+[![Streaming - WebSockets](https://shields.io)](#live-streaming-over-websockets)
+
+
 **K8 Explorer** is a free, open-source Kubernetes desktop GUI and multi-cluster management tool — a self-hosted alternative to Lens and k9s for teams running Azure AKS, AWS EKS, or local kubeconfig clusters. It pairs a real-time web UI with a Node.js/Express backend and a cross-platform Electron shell (Windows, macOS, Linux) so you can browse cluster state, visualize workload topology, tail live logs over WebSockets, and manage Helm releases from one workspace — without giving up kubectl.
 
 ## Why K8 Explorer
