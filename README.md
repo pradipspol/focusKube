@@ -62,6 +62,16 @@ Most Kubernetes dashboards stop at listing resources. K8 Explorer is built aroun
 - Optional secret value reveal (gated behind an explicit environment flag and RBAC) for teams that want it.
 - Run as a desktop app for a tighter local workflow on Windows, macOS, or Linux — or self-host the backend/frontend for a team-shared deployment.
 
+### 🔒 Security, Privacy & Compliance First
+
+Unlike many modern cloud-native dashboards that require cloud logins or track your behavior, **K8 Explorer** is built from the ground up to respect corporate firewalls, air-gapped environments, and developer privacy.
+
+- **Zero Telemetry & Analytics:** The application never phones home. It collects absolutely no tracking data, session logs, or usage metrics. What happens in your cluster stays on your machine.
+- **No Account Login Walls:** There are no corporate registration screens, cloud-sync dependencies, or subscription gates. You download the app, load your contexts, and start working instantly.
+- **Air-Gapped Ready:** Because the application does not rely on third-party analytical tracking domains, it can be deployed seamlessly within highly secure, isolated, or restricted corporate networks.
+
+## Getting Ready
+
 ## Prerequisites
 
 - Access to an Azure AKS or AWS EKS cluster.
