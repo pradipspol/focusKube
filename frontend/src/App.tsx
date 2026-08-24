@@ -16,6 +16,7 @@ import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
+import { uiText } from './text';
 import {
   TerminalDock,
   type DockSession,
@@ -37,16 +38,16 @@ export type View =
   | { type: 'azure' }
   | { type: 'aws' };
 
-type UiRoute = 'login' | 'k8-explorer';
+type UiRoute = 'login' | 'focusKube';
 
 const ROUTE_PATHS: Record<UiRoute, string> = {
   login: '/login',
-  'k8-explorer': '/k8-explorer',
+  'focusKube': '/focusKube',
 };
 
 function routeFromPath(pathname: string): UiRoute {
   if (pathname === ROUTE_PATHS.login) return 'login';
-  return 'k8-explorer';
+  return 'focusKube';
 }
 
 function pathForRoute(route: UiRoute): string {
@@ -124,7 +125,7 @@ const TABS_STORAGE_KEY = 'k8sExplorer.openTabs';
 const ACTIVE_TAB_STORAGE_KEY = 'k8sExplorer.activeTab';
 const NAMESPACE_SELECTIONS_STORAGE_KEY = 'k8sExplorer.namespacesByContext';
 // Where the footer "Support" button points. Update to your team's support channel.
-const SUPPORT_URL = 'https://github.com/pradipspol/k8-explorer/issues';
+const SUPPORT_URL = 'https://github.com/pradipspol/focusKube/issues';
 const THEME_STORAGE_KEY = 'k8sExplorer.theme';
 
 export type Theme = 'dark' | 'light' | 'contrast';
@@ -334,12 +335,12 @@ export default function App() {
         return;
       }
       if (action === 'about') {
-        setDesktopDialog({ title: 'About K8 Explorer', content: 'Loading application information...', loading: true });
+        setDesktopDialog({ title: 'About FocusKube', content: 'Loading application information...', loading: true });
         try {
           const info = await desktopMenu.getAppInfo();
           setDesktopDialog({ title: info.name, content: `${info.description}\n\nVersion ${info.version}` });
         } catch (error) {
-          setDesktopDialog({ title: 'About K8 Explorer', content: error instanceof Error ? error.message : 'Unable to load application information.' });
+          setDesktopDialog({ title: 'About FocusKube', content: error instanceof Error ? error.message : 'Unable to load application information.' });
         }
       }
     });
@@ -576,7 +577,7 @@ export default function App() {
       return;
     }
 
-    if (route !== 'k8-explorer') {
+    if (route !== 'focusKube') {
       activateExplorerRoute();
     }
   }, [authQuery.isLoading, route, user]);
@@ -817,7 +818,7 @@ export default function App() {
 
   const activateExplorerRoute = () => {
     setTabMenu(null);
-    navigateToRoute('k8-explorer');
+    navigateToRoute('focusKube');
   };
 
   const openAzureAuthPanel = (source?: 'local' | 'cloud') => {
@@ -1125,7 +1126,13 @@ export default function App() {
                 <div className="main-content-body">
                   {tabs.length === 0 && (
                     <div className="main-empty-state" aria-label="empty workspace">
-                      <div className="main-empty-brand">K8 Explorer</div>
+                      <div className="main-empty-brand-wrap">
+                        <div className="main-empty-brand">
+                            <span className="main-empty-brand-focus">{uiText.brand.emptyStateNameFocus}</span>
+                            <span className="main-empty-brand-kube">{uiText.brand.emptyStateNameKube}</span>
+                          </div>
+                          <div className="main-empty-tagline">{uiText.brand.emptyStateTagline}</div>
+                      </div>
                     </div>
                   )}
 
@@ -1280,7 +1287,7 @@ export default function App() {
           href={SUPPORT_URL}
           target="_blank"
           rel="noreferrer"
-          title="Get support"
+          title={uiText.common.refresh}
         >
           <span aria-hidden="true">🛟</span>
           <span>Support</span>
@@ -1297,7 +1304,7 @@ export default function App() {
         />
       )}
       {desktopDialog && (
-        <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>
+          <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>
           <pre className="desktop-help-content">{desktopDialog.content}</pre>
           {desktopDialog.loading && <div className="dim">Loading...</div>}
         </Modal>

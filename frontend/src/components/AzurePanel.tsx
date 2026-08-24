@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AzureScope } from '../api/client';
 import type { AksCluster, AzureAccount } from '../api/types';
+import { uiText } from '../text';
 
 interface Props {
   azureSource?: AzureScope;
@@ -56,7 +57,7 @@ export function AzurePanel({
   const logout = useMutation({
     mutationFn: () => api.azureLogout(undefined, azureSource),
     onSuccess: () => {
-      setMessage('Signed out from Azure CLI session.');
+      setMessage(uiText.azure.signedOut);
       setMessageIsError(false);
       setSubscription('');
       setPolling(false);
@@ -142,7 +143,7 @@ export function AzurePanel({
     mutationFn: (c: AksCluster) =>
       api.azureAksCredentials({ resourceGroup: c.resourceGroup, name: c.name, subscription }),
     onSuccess: async (_res, c) => {
-      setMessage(`Imported credentials for ${c.name}.`);
+      setMessage(`${uiText.azure.importCredsPrefix} ${c.name}.`);
       setMessageIsError(false);
       await onContextsChanged();
       onPickContext(c.name);
@@ -157,7 +158,7 @@ export function AzurePanel({
   const lastAzCandidate = loginStatus.data?.diagnostics?.lastAzCandidate;
   const loginState = loginStatus.data?.state;
   const loginPending = polling && loginState !== 'failed' && loginState !== 'succeeded';
-  const pendingMessage = loginStatus.data?.message || 'Waiting for Azure device code…';
+  const pendingMessage = loginStatus.data?.message || uiText.azure.waitingForDeviceCode;
   const userName = account.data?.account?.user?.name;
   const userType = account.data?.account?.user?.type;
   const accountLabel =
@@ -166,7 +167,7 @@ export function AzurePanel({
 
   return (
     <div style={{ padding: 16, maxWidth: 900 }}>
-      <h2>Azure / AKS Connections</h2>
+      <h2>{uiText.azure.connectionsTitle}</h2>
       {message && (
         <div className={`notice ${messageIsError ? 'error' : ''}`}>
           <div>{message}</div>
@@ -179,11 +180,11 @@ export function AzurePanel({
       )}
 
       <section style={{ marginBottom: 24 }}>
-        <h3>Account</h3>
+        <h3>{uiText.azure.accountTitle}</h3>
         {/* <div className="dim" style={{ marginBottom: 8 }}>
           Scope: <b>{azureScopeLabel}</b>
         </div> */}
-        {(account.isLoading || awaitingAzureAccount) && <div className="dim">Checking…</div>}
+        {(account.isLoading || awaitingAzureAccount) && <div className="dim">{uiText.azure.checking}</div>}
         {loggedIn ? (
           <div className="notice">
             <div>
@@ -194,20 +195,20 @@ export function AzurePanel({
             </div>
             <div style={{ marginTop: 10 }}>
               <button className="danger" onClick={() => logout.mutate()} disabled={logout.isPending}>
-                Sign out
+                {uiText.azure.signOut}
               </button>
             </div>
           </div>
         ) : (
           <>
             <button className="primary" onClick={() => login.mutate()} disabled={login.isPending || polling}>
-              Sign in to Azure (device code)
+              {uiText.azure.signIn}
             </button>
             {loginPending && (
               <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
                 <span className="azure-login-spinner" aria-label="Azure sign-in in progress" />
                 <div>
-                  <div>Azure sign-in in progress…</div>
+                  <div>{uiText.azure.signInProgress}</div>
                   {device ? (
                     <div style={{ marginTop: 6 }}>
                       Open{' '}
@@ -219,7 +220,7 @@ export function AzurePanel({
                   ) : (
                     <div className="dim" style={{ marginTop: 6 }}>{pendingMessage}</div>
                   )}
-                  <div className="dim" style={{ marginTop: 6 }}>Waiting for sign-in…</div>
+                  <div className="dim" style={{ marginTop: 6 }}>{uiText.azure.waitingForSignIn}</div>
                 </div>
               </div>
             )}
@@ -252,11 +253,11 @@ export function AzurePanel({
           <section>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <h3 style={{ margin: 0 }}>AKS Clusters</h3>
-              <button onClick={() => aks.refetch()}>⟳ Refresh</button>
+                <button onClick={() => aks.refetch()}>{uiText.azure.refresh}</button>
             </div>
-            {aks.isLoading && <div className="dim">Loading clusters…</div>}
+              {aks.isLoading && <div className="dim">{uiText.azure.loadingClusters}</div>}
             {aks.isError && <div className="notice error">{(aks.error as Error).message}</div>}
-            {aks.data && aks.data.clusters.length === 0 && <div className="empty">No AKS clusters.</div>}
+              {aks.data && aks.data.clusters.length === 0 && <div className="empty">{uiText.azure.noClusters}</div>}
             {aks.data && aks.data.clusters.length > 0 && (
               <table>
                 <thead>

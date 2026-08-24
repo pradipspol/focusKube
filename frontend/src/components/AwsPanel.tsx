@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AwsAuthConfig, AwsIdentity, EksCluster } from '../api/types';
+import { uiText } from '../text';
 
 interface Props {
   onContextsChanged: () => Promise<void> | void;
@@ -12,7 +13,7 @@ interface Props {
 export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChanged }: Props) {
   const qc = useQueryClient();
   const [awsProfileName, setAwsProfileName] = useState('default');
-  const [awsSsoSessionName, setAwsSsoSessionName] = useState('k8-explorer');
+  const [awsSsoSessionName, setAwsSsoSessionName] = useState('focusKube');
   const [awsSsoStartUrl, setAwsSsoStartUrl] = useState('');
   const [awsSsoRegion, setAwsSsoRegion] = useState('us-east-1');
   const [awsAccountId, setAwsAccountId] = useState('');
@@ -25,7 +26,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
   const [awsRoleArn, setAwsRoleArn] = useState('');
   const [awsSourceProfileName, setAwsSourceProfileName] = useState('');
   const [awsCredentialSource, setAwsCredentialSource] = useState<'Environment' | 'Ec2InstanceMetadata' | 'EcsContainer'>('Ec2InstanceMetadata');
-  const [awsRoleSessionName, setAwsRoleSessionName] = useState('k8-explorer');
+  const [awsRoleSessionName, setAwsRoleSessionName] = useState('focusKube');
   const [message, setMessage] = useState('');
   const [messageIsError, setMessageIsError] = useState(false);
   const [awsPolling, setAwsPolling] = useState(false);
@@ -61,7 +62,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
   const awsLogout = useMutation({
     mutationFn: () => api.awsLogout(),
     onSuccess: () => {
-      setMessage('Signed out from AWS CLI SSO session.');
+      setMessage(uiText.aws.signedOut);
       setMessageIsError(false);
       setAwsPolling(false);
       setAwaitingAwsAccount(false);
@@ -138,7 +139,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
     mutationFn: (cluster: EksCluster) =>
       api.awsEksCredentials({ region: cluster.region, name: cluster.name }),
     onSuccess: async (_res, cluster) => {
-      setMessage(`Imported credentials for ${cluster.name}.`);
+      setMessage(`${uiText.aws.importCredsPrefix} ${cluster.name}.`);
       setMessageIsError(false);
       await onContextsChanged();
       onPickContext(cluster.name);
@@ -155,7 +156,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
     setAwaitingAwsAccount(false);
     onAwsAccountsChanged?.((awsAccount.data?.account as AwsIdentity | null) ?? null);
     if (onAwsAccountsChanged) return;
-    setMessage('Signed in to AWS.');
+    setMessage(uiText.aws.signedIn);
     setMessageIsError(false);
     void qc.refetchQueries({ queryKey: ['aws', 'eks'] });
   }, [awaitingAwsAccount, awsLoggedIn, awsAccount.data, awsAccount.isFetching, eks.isFetching, onAwsAccountsChanged, qc]);
@@ -164,12 +165,12 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
   const awsLastCandidate = awsLoginStatus.data?.diagnostics?.lastAwsCandidate;
   const awsLoginState = awsLoginStatus.data?.state;
   const awsLoginPending = awsPolling && awsLoginState !== 'failed' && awsLoginState !== 'succeeded';
-  const awsPendingMessage = awsLoginStatus.data?.message || 'Waiting for AWS device code...';
+  const awsPendingMessage = awsLoginStatus.data?.message || uiText.aws.waitingForDeviceCode;
   const awsIdentity = awsAccount.data?.account as AwsIdentity | null | undefined;
 
   return (
     <div style={{ padding: 16, maxWidth: 900 }}>
-      <h2>AWS / EKS Connections</h2>
+      <h2>{uiText.aws.connectionsTitle}</h2>
       {message && (
         <div className={`notice ${messageIsError ? 'error' : ''}`}>
           <div>{message}</div>
@@ -182,8 +183,8 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
       )}
 
       <section style={{ marginBottom: 24 }}>
-        <h3>AWS / EKS Account</h3>
-        {(awsAccount.isLoading || awaitingAwsAccount) && <div className="dim">Checking...</div>}
+        <h3>{uiText.aws.accountTitle}</h3>
+        {(awsAccount.isLoading || awaitingAwsAccount) && <div className="dim">{uiText.aws.checking}</div>}
         {awsLoggedIn ? (
           <div className="notice">
             <div>
@@ -194,7 +195,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
             </div>
             <div style={{ marginTop: 10 }}>
               <button className="danger" onClick={() => awsLogout.mutate()} disabled={awsLogout.isPending}>
-                Sign out
+                {uiText.aws.signOut}
               </button>
             </div>
           </div>
@@ -202,10 +203,8 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
           <>
             {!awsLoggedIn && (
               <div className="notice" style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Configure AWS connection</div>
-                <div className="dim" style={{ marginBottom: 12 }}>
-                  Choose SSO, access keys, or an IAM role profile for this session.
-                </div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>{uiText.aws.configureConnection}</div>
+                <div className="dim" style={{ marginBottom: 12 }}>{uiText.aws.configureDescription}</div>
                 <div style={{ display: 'grid', gap: 10 }}>
                   <select value={awsAuthMode} onChange={(e) => setAwsAuthMode(e.target.value as 'sso' | 'static' | 'role')}>
                     <option value="sso">SSO</option>
@@ -280,7 +279,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                         )
                       }
                     >
-                      {awsConfigureAuth.isPending ? 'Saving…' : 'Save AWS connection'}
+                      {awsConfigureAuth.isPending ? 'Saving…' : uiText.aws.saveConnection}
                     </button>
                   </div>
                 </div>
@@ -289,13 +288,13 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
             {awsAuthMode === 'sso' ? (
               <>
                 <button className="primary" onClick={() => awsLogin.mutate()} disabled={awsLogin.isPending || awsPolling}>
-                  Sign in to AWS (device code)
+                  {uiText.aws.signIn}
                 </button>
                 {awsLoginPending && (
                   <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
                     <span className="azure-login-spinner" aria-label="AWS sign-in in progress" />
                     <div>
-                      <div>AWS sign-in in progress...</div>
+                      <div>{uiText.aws.signInProgress}</div>
                       {awsDevice ? (
                         <div style={{ marginTop: 6 }}>
                           Open{' '}
@@ -307,7 +306,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                       ) : (
                         <div className="dim" style={{ marginTop: 6 }}>{awsPendingMessage}</div>
                       )}
-                      <div className="dim" style={{ marginTop: 6 }}>Waiting for sign-in...</div>
+                      <div className="dim" style={{ marginTop: 6 }}>{uiText.aws.waitingForSignIn}</div>
                     </div>
                   </div>
                 )}
@@ -325,12 +324,12 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
         <section>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h3 style={{ margin: 0 }}>EKS Clusters</h3>
-            <button onClick={() => eks.refetch()}>⟳ Refresh</button>
+            <button onClick={() => eks.refetch()}>{uiText.aws.refresh}</button>
           </div>
-          {eks.isLoading && <div className="dim">Loading clusters...</div>}
+          {eks.isLoading && <div className="dim">{uiText.aws.loadingClusters}</div>}
           {eks.isError && <div className="notice error">{(eks.error as Error).message}</div>}
           {eks.data?.error && <div className="notice error">{eks.data.error}</div>}
-          {eks.data && eks.data.clusters.length === 0 && <div className="empty">No EKS clusters.</div>}
+          {eks.data && eks.data.clusters.length === 0 && <div className="empty">{uiText.aws.noClusters}</div>}
           {eks.data && eks.data.clusters.length > 0 && (
             <table>
               <thead>

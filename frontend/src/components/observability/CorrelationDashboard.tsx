@@ -7,6 +7,7 @@ import type { DataColumn } from '../DataTable';
 import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
+import { uiText } from '../../text';
 
 interface Props {
   scope: Scope;
@@ -30,7 +31,7 @@ export function CorrelationDashboard({ scope }: Props) {
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">Please select a Kubernetes context from the sidebar to view event correlations.</div>
+        <div className="notice">{uiText.observability.selectContext}</div>
       </div>
     );
   }
@@ -126,7 +127,7 @@ export function CorrelationDashboard({ scope }: Props) {
       <div className="toolbar" style={{ borderBottom: '1px solid var(--surface-border)' }}>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <label>
-            <strong>Time Range:</strong>
+            <strong>{uiText.observability.timeRange}</strong>
             <select
               value={timeRange}
               onChange={(e) => setTimeRange(e.currentTarget.value)}
@@ -144,15 +145,15 @@ export function CorrelationDashboard({ scope }: Props) {
         {/* Stats */}
         <div style={{ display: 'flex', gap: '2rem', fontSize: '0.9em', marginLeft: '2rem' }}>
           <div>
-            <span style={{ color: 'var(--text-secondary)' }}>Workload Changes:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{uiText.observability.workloadChanges}</span>
             <strong style={{ marginLeft: '0.5rem', color: 'var(--severity-info)' }}>{workloadChanges}</strong>
           </div>
           <div>
-            <span style={{ color: 'var(--text-secondary)' }}>Warning Events:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{uiText.observability.warningEvents}</span>
             <strong style={{ marginLeft: '0.5rem', color: 'var(--severity-warning)' }}>{warningEvents}</strong>
           </div>
           <div>
-            <span style={{ color: 'var(--text-secondary)' }}>Correlated:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{uiText.observability.correlated}</span>
             <strong style={{ marginLeft: '0.5rem', color: 'var(--ok)' }}>{correlatedEvents}</strong>
           </div>
         </div>
@@ -162,7 +163,7 @@ export function CorrelationDashboard({ scope }: Props) {
       <div style={{ flex: 1, overflow: 'auto' }}>
         {events.length === 0 ? (
           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            No events recorded in this time range.
+            {uiText.observability.noEventsInRange}
           </div>
         ) : (
           <DataTable
@@ -189,22 +190,22 @@ export function CorrelationDashboard({ scope }: Props) {
         >
           <div style={{ display: 'grid', gap: '1rem' }}>
             <div>
-              <strong>Time:</strong> {new Date(showDetailsFor.ts).toLocaleString()}
+              <strong>{uiText.observability.time}</strong> {new Date(showDetailsFor.ts).toLocaleString()}
             </div>
             <div>
-              <strong>Namespace:</strong> {showDetailsFor.namespace || '(cluster-scoped)'}
+              <strong>{uiText.observability.namespace}</strong> {showDetailsFor.namespace || '(cluster-scoped)'}
             </div>
             <div>
-              <strong>Category:</strong> <code>{showDetailsFor.category}</code>
+              <strong>{uiText.observability.category}</strong> <code>{showDetailsFor.category}</code>
             </div>
             <div>
-              <strong>Change Type:</strong> <code>{showDetailsFor.changeType}</code>
+              <strong>{uiText.observability.changeType}</strong> <code>{showDetailsFor.changeType}</code>
             </div>
             <div>
-              <strong>Severity:</strong> <span className={`badge severity-${showDetailsFor.severity}`}>{showDetailsFor.severity}</span>
+              <strong>{uiText.observability.severity}</strong> <span className={`badge severity-${showDetailsFor.severity}`}>{showDetailsFor.severity}</span>
             </div>
             <div>
-              <strong>Summary:</strong> {showDetailsFor.summary}
+              <strong>{uiText.observability.summary}</strong> {showDetailsFor.summary}
             </div>
 
             {showDetailsFor.correlatedWith && (
@@ -217,7 +218,7 @@ export function CorrelationDashboard({ scope }: Props) {
                   marginTop: '0.5rem',
                 }}
               >
-                <strong>⊙ Correlation:</strong> This event occurred {showDetailsFor.correlatedWith.minutesBefore} minutes after{' '}
+                <strong>⊙ {uiText.observability.correlation}</strong> This event occurred {showDetailsFor.correlatedWith.minutesBefore} minutes after{' '}
                 <strong>
                   {showDetailsFor.correlatedWith.kind} {showDetailsFor.correlatedWith.name}
                 </strong>{' '}
@@ -228,20 +229,20 @@ export function CorrelationDashboard({ scope }: Props) {
 
             {showDetailsFor.reason && (
               <div>
-                <strong>Reason:</strong> {showDetailsFor.reason}
+                <strong>{uiText.observability.reason}</strong> {showDetailsFor.reason}
               </div>
             )}
 
             {showDetailsFor.involvedObject && (
               <div>
-                <strong>Involved Object:</strong> {showDetailsFor.involvedObject.kind} {showDetailsFor.involvedObject.name}
+                <strong>{uiText.observability.involvedObject}</strong> {showDetailsFor.involvedObject.kind} {showDetailsFor.involvedObject.name}
                 {showDetailsFor.involvedObject.namespace && ` (${showDetailsFor.involvedObject.namespace})`}
               </div>
             )}
 
             {showDetailsFor.before && (
               <div>
-                <strong>Before:</strong>
+                <strong>{uiText.observability.before}</strong>
                 <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
                   {JSON.stringify(showDetailsFor.before, null, 2)}
                 </pre>
@@ -250,7 +251,7 @@ export function CorrelationDashboard({ scope }: Props) {
 
             {showDetailsFor.after && (
               <div>
-                <strong>After:</strong>
+                <strong>{uiText.observability.after}</strong>
                 <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
                   {JSON.stringify(showDetailsFor.after, null, 2)}
                 </pre>

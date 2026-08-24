@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { uiText } from '../text';
 
 export type ColumnLike = { key: string; label?: string; header?: string };
 
@@ -81,7 +82,7 @@ export function ColumnVisibilityPicker<T extends ColumnLike>({
       <button
         type="button"
         className="column-picker-button"
-        title="Choose visible columns"
+        title={uiText.columns.chooseVisible}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -91,7 +92,7 @@ export function ColumnVisibilityPicker<T extends ColumnLike>({
         ☰
       </button>
       {isOpen && (
-        <div className="column-picker-menu" role="menu" aria-label="Visible columns">
+        <div className="column-picker-menu" role="menu" aria-label={uiText.columns.visibleColumns}>
           {columns.map((column) => (
             <label key={column.key} className="column-picker-option">
               <input
@@ -110,7 +111,7 @@ export function ColumnVisibilityPicker<T extends ColumnLike>({
               onOpenChange(false);
             }}
           >
-            Reset Columns
+            {uiText.columns.resetColumns}
           </button>
         </div>
       )}

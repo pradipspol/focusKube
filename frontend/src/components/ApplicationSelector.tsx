@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { uiText } from '../text';
 
 export interface ApplicationOption {
   key: string;
@@ -34,12 +35,12 @@ export function ApplicationSelector({ applications, selected, onChange }: Props)
   const allSelected = applications.length > 0 && selected.length === applications.length;
 
   const label = useMemo(() => {
-    if (selected.length === 0) return 'Select applications…';
-    if (allSelected) return 'All applications';
+    if (selected.length === 0) return uiText.common.selectApplications;
+    if (allSelected) return uiText.common.allApplications;
     if (selected.length === 1) {
       return applications.find((app) => app.key === selected[0])?.label ?? selected[0];
     }
-    return `${selected.length} selected`;
+    return `${selected.length} ${uiText.common.selectedCountSuffix}`;
   }, [allSelected, applications, selected]);
 
   return (
@@ -47,7 +48,7 @@ export function ApplicationSelector({ applications, selected, onChange }: Props)
       <div className="namespace-dropdown" ref={dropdownRef}>
         <button
           className="namespace-dropdown-trigger"
-          title="Select applications"
+          title={uiText.common.selectApplications}
           onClick={() => setOpen((current) => !current)}
         >
           <span>{label}</span>
@@ -55,7 +56,7 @@ export function ApplicationSelector({ applications, selected, onChange }: Props)
         </button>
         {open && (
           <div className="namespace-dropdown-menu">
-            {applications.length === 0 && <div className="namespace-option dim">No applications found.</div>}
+            {applications.length === 0 && <div className="namespace-option dim">{uiText.common.noApplicationsFound}</div>}
             {applications.length > 0 && (
               <label className="namespace-option">
                 <input
@@ -63,7 +64,7 @@ export function ApplicationSelector({ applications, selected, onChange }: Props)
                   checked={allSelected}
                   onChange={() => onChange(allSelected ? [] : applications.map((app) => app.key))}
                 />
-                <span>All applications</span>
+                <span>{uiText.common.allApplications}</span>
               </label>
             )}
             {applications.map((app) => {

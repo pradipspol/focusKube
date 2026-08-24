@@ -5,6 +5,7 @@ import type { Scope } from '../../api/client';
 import { wsUrl } from '../../api/client';
 import type { MergedLogLine } from '../../lib/logMerge';
 import { parseLogLine, boundedMerge } from '../../lib/logMerge';
+import { uiText } from '../../text';
 
 interface Props {
   scope: Scope;
@@ -145,9 +146,9 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
       <div className="toolbar" style={{ borderBottom: '1px solid var(--surface-border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <label>
-            <strong>Pods:</strong>
+            <strong>{uiText.multiPodLogs.pods}</strong>
             <textarea
-              placeholder="Enter pod names (e.g., my-pod-1, my-pod-2) separated by commas"
+              placeholder={uiText.multiPodLogs.podNamesPlaceholder}
               style={{
                 display: 'block',
                 marginTop: '0.5rem',
@@ -178,7 +179,7 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
 
         <input
           type="text"
-          placeholder="Filter logs..."
+          placeholder={uiText.multiPodLogs.filterPlaceholder}
           value={searchText}
           onChange={(e) => setSearchText(e.currentTarget.value)}
           style={{ flex: 1, padding: '0.5rem', marginTop: '0.5rem' }}
@@ -201,10 +202,10 @@ export function MultiPodLogsPanel({ scope, namespaces, selectedNamespaces }: Pro
       >
         {podSelection.length === 0 ? (
           <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>
-            Enter pod names above to start viewing merged logs from multiple replicas.
+            {uiText.multiPodLogs.enterPodsHint}
           </div>
         ) : filteredLines.length === 0 ? (
-          <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>Waiting for logs...</div>
+          <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{uiText.multiPodLogs.waitingForLogs}</div>
         ) : (
           filteredLines.map((line, idx) => {
             const isMatch = matchingLineKeys.has(`${idx}`);

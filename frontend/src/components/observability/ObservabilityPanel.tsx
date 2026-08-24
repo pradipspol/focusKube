@@ -7,6 +7,7 @@ import { TimelinePanel } from './TimelinePanel';
 import { MultiPodLogsPanel } from './MultiPodLogsPanel';
 import { CorrelationDashboard } from './CorrelationDashboard';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
+import { uiText } from '../../text';
 
 interface Props {
   scope: Scope;
@@ -103,7 +104,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">Please select a Kubernetes context from the sidebar to use observability features.</div>
+        <div className="notice">{uiText.observabilityPanel.selectContext}</div>
       </div>
     );
   }
@@ -111,7 +112,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   if (isLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">Loading...</div>
+        <div className="notice">{uiText.observabilityPanel.loading}</div>
       </div>
     );
   }
@@ -120,9 +121,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '2rem' }}>
         <div className="notice error">
-          <strong>Observability Unavailable</strong>
+          <strong>{uiText.observabilityPanel.unavailableTitle}</strong>
           <p style={{ marginTop: '0.5rem' }}>
-            Something went wrong loading the observability store. Try reloading, or check the backend logs for details.
+            {uiText.observabilityPanel.unavailableDescription}
           </p>
         </div>
       </div>
@@ -134,9 +135,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
       {/* Header */}
       <div className="toolbar" style={{ borderBottom: '1px solid var(--surface-border)', justifyContent: 'space-between' }}>
         <div>
-          <h2 style={{ margin: '0 0 0.25rem 0' }}>Observability & Time-Travel Debugging</h2>
+          <h2 style={{ margin: '0 0 0.25rem 0' }}>{uiText.observabilityPanel.title}</h2>
           <p style={{ margin: '0', fontSize: '0.9em', color: 'var(--text-secondary)' }}>
-            Record and replay cluster state changes over time.
+            {uiText.observabilityPanel.subtitle}
           </p>
         </div>
 
@@ -154,10 +155,10 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
                     animation: 'pulse 1.5s infinite',
                   }}
                 />
-                <span style={{ fontSize: '0.9em', fontWeight: 500 }}>Recording</span>
+                <span style={{ fontSize: '0.9em', fontWeight: 500 }}>{uiText.observabilityPanel.recording}</span>
               </div>
               <button onClick={handleStopRecording} disabled={isStopping} className="action-button">
-                {isStopping ? 'Stopping...' : 'Stop Recording'}
+                {isStopping ? uiText.observabilityPanel.starting : uiText.observabilityPanel.stopRecording}
               </button>
             </>
           ) : recordingError ? (
@@ -166,12 +167,12 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
                 <strong>Error:</strong> {recordingError}
               </div>
               <button onClick={handleStartRecording} disabled={isStarting} className="action-button">
-                {isStarting ? 'Starting...' : 'Retry'}
+                {isStarting ? uiText.observabilityPanel.starting : uiText.observabilityPanel.retry}
               </button>
             </>
           ) : (
             <button onClick={handleStartRecording} disabled={isStarting} className="action-button">
-              {isStarting ? 'Starting...' : 'Start Recording'}
+              {isStarting ? uiText.observabilityPanel.starting : uiText.observabilityPanel.startRecording}
             </button>
           )}
         </div>
@@ -198,9 +199,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
               textTransform: 'capitalize',
             }}
           >
-            {tab === 'timeline' && '◷ Timeline'}
-            {tab === 'logs' && '📋 Multi-Pod Logs'}
-            {tab === 'correlation' && '🔗 Event Correlation'}
+            {tab === 'timeline' && uiText.observabilityPanel.timelineTab}
+            {tab === 'logs' && uiText.observabilityPanel.logsTab}
+            {tab === 'correlation' && uiText.observabilityPanel.correlationTab}
           </button>
         ))}
       </div>
@@ -210,8 +211,8 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
         {!isRecording && activeTab !== 'logs' && (
           <div style={{ padding: '1rem', backgroundColor: 'var(--surface-secondary)' }}>
             <div className="notice warning">
-              <strong>Recording not active:</strong> Click "Start Recording" above to begin capturing cluster state changes. Without an active recording, the{' '}
-              {activeTab === 'timeline' ? 'timeline scrubber' : 'correlation dashboard'} will show no data.
+              <strong>{uiText.observabilityPanel.recordingNotActivePrefix}</strong> {uiText.observabilityPanel.startRecordingHint}{' '}
+              {activeTab === 'timeline' ? uiText.observabilityPanel.timelineScrubber : uiText.observabilityPanel.correlationDashboard} {uiText.observabilityPanel.willShowNoData}
             </div>
           </div>
         )}

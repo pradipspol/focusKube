@@ -1,5 +1,5 @@
 {
-  "name": "k8-explorer",
+  "name": "focusKube",
   "private": true,
   "version": "0.1.0-2",
   "workspaces": ["backend", "frontend", "desktop"],

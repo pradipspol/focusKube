@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { wsUrl } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
+import { uiText } from '../text';
 
 interface Props {
   pod: K8sObject;
@@ -48,7 +49,7 @@ export function LogsViewer({ pod, context, initialFollow = true, onOpenInTermina
     <div className="drawer-body">
       <div className="actions-bar">
         <div className="field">
-          <label>Container</label>
+          <label>{uiText.logs.container}</label>
           <select value={container} onChange={(e) => setContainer(e.target.value)}>
             {containers.map((c) => (
               <option key={c} value={c}>
@@ -59,15 +60,15 @@ export function LogsViewer({ pod, context, initialFollow = true, onOpenInTermina
         </div>
         <label className="field">
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-          Follow
+          {uiText.logs.follow}
         </label>
         {onOpenInTerminal && (
-          <button className="drawer-action-icon" type="button" title="Open in terminal tab" onClick={onOpenInTerminal}>
+          <button className="drawer-action-icon" type="button" title={uiText.logs.openInTerminal} onClick={onOpenInTerminal}>
             ⤴
           </button>
         )}
         <span className={`badge ${connected ? 'ok' : 'warn'} right`}>
-          {connected ? 'streaming' : 'disconnected'}
+          {connected ? uiText.logs.streaming : uiText.logs.disconnected}
         </span>
       </div>
       <div className="logs-host" ref={hostRef} />

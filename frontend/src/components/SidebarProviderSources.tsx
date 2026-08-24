@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { uiText } from '../text';
 import type { View } from '../App';
 import type { Scope } from '../api/client';
 import type { AksCluster, AwsIdentity, EksCluster, KubeContext, LocalKubeconfigSummary } from '../api/types';
@@ -605,14 +606,14 @@ export function SidebarProviderSources({
           >
             <span>{isGroupCollapsed('azureRoot') ? '▸' : '▾'}</span>
             <img src={azureIcon} className="svg-inject" alt="Azure" />
-            <span> Azure / AKS</span>
-            {loadingSubscriptions && <span className="tiny-spinner" aria-label="loading Azure accounts" />}
+            <span>{uiText.sidebar.azureAccounts}</span>
+            {loadingSubscriptions && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAzureAccounts} />}
           </button>
           <div className="action-trigger-wrap">
             <button
               className="aks-auth-button action-trigger"
-              title="Azure connections"
-              aria-label="Azure connections"
+              title={uiText.sidebar.azureConnections}
+              aria-label={uiText.sidebar.azureConnections}
               onClick={(event) => {
                 event.stopPropagation();
                 setAzureHeaderMenuOpen((open) => !open);
@@ -681,11 +682,11 @@ export function SidebarProviderSources({
               </div>
             )}
             {hasAzureCloudAccount && loadingSubscriptions && !collapsed && (
-              <div className="sidebar-hint">Loading Azure accounts...</div>
+              <div className="sidebar-hint">{uiText.sidebar.loadingAzureAccounts}</div>
             )}
             {hasAzureCloudAccount && aksError && !collapsed && <div className="sidebar-hint">{aksError}</div>}
             {!hasAzureCloudAccount && !aksError && !loadingSubscriptions && !collapsed && (
-              <div className="sidebar-hint">Click Azure / AKS to check cloud account.</div>
+              <div className="sidebar-hint">{uiText.sidebar.checkAzureAccount}</div>
             )}
             {!hasAzureCloudAccount && aksError && !collapsed && <div className="sidebar-hint">{aksError}</div>}
             {hasAzureCloudAccount &&
@@ -780,7 +781,7 @@ export function SidebarProviderSources({
                                   {!collapsed &&
                                     !loadingResourceGroups[subscriptionNode.id] &&
                                     subscriptionNode.resourceGroups.length === 0 && (
-                                      <div className="sidebar-hint">No resource groups found.</div>
+                                      <div className="sidebar-hint">{uiText.sidebar.noResourceGroups}</div>
                                     )}
                                   {subscriptionNode.resourceGroups.map((resourceGroupNode) => {
                                     const rgKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}`;
@@ -815,7 +816,7 @@ export function SidebarProviderSources({
                                         {(collapsed || rgExpanded) && (
                                           <div className="aks-tree-children">
                                             {!collapsed && !loadingClusters[rgCacheKey] && clusters.length === 0 && (
-                                              <div className="sidebar-hint">No clusters found.</div>
+                                              <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
                                             )}
                                             {clusters.map((cluster) => {
                                               const clusterNodeKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}:cluster:${cluster.name}`;
@@ -891,7 +892,7 @@ export function SidebarProviderSources({
                                                   {(collapsed || clusterExpanded) && (
                                                     <div className="aks-tree-children">
                                                       {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
-                                                        <div className="sidebar-hint">No context imported yet.</div>
+                                                        <div className="sidebar-hint">{uiText.sidebar.noContextImported}</div>
                                                       )}
                                                       {matchingContexts.map((ctx) =>
                                                         renderContextNode(ctx, `aks-context:${clusterNodeKey}`, undefined, undefined, 'aks'),
@@ -928,14 +929,14 @@ export function SidebarProviderSources({
           >
             <span>{isGroupCollapsed('awsRoot') ? '▸' : '▾'}</span>
             <img src={awsIcon} className="svg-inject" alt="AWS" />
-            <span>AWS / EKS</span>
-            {loadingAwsTree && <span className="tiny-spinner" aria-label="loading AWS clusters" />}
+            <span>{uiText.sidebar.awsAccounts}</span>
+            {loadingAwsTree && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAwsClusters} />}
           </button>
           <div className="action-trigger-wrap">
             <button
               className="aks-auth-button action-trigger"
-              title="AWS connections"
-              aria-label="AWS connections"
+              title={uiText.sidebar.awsConnections}
+              aria-label={uiText.sidebar.awsConnections}
               onClick={(event) => {
                 event.stopPropagation();
                 setAwsHeaderMenuOpen((open) => !open);
@@ -992,17 +993,17 @@ export function SidebarProviderSources({
               </div>
             )}
             {hasAwsCloudAccount && loadingAwsTree && !collapsed && (
-              <div className="sidebar-hint">Loading AWS clusters...</div>
+              <div className="sidebar-hint">{uiText.sidebar.loadingAwsClusters}</div>
             )}
             {hasAwsCloudAccount && awsError && !collapsed && <div className="sidebar-hint">{awsError}</div>}
             {!hasAwsCloudAccount && !awsError && !loadingAwsTree && !collapsed && (
-              <div className="sidebar-hint">Click AWS / EKS to check cloud account.</div>
+              <div className="sidebar-hint">{uiText.sidebar.checkAwsAccount}</div>
             )}
             {!hasAwsCloudAccount && awsError && !collapsed && <div className="sidebar-hint">{awsError}</div>}
             {hasAwsCloudAccount && awsAccountNode && (
               <div className="aks-tree-children">
                 {awsAccountNode.regions.length === 0 && !collapsed && (
-                  <div className="sidebar-hint">No EKS clusters found.</div>
+                  <div className="sidebar-hint">{uiText.sidebar.noEksClustersFound}</div>
                 )}
                 {awsAccountNode.regions.map((regionNode) => {
                   const regionKey = `aws-region:${regionNode.name}`;

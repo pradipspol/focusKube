@@ -99,19 +99,6 @@ function Test-ToolRunnable {
     }
 }
 
-# ─── Process helper ──────────────────────────────────────────────────────────
-
-function Run-ProcessWait {
-    param([string]$exe, [string[]]$argList)
-    try {
-        $proc = Start-Process -FilePath $exe -ArgumentList $argList -Wait -NoNewWindow -PassThru -ErrorAction Stop
-        return ($proc.ExitCode -eq 0)
-    } catch {
-        Write-Log "Failed to run $exe $($argList -join ' ') - $($_.Exception.Message)" 'WARN'
-        return $false
-    }
-}
-
 # ─── winget helpers ──────────────────────────────────────────────────────────
 
 # winget exit code 0x8A15002B (-1978335189) means "already installed" — treat as success.
@@ -160,8 +147,6 @@ function Get-ToolDownloadUrl {
     param([string]$tool)
     $urls = @{
         'az'        = 'https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-windows'
-        'helm'      = 'https://get.helm.sh/helm-v3.14.0-windows-amd64.zip'
-        'kubectl'   = 'https://dl.k8s.io/release/v1.28.0/bin/windows/amd64/kubectl.exe'
         'kubelogin' = 'https://github.com/Azure/kubelogin/releases'
         'node'      = 'https://nodejs.org/'
     }
@@ -247,52 +232,12 @@ function Uninstall-AzureKubelogin {
     }
 }
 
-# ─── Bundled installer helpers ───────────────────────────────────────────────
-
-function Try-Run-Bundled-MSI {
-    param([string]$msiPath)
-    if (-not (Test-Path $msiPath)) {
-        Write-Log "Bundled MSI not found at: $msiPath" 'WARN'
-        return $false
-    }
-    Write-Step "Running bundled MSI silently: $msiPath"
-    Write-Log "MSI size: $((Get-Item $msiPath).Length) bytes"
-    $ok = Run-ProcessWait 'msiexec.exe' @('/i', $msiPath, '/qn', '/norestart')
-    Write-Log "msiexec exit code: $LASTEXITCODE"
-    if ($ok) { Write-Ok "MSI install succeeded: $msiPath" } else { Write-Fail "MSI install failed: $msiPath" }
-    return $ok
-}
-
-function Try-Uninstall-BundledMSI {
-    param([string]$msiPath)
-    if (-not (Test-Path $msiPath)) { return $false }
-    Write-Step "Uninstalling via bundled MSI: $msiPath"
-    return Run-ProcessWait 'msiexec.exe' @('/x', $msiPath, '/qn', '/norestart')
-}
-
-function Get-BundledPath {
-    param([string]$fileName)
-    $p = Join-Path $Script:ScriptDir $fileName
-    if (Test-Path $p) { return $p }
-    Write-Log "Bundled file not found: $fileName (looked in $Script:ScriptDir)" 'DEBUG'
-    return $null
-}
-
 # ─── Ensure-Tool ─────────────────────────────────────────────────────────────
-#
-# For tools supplied as plain .exe bundled binaries (helm, kubectl, kubelogin):
-#   1. Add the extras directory to the user PATH so they are runnable from any
-#      terminal without knowing the full path.
-#   2. Fall back to winget when no bundled binary is present.
-#
-# For az: bundledRelativePath points to the MSI installer, not an exe, so the
-# extras dir is only added to PATH after a successful system-level install.
 
 function Ensure-Tool {
     param(
         [string]$cmd,
-        [string[]]$wingetIds,
-        [string]$bundledRelativePath = ''
+        [string[]]$wingetIds
     )
 
     Write-Step "Ensuring tool: $cmd"
@@ -303,25 +248,6 @@ function Ensure-Tool {
         Write-Ok "$cmd already on PATH: $existing"
         Test-ToolRunnable $existing | Out-Null
         return $true
-    }
-
-    # ── Try bundled .exe binary ─────────────────────────────────────────────
-    if ($bundledRelativePath -and -not $bundledRelativePath.ToLower().EndsWith('.msi')) {
-        $bundled = Get-BundledPath $bundledRelativePath
-        if ($bundled) {
-            Write-Log "$cmd bundled exe found: $bundled"
-            # Add the directory containing the bundled binary to user PATH so
-            # it is immediately runnable from any terminal.
-            Add-ToUserPath $Script:ScriptDir
-            # Verify it actually runs
-            if (Test-ToolRunnable $bundled) {
-                Write-Ok "$cmd is ready via bundled binary"
-                return $true
-            }
-            Write-Log "$cmd bundled binary found but failed version check; continuing" 'WARN'
-        } else {
-            Write-Log "$cmd bundled exe not found at $bundledRelativePath" 'WARN'
-        }
     }
 
     # ── Try winget ──────────────────────────────────────────────────────────
@@ -358,79 +284,12 @@ function Ensure-Tool {
         }
     }
 
-    # ── Try bundled MSI installer (e.g. az) ────────────────────────────────
-    if ($bundledRelativePath -and $bundledRelativePath.ToLower().EndsWith('.msi')) {
-        $msi = Get-BundledPath $bundledRelativePath
-        if (-not $msi) {
-            Write-Fail "Bundled MSI for $cmd not found: $bundledRelativePath"
-            Write-Log "To fix: Download $bundledRelativePath and place it in: $Script:ScriptDir"
-            $dlUrl = Get-ToolDownloadUrl $cmd
-            if ($dlUrl) { Write-Log "Download link: $dlUrl" }
-        } elseif (Try-Run-Bundled-MSI $msi) {
-            Refresh-SessionPath
-            $installed = Resolve-CommandPath $cmd
-            if ($installed) {
-                Write-Ok "$cmd installed via bundled MSI and found at: $installed"
-                Test-ToolRunnable $installed | Out-Null
-                return $true
-            }
-            Write-Log "$cmd MSI installed but not yet on PATH; a new shell session may be required" 'WARN'
-            return $true
-        } else {
-            Write-Fail "Failed to install $cmd via bundled MSI"
-            Write-Log "MSI path was: $msi"
-            Write-Log "The installer may require administrative privileges or the MSI may be corrupted"
-        }
-    }
-
     Write-Fail "$cmd could not be installed automatically."
     $dlUrl = Get-ToolDownloadUrl $cmd
     if ($dlUrl) { Write-Log "Please install manually or download from: $dlUrl" }
     Write-Log "Extras directory: $Script:ScriptDir"
     return $false
 }
-
-# ─── Uninstall-Tool ──────────────────────────────────────────────────────────
-
-function Uninstall-Tool {
-    param(
-        [string]$cmd,
-        [string[]]$wingetIds,
-        [string]$bundledRelativePath = '',
-        [string]$installedRelativePath = ''
-    )
-
-    Write-Step "Uninstalling tool: $cmd"
-    if (-not (Test-CommandExists $cmd)) {
-        Write-Log "$cmd not present on PATH; skipping"
-        return
-    }
-
-    foreach ($id in $wingetIds) {
-        if (Try-Uninstall-WithWinget $id $cmd) { Write-Ok "$cmd uninstalled via winget"; return }
-    }
-
-    if ($bundledRelativePath) {
-        $bundled = Join-Path $Script:ScriptDir $bundledRelativePath
-        if (Try-Uninstall-BundledMSI $bundled) { Write-Ok "$cmd uninstalled via bundled MSI"; return }
-    }
-
-    if ($installedRelativePath) {
-        $installed = Join-Path $Script:ScriptDir $installedRelativePath
-        if (Test-Path $installed) {
-            try {
-                Remove-Item -Path $installed -Force -ErrorAction Stop
-                Write-Ok "Removed installed file: $installed"
-                return
-            } catch {
-                Write-Log "Failed to remove ${installed}: $($_.Exception.Message)" 'WARN'
-            }
-        }
-    }
-
-    Write-Fail "Could not automatically uninstall $cmd. Manual removal may be required."
-}
-
 
 function Ensure-NodeJs {
     Write-Step 'Ensuring tool: node'
@@ -487,44 +346,12 @@ Write-Log "Running as: $([System.Environment]::UserName)"
 Write-Log "Current PATH entries:"
 $env:PATH -split ';' | Where-Object { $_ } | ForEach-Object { Write-Log "  $_" }
 
-# Pre-check: warn about missing bundled files
-Write-Log "=== Checking for bundled files in: $Script:ScriptDir ==="
-$bundledFiles = @{
-    'az_installer.msi'  = 'Azure CLI (MSI)'
-    'kubectl.exe'       = 'kubectl'
-    'helm.exe'          = 'Helm'
-    # kubelogin is NOT bundled as an .exe - Azure kubelogin (Azure/kubelogin) is
-    # installed via `az aks install-cli` or winget (Microsoft.Azure.Kubelogin)
-    # into ~/.azure-kubelogin/. Do NOT bundle the OIDC kubelogin (int128/kubelogin)
-    # which has a completely different flag interface and does not support AKS AAD auth.
-}
-$missingFiles = @()
-foreach ($file in $bundledFiles.Keys) {
-    $path = Join-Path $Script:ScriptDir $file
-    if (Test-Path $path) {
-        $size = (Get-Item $path).Length / 1MB
-        Write-Log "  [OK] Found: $file ($([Math]::Round($size, 1)) MB)"
-    } else {
-        Write-Log "  [--] Missing: $file (will attempt winget fallback)" 'WARN'
-        $missingFiles += $file
-    }
-}
-
-if ($missingFiles.Count -gt 0) {
-    Write-Log ""
-    Write-Log "Some bundled files are missing. Installation will proceed but may require:" 'WARN'
-    Write-Log "  1. An active internet connection for winget package downloads"
-    Write-Log "  2. Administrator privileges (especially for az_installer.msi)"
-    Write-Log "  3. System restart for PATH updates to take effect"
-    Write-Log ""
-    Write-Log "To pre-download missing files, see: $Script:ScriptDir\README.txt" 'WARN'
-}
-
 if ($Action -eq 'install') {
     $results = [ordered]@{}
     $results['node']      = Ensure-NodeJs
-    $results['az']        = Ensure-Tool -cmd 'az'        -wingetIds @('Microsoft.AzureCLI')                              -bundledRelativePath 'az_installer.msi'
-    $results['helm']      = Ensure-Tool -cmd 'helm'      -wingetIds @('Helm.Helm')                                       -bundledRelativePath 'helm.exe'
+    $results['az']        = Ensure-Tool -cmd 'az'        -wingetIds @('Microsoft.AzureCLI')
+    $results['helm']      = Ensure-Tool -cmd 'helm'      -wingetIds @('Helm.Helm')
+    $results['kubectl']   = Ensure-Tool -cmd 'kubectl'   -wingetIds @('Kubernetes.kubectl', 'kubernetes.kubectl')
     $results['kubelogin'] = Ensure-AzureKubelogin
 
     Write-Log "=== Installation summary ==="
@@ -542,10 +369,5 @@ if ($Action -eq 'install') {
     }
     Write-Ok "All tools installed successfully."
 } else {
-    # Uninstall-Tool -cmd 'node'    -wingetIds @('OpenJS.NodeJS.LTS')
-    # Uninstall-Tool -cmd 'az'      -wingetIds @('Microsoft.AzureCLI')                     -bundledRelativePath 'az_installer.msi' -installedRelativePath ''
-    # Uninstall-Tool -cmd 'helm'    -wingetIds @('Helm.Helm')                               -bundledRelativePath 'helm.exe'         -installedRelativePath ''
-    # Uninstall-Tool -cmd 'kubectl' -wingetIds @('Kubernetes.kubectl', 'kubernetes.kubectl') -bundledRelativePath 'kubectl.exe'      -installedRelativePath 'kubectl.exe'
-    # Uninstall-AzureKubelogin
     Write-Log "=== Uninstall complete ==="
 }

@@ -9,6 +9,7 @@ import { LogsViewer } from './LogsViewer';
 import { ExecTerminal } from './ExecTerminal';
 import { DeploymentActions } from './DeploymentActions';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
+import { uiText } from '../text';
 
 interface Props {
   plural: string;
@@ -90,9 +91,9 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
           <div className="drawer-header-actions">
             {plural === 'pods' && (
               <>
-                <button className="drawer-action-icon" title="Logs" onClick={() => setTab('logs')}>≣</button>
+                <button className="drawer-action-icon" title={uiText.resourceDetail.logs} onClick={() => setTab('logs')}>≣</button>
                 {canWrite && (
-                  <button className="drawer-action-icon" title="Shell" onClick={() => setTab('exec')}>{'>_'}</button>
+                  <button className="drawer-action-icon" title={uiText.resourceDetail.shell} onClick={() => setTab('exec')}>{'>_'}</button>
                 )}
               </>
             )}
@@ -101,31 +102,31 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
                 {canWrite && (
                   <button
                     className="drawer-action-icon"
-                    title="Restart Deployment"
+                    title={uiText.resourceDetail.restartDeployment}
                     onClick={() => restart.mutate()}
                     disabled={restart.isPending}
                   >
                     ↻
                   </button>
                 )}
-                <button className="drawer-action-icon" title="Deployment Actions" onClick={() => setTab('actions')}>⋯</button>
+                <button className="drawer-action-icon" title={uiText.resourceDetail.deploymentActions} onClick={() => setTab('actions')}>⋯</button>
               </>
             )}
             {canWrite && (
-              <button className="drawer-action-icon" title="Edit YAML" onClick={() => setTab('yaml')}>✎</button>
+              <button className="drawer-action-icon" title={uiText.resourceDetail.editYaml} onClick={() => setTab('yaml')}>✎</button>
             )}
             {canDelete && (
               <button
                 className="drawer-action-icon danger"
-                title={`Delete ${plural.slice(0, -1) || plural}`}
+                title={`${uiText.resourceDetail.deletePrefix} ${plural.slice(0, -1) || plural}`}
                 onClick={() => {
                   const podWarning = [
-                    `WARNING: You are deleting pod "${name}".`,
-                    'This is an immediate destructive action and may interrupt traffic.',
+                    `${uiText.resourceDetail.warningPrefix} "${name}".`,
+                    uiText.resourceDetail.destructiveActionNotice,
                     '',
-                    'Do you want to continue?',
+                    uiText.resourceDetail.continuePrompt,
                   ].join('\n');
-                  const genericWarning = `Delete ${plural} "${name}"?`;
+                  const genericWarning = `${uiText.resourceDetail.deletePrefix} ${plural} "${name}"?`;
                   if (!confirm(plural === 'pods' ? podWarning : genericWarning)) return;
                   del.mutate();
                 }}
@@ -141,7 +142,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
         <div className="tabs">
           {tabs.map((t) => (
             <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'yaml' ? 'YAML' : t === 'overview' ? 'Overview' : t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === 'yaml' ? uiText.resourceDetail.yaml : t === 'overview' ? uiText.resourceDetail.overview : t.charAt(0).toUpperCase() + t.slice(1)}
             </div>
           ))}
         </div>

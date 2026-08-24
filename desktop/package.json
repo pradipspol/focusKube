@@ -1,10 +1,10 @@
 {
-  "name": "k8-explorer",
+  "name": "focusKube",
   "author": "TechAvise", 
   "description": "Kubernetes Explorer Desktop Client",
   "version": "0.1.0-2",
   "private": true,
-  "homepage": "https://github.com/pradipspol/k8-explorer",
+  "homepage": "https://github.com/pradipspol/focusKube",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,8 +16,8 @@
     "get-port": "^5.1.1"
   },
   "build": {
-    "appId": "com.k8-explorer.desktop",
-    "productName": "k8-explorer",
+    "appId": "com.focusKube.desktop",
+    "productName": "focusKube",
     "electronVersion": "39.8.10",
     "npmRebuild": false,
     "afterPack": "./afterPack.js",

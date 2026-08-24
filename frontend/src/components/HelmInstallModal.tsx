@@ -5,6 +5,7 @@ import type { HelmChart } from '../api/types';
 import { Modal } from './Modal';
 import { HelmDiffViewer } from './HelmDiffViewer';
 import { HelmAddRepoModal } from './HelmAddRepoModal';
+import { uiText } from '../text';
 
 interface Props {
   scope: Scope;
@@ -79,15 +80,14 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
     const isCompressed = file.name.endsWith('.tgz') || file.name.endsWith('.tar.gz');
 
     if (!isCompressed) {
-      setUploadError('Please upload a .tgz or .tar.gz chart file');
+      setUploadError(uiText.helm.uploadError);
       return;
     }
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
+      void new Uint8Array(arrayBuffer);
 
-      // Try to extract chart name and version from filename
       let chartName = file.name
         .replace(/\.(tar\.)?tgz$/, '')
         .replace(/^.*\//, '');
@@ -97,8 +97,6 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
         chartName = chartName.substring(0, versionMatch.index);
       }
 
-      // For now, we'll store the file-based chart info without actual extraction
-      // In a production implementation, you'd extract the Chart.yaml and values.yaml
       const defaultValues = `# Default values for ${chartName}
 # Auto-detected from uploaded chart: ${file.name}
 # Customize these values as needed
@@ -114,7 +112,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
         fileInputRef.current.value = '';
       }
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Failed to process chart file');
+      setUploadError(err instanceof Error ? err.message : uiText.helm.uploadError);
     }
   };
 
@@ -142,18 +140,15 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
       onClose();
     },
     onError: (err) => {
-      onToast('error', err instanceof Error ? err.message : 'Installation failed');
+      onToast('error', err instanceof Error ? err.message : uiText.helm.installFailed);
     },
   });
 
   const handlePreview = async () => {
     setIsValidating(true);
     try {
-      // For preview, we show what chart will be deployed with the selected values
-      setDryRunManifest('Generating preview...');
+      setDryRunManifest(uiText.helm.generating);
       setTab('preview');
-      // In a full implementation, we'd call a dry-run endpoint
-      // For now, just show the current manifest
       setDryRunManifest('(Preview would show generated manifest after applying your values)');
     } finally {
       setIsValidating(false);
@@ -168,16 +163,13 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
     !install.isPending;
 
   return (
-    <Modal title="Install Helm Release" onClose={onClose}>
+    <Modal title={uiText.helm.installRelease} onClose={onClose}>
       <div className="helm-modal-tabs">
-        <button
-          className={`tab ${tab === 'config' ? 'active' : ''}`}
-          onClick={() => setTab('config')}
-        >
-          Configuration
+        <button className={`tab ${tab === 'config' ? 'active' : ''}`} onClick={() => setTab('config')}>
+          {uiText.helm.configuration}
         </button>
         <button className={`tab ${tab === 'preview' ? 'active' : ''}`} onClick={() => setTab('preview')}>
-          Preview
+          {uiText.helm.preview}
         </button>
       </div>
 
@@ -208,20 +200,18 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
           {chartSource === 'repo' && (
             <>
-              {charts.isError && <div className="notice error">Failed to load charts: {(charts.error as Error).message}. Make sure Helm repositories are configured.</div>}
-              {charts.isLoading && <div className="dim">Loading charts...</div>}
+              {charts.isError && <div className="notice error">{uiText.helm.loadChartsError}: {(charts.error as Error).message}. Make sure Helm repositories are configured.</div>}
+              {charts.isLoading && <div className="dim">{uiText.helm.loadingCharts}</div>}
 
               {charts.data && charts.data.charts.length === 0 && (
                 <div className="repo-setup-notice">
-                  <div className="notice info">
-                    No charts found. Add a Helm repository to get started.
-                  </div>
+                  <div className="notice info">{uiText.helm.noChartsFound}</div>
                   <button
                     onClick={() => setShowAddRepoModal(true)}
                     className="primary"
                     style={{ marginTop: 'var(--space-sm)' }}
                   >
-                    + Add Repository
+                    + {uiText.common.add}
                   </button>
                 </div>
               )}
@@ -266,7 +256,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                     </div>
                   )}
 
-                  {chartDefaults.isLoading && <div className="dim">Loading chart defaults...</div>}
+                  {chartDefaults.isLoading && <div className="dim">{uiText.helm.loadingChartDefaults}</div>}
                 </>
               )}
             </>
@@ -306,7 +296,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
           {currentChart && (
             <>
               <div className="form-group">
-                <label htmlFor="release-name">Release Name</label>
+                <label htmlFor="release-name">{uiText.helm.releaseName}</label>
                 <input
                   id="release-name"
                   type="text"
@@ -329,7 +319,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
               <div className="form-group">
                 <label htmlFor="values-editor">
-                  Values (YAML)
+                  {uiText.helm.valuesYaml}
                   {values && <span className="form-hint">• Modified</span>}
                 </label>
                 <textarea
@@ -346,22 +336,22 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                 <button
                   onClick={handlePreview}
                   disabled={isValidating}
-                  title="Preview what will be deployed"
+                  title={uiText.helm.previewTitle}
                 >
-                  {isValidating ? 'Generating...' : 'Preview'}
+                  {isValidating ? uiText.helm.generating : uiText.helm.preview}
                 </button>
                 <button
                   onClick={() => install.mutate()}
                   disabled={!isReadyToInstall}
                   className="primary"
-                  title={isReadyToInstall ? 'Install release' : 'Complete the form'}
+                  title={isReadyToInstall ? uiText.helm.installReleaseTitle : uiText.helm.selectCompleteForm}
                 >
-                  {install.isPending ? 'Installing...' : 'Install Release'}
+                  {install.isPending ? uiText.helm.installing : uiText.helm.installReleaseButton}
                 </button>
               </div>
 
               {install.isError && (
-                <div className="notice error">{install.error instanceof Error ? install.error.message : 'Installation failed'}</div>
+                <div className="notice error">{install.error instanceof Error ? install.error.message : uiText.helm.installFailed}</div>
               )}
             </>
           )}
@@ -372,9 +362,9 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
         <div className="helm-modal-content">
           <HelmDiffViewer currentManifest="" newManifest={dryRunManifest} />
           <div className="helm-modal-actions">
-            <button onClick={() => setTab('config')}>Back to Config</button>
+            <button onClick={() => setTab('config')}>{uiText.common.backToConfig}</button>
             <button onClick={() => install.mutate()} disabled={!isReadyToInstall} className="primary">
-              Install Release
+              {uiText.helm.installReleaseButton}
             </button>
           </div>
         </div>
@@ -386,7 +376,6 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
           onClose={() => setShowAddRepoModal(false)}
           onToast={onToast}
           onAdded={() => {
-            // Charts will auto-refetch due to query invalidation
             setShowAddRepoModal(false);
           }}
         />

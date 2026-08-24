@@ -4,6 +4,7 @@ import { api, type Scope } from '../api/client';
 import type { HelmRelease } from '../api/types';
 import { Modal } from './Modal';
 import { HelmDiffViewer } from './HelmDiffViewer';
+import { uiText } from '../text';
 
 interface Props {
   release: HelmRelease;
@@ -54,7 +55,7 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
       onClose();
     },
     onError: (err) => {
-      onToast('error', err instanceof Error ? err.message : 'Upgrade failed');
+      onToast('error', err instanceof Error ? err.message : uiText.helm.upgradeFailed);
     },
   });
 
@@ -68,17 +69,17 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
     <Modal title={`Upgrade Release — ${release.name}`} onClose={onClose}>
       <div className="helm-modal-tabs">
         <button className={`tab ${tab === 'config' ? 'active' : ''}`} onClick={() => setTab('config')}>
-          Configuration
+          {uiText.helm.configuration}
         </button>
         <button className={`tab ${tab === 'diff' ? 'active' : ''}`} onClick={() => setTab('diff')}>
-          Diff
+          {uiText.helm.diff}
         </button>
       </div>
 
       {tab === 'config' && (
         <div className="helm-modal-content">
           {currentValues.isError && <div className="notice error">{(currentValues.error as Error).message}</div>}
-          {currentValues.isLoading && <div className="dim">Loading current values...</div>}
+          {currentValues.isLoading && <div className="dim">{uiText.helm.loadingCurrentValues}</div>}
 
           {currentValues.data && (
             <>
@@ -91,11 +92,11 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
                   value={version}
                   onChange={(e) => setVersion(e.target.value)}
                 />
-                <small className="dim">Current: {release.chart}</small>
+                <small className="dim">{uiText.helm.currentVersionPrefix} {release.chart}</small>
               </div>
 
               <div className="form-group">
-                <label htmlFor="values-editor">Values (YAML)</label>
+                <label htmlFor="values-editor">{uiText.helm.valuesYaml}</label>
                 <textarea
                   id="values-editor"
                   value={values}
@@ -106,21 +107,21 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
               </div>
 
               <div className="helm-modal-actions">
-                <button onClick={handleViewDiff} disabled={upgrade.isPending} title="Review changes">
-                  View Diff
+                <button onClick={handleViewDiff} disabled={upgrade.isPending} title={uiText.helm.diff}>
+                  {uiText.helm.diff}
                 </button>
                 <button
                   onClick={() => upgrade.mutate()}
                   disabled={!isReadyToUpgrade}
                   className="primary"
-                  title={isReadyToUpgrade ? 'Upgrade release' : 'Make changes or select a new version'}
+                  title={isReadyToUpgrade ? uiText.common.upgrade : uiText.helm.madeChangesOrSelectVersion}
                 >
-                  {upgrade.isPending ? 'Upgrading...' : 'Upgrade Release'}
+                  {upgrade.isPending ? uiText.topbar.saving : uiText.helm.upgradeRelease}
                 </button>
               </div>
 
               {upgrade.isError && (
-                <div className="notice error">{upgrade.error instanceof Error ? upgrade.error.message : 'Upgrade failed'}</div>
+                <div className="notice error">{upgrade.error instanceof Error ? upgrade.error.message : uiText.helm.upgradeFailed}</div>
               )}
             </>
           )}
@@ -129,7 +130,7 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
 
       {tab === 'diff' && (
         <div className="helm-modal-content">
-          {currentManifest.isLoading && <div className="dim">Loading manifest...</div>}
+          {currentManifest.isLoading && <div className="dim">{uiText.helm.loadingManifest}</div>}
           {currentManifest.isError && <div className="notice error">{(currentManifest.error as Error).message}</div>}
 
           {currentManifest.data && (
@@ -139,14 +140,14 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
                 newManifest={currentManifest.data.comparisonManifest}
               />
               <div className="helm-modal-actions">
-                <button onClick={() => setTab('config')}>Back to Config</button>
+                <button onClick={() => setTab('config')}>{uiText.common.backToConfig}</button>
                 <button
                   onClick={() => upgrade.mutate()}
                   disabled={!isReadyToUpgrade}
                   className="primary"
-                  title={isReadyToUpgrade ? 'Upgrade release' : 'Make changes first'}
+                  title={isReadyToUpgrade ? uiText.common.upgrade : uiText.helm.makeChangesFirst}
                 >
-                  Upgrade Release
+                  {uiText.helm.upgradeRelease}
                 </button>
               </div>
             </>

@@ -57,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   headers.set('Content-Type', 'application/json');
   if (desktopEmail) {
-    headers.set('x-k8-explorer-email', desktopEmail);
+    headers.set('x-focusKube-email', desktopEmail);
   }
   const res = await fetch(`/api${path}`, {
     headers,

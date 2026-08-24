@@ -8,6 +8,7 @@ import { TimelineScrubber, type TimelineMarker } from '../TimelineScrubber';
 import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
+import { uiText } from '../../text';
 
 interface Props {
   scope: Scope;
@@ -24,7 +25,7 @@ export function TimelinePanel({ scope }: Props) {
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">Please select a Kubernetes context from the sidebar to view the timeline.</div>
+        <div className="notice">{uiText.timeline.selectContext}</div>
       </div>
     );
   }
@@ -137,10 +138,10 @@ export function TimelinePanel({ scope }: Props) {
       />
 
       <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
-        <h3 style={{ margin: '0 0 1rem 0' }}>Cluster State at {new Date(currentTime).toLocaleString()}</h3>
+        <h3 style={{ margin: '0 0 1rem 0' }}>{uiText.timeline.clusterStatePrefix} {new Date(currentTime).toLocaleString()}</h3>
 
         {reconstructedState.length === 0 ? (
-          <div className="notice">No workload state recorded at this time.</div>
+          <div className="notice">{uiText.timeline.noWorkloadState}</div>
         ) : (
           <DataTable
             rowKey={(row) => row.uid || row.name}
@@ -159,28 +160,28 @@ export function TimelinePanel({ scope }: Props) {
         >
           <div style={{ display: 'grid', gap: '1rem' }}>
             <div>
-              <strong>Namespace:</strong> {showDetailsFor.namespace || '(cluster-scoped)'}
+              <strong>{uiText.timeline.namespace}</strong> {showDetailsFor.namespace || uiText.timeline.clusterScoped}
             </div>
             <div>
-              <strong>UID:</strong> <code>{showDetailsFor.uid}</code>
+              <strong>{uiText.timeline.uid}</strong> <code>{showDetailsFor.uid}</code>
             </div>
             <div>
-              <strong>Change Type:</strong> {showDetailsFor.changeType}
+              <strong>{uiText.timeline.changeType}</strong> {showDetailsFor.changeType}
             </div>
             <div>
-              <strong>Severity:</strong> <span className={`badge severity-${showDetailsFor.severity}`}>{showDetailsFor.severity}</span>
+              <strong>{uiText.timeline.severity}</strong> <span className={`badge severity-${showDetailsFor.severity}`}>{showDetailsFor.severity}</span>
             </div>
             <div>
-              <strong>Summary:</strong> {showDetailsFor.summary}
+              <strong>{uiText.timeline.summary}</strong> {showDetailsFor.summary}
             </div>
             {showDetailsFor.reason && (
               <div>
-                <strong>Reason:</strong> {showDetailsFor.reason}
+                <strong>{uiText.timeline.reason}</strong> {showDetailsFor.reason}
               </div>
             )}
             {showDetailsFor.before && (
               <div>
-                <strong>Before:</strong>
+                <strong>{uiText.timeline.before}</strong>
                 <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
                   {JSON.stringify(showDetailsFor.before, null, 2)}
                 </pre>
@@ -188,7 +189,7 @@ export function TimelinePanel({ scope }: Props) {
             )}
             {showDetailsFor.after && (
               <div>
-                <strong>After:</strong>
+                <strong>{uiText.timeline.after}</strong>
                 <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
                   {JSON.stringify(showDetailsFor.after, null, 2)}
                 </pre>

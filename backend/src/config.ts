@@ -8,7 +8,7 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
   kubeconfigPath: process.env.KUBECONFIG || undefined,
   allowSecretReveal: (process.env.ALLOW_SECRET_REVEAL ?? 'false') === 'true',
-  sessionStorageDir: process.env.SESSION_STORAGE_DIR ?? path.join(os.tmpdir(), 'k8-explorer', 'sessions'),
+  sessionStorageDir: process.env.SESSION_STORAGE_DIR ?? path.join(os.tmpdir(), 'focusKube', 'sessions'),
   azureConfigSeedDir: process.env.AZURE_CONFIG_SEED_DIR || undefined,
   sessionTtlHours: parseInt(process.env.SESSION_TTL_HOURS ?? '168', 10),
   slowRequestWarnMs: parseInt(process.env.SLOW_REQUEST_WARN_MS ?? '5000', 10),

@@ -13,7 +13,7 @@ import { kube } from '../kube/client.js';
 import { type Role } from './rbac.js';
 
 const runtimeByUserId = new Map<string, UserSessionState>();
-const DESKTOP_EMAIL_HEADER = 'x-k8-explorer-email';
+const DESKTOP_EMAIL_HEADER = 'x-focusKube-email';
 const DESKTOP_AUTH_STATE_FILE = 'desktop-auth.json';
 
 export interface AuthUser {

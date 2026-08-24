@@ -15,6 +15,7 @@ import '@xyflow/react/dist/style.css';
 import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { ApplicationSelector, type ApplicationOption } from './ApplicationSelector';
+import { uiText } from '../text';
 
 interface Props {
   scope: Scope;
@@ -532,12 +533,12 @@ export function TopologyPanel({ scope, namespaces }: Props) {
     });
   }, [edges, connectedToHover]);
 
-  if (!scope.context) return <div className="empty">Select a context to view its topology.</div>;
+  if (!scope.context) return <div className="empty">{uiText.topology.selectContext}</div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div className="toolbar toolbar-compact-top">
-        <h2 style={{ margin: 0 }}>Topology</h2>
+        <h2 style={{ margin: 0 }}>{uiText.topology.title}</h2>
         <div className="toolbar-actions">
           {query.isFetching && <span className="tiny-spinner" aria-label="loading topology" />}
           <select
@@ -545,7 +546,7 @@ export function TopologyPanel({ scope, namespaces }: Props) {
             value={namespace}
             onChange={(e) => setNamespace(e.target.value)}
           >
-            <option value="">Select a namespace…</option>
+            <option value="">{uiText.topology.selectNamespace}</option>
             {namespaces.map((name) => (
               <option key={name} value={name}>
                 {name}
@@ -560,19 +561,18 @@ export function TopologyPanel({ scope, namespaces }: Props) {
 
       {query.data && query.data.failedKinds.length > 0 && (
         <div className="notice">
-          Couldn't load: <span className="mono">{query.data.failedKinds.join(', ')}</span> in this namespace — the
-          graph below reflects everything else.
+          {uiText.topology.couldNotLoadPrefix} <span className="mono">{query.data.failedKinds.join(', ')}</span> {uiText.topology.inThisNamespace}
         </div>
       )}
 
       {!namespace ? (
-        <div className="empty">Select a namespace to view its object graph.</div>
+        <div className="empty">{uiText.topology.selectNamespaceToView}</div>
       ) : query.isLoading ? (
-        <div className="empty">Loading…</div>
+        <div className="empty">{uiText.topology.loading}</div>
       ) : selectedApps.length === 0 ? (
-        <div className="empty">Select one or more applications to view their topology.</div>
+        <div className="empty">{uiText.topology.selectApplicationsToView}</div>
       ) : nodes.length === 0 ? (
-        <div className="empty">No objects found for the selected application(s).</div>
+        <div className="empty">{uiText.topology.noObjectsFound}</div>
       ) : (
         <div style={{ flex: '1 1 auto', minHeight: 0 }}>
           <ReactFlowProvider>

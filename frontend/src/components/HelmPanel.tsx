@@ -10,6 +10,7 @@ import { NamespaceSelector } from './NamespaceSelector';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { HelmInstallModal } from './HelmInstallModal';
 import { HelmUpgradeModal } from './HelmUpgradeModal';
+import { uiText } from '../text';
 
 type DetailsState = { title: string; rows: Array<[string, string | number | undefined]> } | null;
 
@@ -110,21 +111,21 @@ export function HelmPanel({
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 
-  if (!scope.context) return <div className="empty">Select a context to list Helm releases.</div>;
+  if (!scope.context) return <div className="empty">{uiText.helm.selectContextToListReleases}</div>;
 
   return (
     <>
       <div className="toolbar">
-        <h2>{mode === 'releases' ? 'Helm Releases' : 'Helm Charts'}</h2>
+        <h2>{mode === 'releases' ? uiText.helm.releasesTitle : uiText.helm.chartsTitle}</h2>
         <span className="dim">
           {mode === 'releases'
             ? `${visibleReleases.length} releases`
             : `${showCatalog ? charts.data?.charts.length ?? 0 : usedCharts.length} charts`}
         </span>
         {mode === 'charts' && (
-          <label className="helm-catalog-toggle" title="Show all installable charts from your Helm repositories">
+          <label className="helm-catalog-toggle" title={uiText.helm.showAllInstallableCharts}>
             <input type="checkbox" checked={showCatalog} onChange={(e) => setShowCatalog(e.target.checked)} />
-            <span>Repo catalog</span>
+            <span>{uiText.helm.repoCatalog}</span>
           </label>
         )}
         <div className="toolbar-actions">
@@ -140,15 +141,15 @@ export function HelmPanel({
             <button
               className="toolbar-action-button"
               onClick={() => setShowInstallModal(true)}
-              title="Install a new Helm release"
+              title={uiText.helm.installRelease}
             >
-              + Install
+              + {uiText.common.install}
             </button>
           )}
           <button
             className="toolbar-refresh"
             onClick={() => (mode === 'charts' && showCatalog ? charts.refetch() : releases.refetch())}
-            title="Refresh"
+            title={uiText.common.refresh}
           >
             ⟳
           </button>
@@ -162,20 +163,18 @@ export function HelmPanel({
       {mode === 'charts' && !showCatalog && releases.isError && (
         <div className="notice error">{(releases.error as Error).message}</div>
       )}
-      {mode === 'releases' && releases.isLoading && <div className="empty">Loading…</div>}
-      {mode === 'charts' && showCatalog && charts.isLoading && <div className="empty">Loading…</div>}
-      {mode === 'charts' && !showCatalog && releases.isLoading && <div className="empty">Loading…</div>}
+      {mode === 'releases' && releases.isLoading && <div className="empty">{uiText.common.loading}</div>}
+      {mode === 'charts' && showCatalog && charts.isLoading && <div className="empty">{uiText.helm.loadingCharts}</div>}
+      {mode === 'charts' && !showCatalog && releases.isLoading && <div className="empty">{uiText.common.loading}</div>}
 
       {mode === 'releases' && releases.data && visibleReleases.length === 0 && (
         <div className="empty">No Helm releases found.</div>
       )}
       {mode === 'charts' && showCatalog && charts.data && charts.data.charts.length === 0 && (
-        <div className="empty">No Helm charts found. Add a Helm repo first (e.g. helm repo add ...).</div>
+        <div className="empty">{uiText.helm.noChartsFound}</div>
       )}
       {mode === 'charts' && !showCatalog && releases.data && usedCharts.length === 0 && (
-        <div className="empty">
-          No charts deployed in the selected namespace. Tick “Repo catalog” to browse installable charts.
-        </div>
+        <div className="empty">{uiText.helm.noChartsDeployed}</div>
       )}
 
       {mode === 'releases' && releases.data && visibleReleases.length > 0 && (
@@ -198,12 +197,12 @@ export function HelmPanel({
             })
           }
           actions={[
-            { label: 'History', onClick: (r) => setHistoryFor(r) },
-            { label: 'Values', onClick: (r) => setValuesFor(r) },
+            { label: uiText.helm.history, onClick: (r) => setHistoryFor(r) },
+            { label: uiText.helm.values, onClick: (r) => setValuesFor(r) },
             ...(canWrite
               ? [
                   {
-                    label: 'Upgrade',
+                    label: uiText.common.upgrade,
                     onClick: (r: HelmRelease) => {
                       setUpgradeFor(r);
                     },
@@ -213,7 +212,7 @@ export function HelmPanel({
             ...(canDelete
               ? [
                   {
-                    label: 'Uninstall',
+                    label: uiText.helm.uninstall,
                     danger: true,
                     onClick: (r: HelmRelease) => {
                       if (confirm(`Uninstall release "${r.name}"?`)) uninstall.mutate(r);

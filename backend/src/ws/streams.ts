@@ -27,7 +27,7 @@ export async function routeUpgrade(req: any, socket: any, head: Buffer): Promise
   const { pathname } = url;
   const upgradeHeaders = {
     ...req.headers,
-    'x-k8-explorer-email': url.searchParams.get('email') ?? undefined,
+    'x-focusKube-email': url.searchParams.get('email') ?? undefined,
   };
 
   try {

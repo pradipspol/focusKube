@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
+import { uiText } from '../text';
 
 interface Props {
   deployment: K8sObject;
@@ -49,8 +50,8 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
 
   const rollback = useMutation({
     mutationFn: (revision: number) => api.rollbackDeployment(name, revision, opScope),
-    onSuccess: (r) => {
-      setMessage(`Rolled back to revision ${r.rolledBackTo}.`);
+    onSuccess: (result) => {
+      setMessage(`Rolled back to revision ${result.rolledBackTo}.`);
       refresh();
     },
     onError: (e) => setMessage((e as Error).message),
@@ -65,18 +66,16 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
   return (
     <div style={{ padding: 14, overflow: 'auto' }}>
       {message && <div className="notice">{message}</div>}
-      {!canWrite && (
-        <div className="notice">Your role is read-only — deployment actions are disabled.</div>
-      )}
+      {!canWrite && <div className="notice">{uiText.deployment.readOnlyNotice}</div>}
 
       {canWrite && (
         <>
-          <h4>Restart</h4>
+          <h4>{uiText.deployment.restart}</h4>
           <button onClick={() => restart.mutate()} disabled={restart.isPending}>
-            ⟳ Rollout restart
+            ⟳ {uiText.deployment.rolloutRestart}
           </button>
 
-          <h4 style={{ marginTop: 20 }}>Scale</h4>
+          <h4 style={{ marginTop: 20 }}>{uiText.deployment.scale}</h4>
           <div className="field">
             <input
               type="number"
@@ -86,44 +85,48 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
               style={{ width: 90 }}
             />
             <button className="primary" onClick={() => scale.mutate()} disabled={scale.isPending}>
-              Apply
+              {uiText.deployment.apply}
             </button>
-            <span className="dim">current desired: {deployment.spec?.replicas ?? 0}</span>
+            <span className="dim">{uiText.deployment.currentDesiredPrefix} {deployment.spec?.replicas ?? 0}</span>
           </div>
         </>
       )}
 
-      <h4 style={{ marginTop: 20 }}>Rollout history</h4>
-      {history.isLoading && <div className="dim">Loading history…</div>}
+      <h4 style={{ marginTop: 20 }}>{uiText.deployment.rolloutHistory}</h4>
+      {history.isLoading && <div className="dim">{uiText.deployment.loadingHistory}</div>}
       {history.isError && <div className="notice error">{(history.error as Error).message}</div>}
       {revisions.length > 0 && (
         <table>
           <thead>
             <tr>
-              <th>Revision</th>
-              <th>Images</th>
-              <th>Created</th>
+              <th>{uiText.deployment.revision}</th>
+              <th>{uiText.deployment.images}</th>
+              <th>{uiText.deployment.created}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {revisions.map((r) => (
-              <tr key={r.revision}>
+            {revisions.map((revision) => (
+              <tr key={revision.revision}>
                 <td>
-                  {r.revision}
-                  {r.revision === currentRevision && <span className="badge ok" style={{ marginLeft: 6 }}>current</span>}
+                  {revision.revision}
+                  {revision.revision === currentRevision && (
+                    <span className="badge ok" style={{ marginLeft: 6 }}>
+                      {uiText.deployment.current}
+                    </span>
+                  )}
                 </td>
-                <td className="mono dim">{r.images.join(', ')}</td>
-                <td className="dim">{r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'}</td>
+                <td className="mono dim">{revision.images.join(', ')}</td>
+                <td className="dim">{revision.createdAt ? new Date(revision.createdAt).toLocaleString() : '-'}</td>
                 <td>
                   {canWrite && (
                     <button
-                      disabled={r.revision === currentRevision || rollback.isPending}
+                      disabled={revision.revision === currentRevision || rollback.isPending}
                       onClick={() => {
-                        if (confirm(`Roll back ${name} to revision ${r.revision}?`)) rollback.mutate(r.revision);
+                        if (confirm(`Roll back ${name} to revision ${revision.revision}?`)) rollback.mutate(revision.revision);
                       }}
                     >
-                      Rollback
+                      {uiText.deployment.rollback}
                     </button>
                   )}
                 </td>

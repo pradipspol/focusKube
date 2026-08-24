@@ -1,4 +1,4 @@
-name: Build and package k8-explorer desktop app
+name: Build and package focusKube desktop app
 
 on:
   push:

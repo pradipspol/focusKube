@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import { Modal } from './Modal';
+import { uiText } from '../text';
 
 interface Props {
   scope: Scope;
@@ -31,7 +32,7 @@ export function HelmAddRepoModal({ scope, onClose, onToast, onAdded }: Props) {
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof Error ? err.message : 'Failed to add repository';
+      const msg = err instanceof Error ? err.message : uiText.helm.addRepositoryError;
       setError(msg);
       onToast('error', msg);
     },
@@ -40,10 +41,10 @@ export function HelmAddRepoModal({ scope, onClose, onToast, onAdded }: Props) {
   const isReadyToAdd = repoName.trim().length > 0 && repoUrl.trim().length > 0 && !addRepo.isPending;
 
   return (
-    <Modal title="Add Helm Repository" onClose={onClose}>
+    <Modal title={uiText.helm.addHelmRepositoryTitle} onClose={onClose}>
       <div className="helm-modal-content">
         <div className="form-group">
-          <label htmlFor="repo-name">Repository Name</label>
+          <label htmlFor="repo-name">{uiText.helm.repositoryName}</label>
           <input
             id="repo-name"
             type="text"
@@ -54,11 +55,11 @@ export function HelmAddRepoModal({ scope, onClose, onToast, onAdded }: Props) {
               setError('');
             }}
           />
-          <small className="dim">A unique name to identify this repository</small>
+          <small className="dim">{uiText.helm.addRepoHint}</small>
         </div>
 
         <div className="form-group">
-          <label htmlFor="repo-url">Repository URL</label>
+          <label htmlFor="repo-url">{uiText.helm.repositoryUrl}</label>
           <input
             id="repo-url"
             type="url"
@@ -69,28 +70,28 @@ export function HelmAddRepoModal({ scope, onClose, onToast, onAdded }: Props) {
               setError('');
             }}
           />
-          <small className="dim">The Helm repository URL</small>
+          <small className="dim">{uiText.helm.repoUrlHint}</small>
         </div>
 
         {error && <div className="notice error">{error}</div>}
 
         <div className="helm-modal-actions">
           <button onClick={onClose} disabled={addRepo.isPending}>
-            Cancel
+            {uiText.common.cancel}
           </button>
           <button
             onClick={() => addRepo.mutate()}
             disabled={!isReadyToAdd}
             className="primary"
-            title={isReadyToAdd ? 'Add repository' : 'Enter repo name and URL'}
+            title={isReadyToAdd ? uiText.helm.addRepository : 'Enter repo name and URL'}
           >
-            {addRepo.isPending ? 'Adding...' : 'Add Repository'}
+            {addRepo.isPending ? 'Adding...' : uiText.helm.addRepository}
           </button>
         </div>
 
         <div className="repo-examples">
           <small className="dim">
-            <strong>Common repositories:</strong>
+            <strong>{uiText.helm.commonRepositories}</strong>
             <ul style={{ margin: '4px 0 0', paddingLeft: '20px' }}>
               <li>
                 <code>bitnami</code> → <code>https://charts.bitnami.com/bitnami</code>

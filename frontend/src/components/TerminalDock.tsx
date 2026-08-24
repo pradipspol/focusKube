@@ -5,6 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
+import { uiText } from '../text';
 
 export type TerminalSession =
   | {
@@ -224,7 +225,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
   const historyIndexRef = useRef(-1);
   const runningRef = useRef(false);
   const [connected, setConnected] = useState(false);
-  const [statusText, setStatusText] = useState(session.kind === 'pod' ? 'Shell' : session.kind === 'logs' ? 'Logs' : 'Ready');
+  const [statusText, setStatusText] = useState<string>(session.kind === 'pod' ? uiText.terminalDock.shell : session.kind === 'logs' ? uiText.terminalDock.logs : uiText.terminalDock.ready);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHits, setSearchHits] = useState(0);
   const [searchIndex, setSearchIndex] = useState(0);
@@ -344,7 +345,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
     };
 
     if (session.kind === 'general') {
-      const prompt = 'k8-explorer> ';
+      const prompt = 'focusKube> ';
       const writePrompt = () => {
         term.write(prompt);
         bufferRef.current = '';
@@ -356,7 +357,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
       };
 
       const printBanner = () => {
-        term.writeln('K8 Explorer terminal');
+        term.writeln('FocusKube terminal');
         term.writeln('Direct commands only: kubectl and helm.');
         term.writeln(scope.context ? `Context: ${scope.context}` : 'Context: current session');
         term.writeln(scope.namespace ? `Namespace: ${scope.namespace}` : 'Namespace: all');
@@ -614,8 +615,8 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
               setSearchQuery(event.target.value);
               setSearchIndex(0);
             }}
-            placeholder="Search terminal"
-            aria-label="Search terminal contents"
+            placeholder={uiText.terminalDock.searchTerminal}
+            aria-label={uiText.terminalDock.searchTerminalContents}
           />
           <button className="terminal-search-nav-button" type="button" onClick={() => { setSearchIndex((current) => (searchHits ? (current - 1 + searchHits) % searchHits : 0)); runTerminalSearch('previous'); }} disabled={!searchQuery.trim()}>
             Prev
@@ -627,6 +628,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
             {searchQuery.trim() ? `${searchHits ? `${Math.min(searchIndex + 1, searchHits)}/${searchHits}` : '0/0'} matches` : 'scrollback'}
           </span>
           <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'connected' : 'disconnected'}</span>
+                    <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? uiText.terminalDock.connected : uiText.terminalDock.disconnected}</span>
           {/* <span className="terminal-session-status">{statusText}</span> */}
         </div>
       </div>

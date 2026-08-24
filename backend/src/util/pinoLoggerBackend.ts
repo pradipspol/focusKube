@@ -23,7 +23,7 @@ function resolveFileLogPath(): string {
 
   const cwd = process.cwd();
   const baseDir = path.basename(cwd).toLowerCase() === 'backend' ? path.dirname(cwd) : cwd;
-  return path.join(baseDir, 'k8-explorer.logs');
+  return path.join(baseDir, 'focusKube.logs');
 }
 
 function scheduleFileFlush(): void {

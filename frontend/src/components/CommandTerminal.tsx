@@ -15,7 +15,7 @@ type TerminalSocketMessage =
   | { type: 'ERROR'; message: string }
   | { type: 'STOPPED'; code: number };
 
-const PROMPT = 'k8-explorer> ';
+const PROMPT = 'focusKube> ';
 
 function closeSocket(socket: WebSocket | null): void {
   if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
@@ -87,7 +87,7 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
     };
 
     const printBanner = () => {
-      term.writeln('K8 Explorer terminal');
+      term.writeln('FocusKube terminal');
       term.writeln('Direct commands only: kubectl and helm.');
       term.writeln(scope.context ? `Context: ${scope.context}` : 'Context: current session');
       term.writeln(scope.namespace ? `Namespace: ${scope.namespace}` : 'Namespace: all');

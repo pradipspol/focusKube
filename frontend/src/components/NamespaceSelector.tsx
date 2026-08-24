@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { uiText } from '../text';
 
 interface Props {
   namespaces: string[];
@@ -25,9 +26,9 @@ export function NamespaceSelector({ namespaces, selectedNamespaces, onChange }: 
   }, [open]);
 
   const label = useMemo(() => {
-    if (selectedNamespaces.length === 0) return 'All namespaces';
+    if (selectedNamespaces.length === 0) return uiText.common.allNamespaces;
     if (selectedNamespaces.length === 1) return selectedNamespaces[0];
-    return `${selectedNamespaces.length} selected`;
+    return `${selectedNamespaces.length} ${uiText.common.selectedNamespacesSuffix}`;
   }, [selectedNamespaces]);
 
   return (
@@ -35,7 +36,7 @@ export function NamespaceSelector({ namespaces, selectedNamespaces, onChange }: 
       <div className="namespace-dropdown" ref={dropdownRef}>
         <button
           className="namespace-dropdown-trigger"
-          title="Select namespaces"
+          title={uiText.common.selectNamespacesTitle}
           onClick={() => setOpen((current) => !current)}
         >
           <span>{label}</span>
@@ -45,7 +46,7 @@ export function NamespaceSelector({ namespaces, selectedNamespaces, onChange }: 
           <div className="namespace-dropdown-menu">
             <label className="namespace-option">
               <input type="checkbox" checked={selectedNamespaces.length === 0} onChange={() => onChange([])} />
-              <span>All namespaces</span>
+              <span>{uiText.common.allNamespaces}</span>
             </label>
             {namespaces.map((name) => {
               const checked = selectedNamespaces.includes(name);

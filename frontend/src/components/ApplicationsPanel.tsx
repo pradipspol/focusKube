@@ -5,6 +5,7 @@ import type { K8sObject } from '../api/types';
 import { age, statusOf } from '../utils/format';
 import { DataTable } from './DataTable';
 import { NamespaceSelector } from './NamespaceSelector';
+import { uiText } from '../text';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
 interface Props {
@@ -126,7 +127,7 @@ export function ApplicationsPanel({
   }, [applications.data?.rows, query, selectedNamespaces]);
 
   // All hooks must run before any early return (Rules of Hooks).
-  if (!scope.context) return <div className="empty">Select a context to list applications.</div>;
+  if (!scope.context) return <div className="empty">{uiText.common.selectContextToListApplications}</div>;
 
   return (
     <>
@@ -147,28 +148,28 @@ export function ApplicationsPanel({
       </div> */}
 
       <div className="toolbar toolbar-compact-top">
-        <input
+          <input
           className="application-search-input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search Applications..."
+            placeholder={uiText.common.searchApplications}
         />
         <div className="toolbar-actions">
-          {applications.isFetching && <span className="tiny-spinner" aria-label="refreshing applications" />}
+          {applications.isFetching && <span className="tiny-spinner" aria-label={uiText.toast.refreshingApplications} />}
           <NamespaceSelector
             namespaces={namespaces}
             selectedNamespaces={selectedNamespaces}
             onChange={onSelectedNamespacesChange}
           />
-          <button className="toolbar-refresh" onClick={() => applications.refetch()} title="Refresh">
+          <button className="toolbar-refresh" onClick={() => applications.refetch()} title={uiText.common.refresh}>
             ⟳
           </button>
         </div>
       </div>
 
       {applications.isError && <div className="notice error">{(applications.error as Error).message}</div>}
-      {applications.isLoading && <div className="empty">Loading…</div>}
-      {!applications.isLoading && items.length === 0 && <div className="empty">No applications found.</div>}
+      {applications.isLoading && <div className="empty">{uiText.common.loadingApplications}</div>}
+      {!applications.isLoading && items.length === 0 && <div className="empty">{uiText.common.noApplicationsFound}</div>}
 
       {items.length > 0 && (
         <DataTable
@@ -180,19 +181,19 @@ export function ApplicationsPanel({
           onShowDetails={(row) => setDetailsRow(row)}
           actions={[
             {
-              label: 'Copy Instance',
+              label: uiText.applications.copyInstance,
               onClick: (row) => navigator.clipboard.writeText(row.instance).catch(() => undefined),
             },
           ]}
           columns={[
-            { key: 'instance', header: 'Instance', value: (r) => r.instance, className: 'mono', width: 200 },
-            { key: 'application', header: 'Application', value: (r) => r.application, className: 'mono', width: 180 },
-            { key: 'namespace', header: 'Namespace', value: (r) => r.namespace, width: 140 },
-            { key: 'managedBy', header: 'Managed By', value: (r) => r.managedBy, className: 'dim', width: 130 },
-            { key: 'version', header: 'Version', value: (r) => r.version, className: 'dim', width: 110 },
+            { key: 'instance', header: uiText.applications.instance, value: (r) => r.instance, className: 'mono', width: 200 },
+            { key: 'application', header: uiText.applications.application, value: (r) => r.application, className: 'mono', width: 180 },
+            { key: 'namespace', header: uiText.applications.namespace, value: (r) => r.namespace, width: 140 },
+            { key: 'managedBy', header: uiText.applications.managedBy, value: (r) => r.managedBy, className: 'dim', width: 130 },
+            { key: 'version', header: uiText.applications.version, value: (r) => r.version, className: 'dim', width: 110 },
             {
               key: 'age',
-              header: 'Age',
+              header: uiText.applications.age,
               value: (r) => (r.createdAt ? new Date(r.createdAt).getTime() : 0),
               render: (r) => age(r.createdAt),
               className: 'dim',
@@ -200,7 +201,7 @@ export function ApplicationsPanel({
             },
             {
               key: 'status',
-              header: 'Status',
+              header: uiText.applications.status,
               value: (r) => r.status,
               width: 120,
               render: (r) => (
@@ -286,17 +287,17 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
     <div className="overlay" onClick={onClose}>
       <div className="drawer app-details-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
-          <span className="badge">Application</span>
+          <span className="badge">{uiText.applications.title}</span>
           <h3>{`ApplicationInstance: ${row.instance}`}</h3>
           <button onClick={onClose}>✕</button>
         </div>
         <div className="drawer-body pod-overview">
           <div className="app-details-grid">
         <section className="app-details-section">
-          <h4>Metrics</h4>
-          <div className="dim">Displaying metrics from Kubernetes Metrics Server</div>
+          <h4>{uiText.applications.metrics}</h4>
+          <div className="dim">{uiText.applications.metricsDescription}</div>
           <div className="app-metrics-box">
-            <div>CPU Usage</div>
+            <div>{uiText.applications.cpuUsage}</div>
             <strong>
               {details.data
                 ? `${Array.from(details.data.metricsByPod.values()).reduce((sum, metric) => sum + (metric?.cpuMillicores ?? 0), 0).toFixed(0)}m`
@@ -306,33 +307,33 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         </section>
 
         <section className="app-details-section">
-          <h4>Properties</h4>
+          <h4>{uiText.applications.properties}</h4>
           <div className="app-props-table">
-            <div className="app-props-row"><span>Created</span><span>{age(row.createdAt)}</span></div>
-            <div className="app-props-row"><span>Status</span><span className={row.status === 'Running' ? 'status-running' : ''}>{row.status}</span></div>
-            <div className="app-props-row"><span>Application</span><span>{row.application}</span></div>
-            <div className="app-props-row"><span>Version</span><span>{row.version}</span></div>
-            <div className="app-props-row"><span>Managed By</span><span>{row.managedBy}</span></div>
+            <div className="app-props-row"><span>{uiText.resourceDetail.created}</span><span>{age(row.createdAt)}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.status}</span><span className={row.status === 'Running' ? 'status-running' : ''}>{row.status}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.application}</span><span>{row.application}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.version}</span><span>{row.version}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.managedBy}</span><span>{row.managedBy}</span></div>
             <div className="app-props-row"><span>Name</span><span>{row.obj.metadata?.name ?? '-'}</span></div>
-            <div className="app-props-row"><span>Namespace</span><span>{row.namespace}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.namespace}</span><span>{row.namespace}</span></div>
           </div>
         </section>
 
         <section className="app-details-section">
-          <h4>Pods</h4>
-          {details.isLoading && <div className="dim">Loading pods…</div>}
-          {!details.isLoading && (details.data?.pods.length ?? 0) === 0 && <div className="dim">No pods found</div>}
+          <h4>{uiText.applications.pods}</h4>
+          {details.isLoading && <div className="dim">{uiText.applications.loadingPods}</div>}
+          {!details.isLoading && (details.data?.pods.length ?? 0) === 0 && <div className="dim">{uiText.applications.noPodsFound}</div>}
           {(details.data?.pods.length ?? 0) > 0 && (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>{uiText.resourceDetail.name}</th>
                   <th>Node</th>
-                  <th>Namespace</th>
+                  <th>{uiText.applications.namespace}</th>
                   <th>Ready</th>
                   <th>CPU</th>
                   <th>Memory</th>
-                  <th>Status</th>
+                  <th>{uiText.applications.status}</th>
                 </tr>
               </thead>
               <tbody>
@@ -361,12 +362,12 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         </section>
 
         <section className="app-details-section">
-          <h4>Workload Resources</h4>
+          <h4>{uiText.applications.workloadResources}</h4>
           <table className="data-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Kind</th>
+                <th>{uiText.resourceDetail.name}</th>
+                <th>{uiText.resourceDetail.kind}</th>
                 <th>Component</th>
               </tr>
             </thead>
@@ -381,15 +382,15 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         </section>
 
         <section className="app-details-section">
-          <h4>Vulnerabilities</h4>
-          <div className="dim">Images</div>
+          <h4>{uiText.resourceDetail.vulnerabilities}</h4>
+          <div className="dim">{uiText.resourceDetail.images}</div>
           <div className="security-placeholder">Unknown</div>
         </section>
 
         <section className="app-details-section">
-          <h4>Events</h4>
-          {details.isLoading && <div className="dim">Loading events…</div>}
-          {!details.isLoading && (details.data?.events.length ?? 0) === 0 && <div className="dim">No events found</div>}
+          <h4>{uiText.resourceDetail.events}</h4>
+          {details.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
+          {!details.isLoading && (details.data?.events.length ?? 0) === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
           {(details.data?.events.length ?? 0) > 0 && (
             <div className="pod-properties-table">
               {details.data?.events.slice(0, 20).map((event: any, index: number) => (

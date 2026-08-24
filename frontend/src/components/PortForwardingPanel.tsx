@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
+import { uiText } from '../text';
 
 interface Props {
   scope: Scope;
@@ -27,7 +28,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
   const [targetPort, setTargetPort] = useState('');
   const [localPort, setLocalPort] = useState('');
   const [status, setStatus] = useState<ForwardStatus>('idle');
-  const [statusText, setStatusText] = useState('Select a target and start forwarding.');
+  const [statusText, setStatusText] = useState<string>(uiText.portForwarding.selectTargetStart);
   const [forwardedPort, setForwardedPort] = useState<string | undefined>();
   const [output, setOutput] = useState<string[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
@@ -100,18 +101,18 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
     socketRef.current?.close();
     socketRef.current = null;
     setStatus('stopped');
-    setStatusText('Port forwarding stopped.');
+    setStatusText(uiText.portForwarding.stopped);
   };
 
   const startForwarding = () => {
     if (!scope.context) {
       setStatus('error');
-      setStatusText('Select a context before starting port forwarding.');
+      setStatusText(uiText.portForwarding.selectContextBeforeStart);
       return;
     }
     if (!selectedTarget || !targetPort.trim()) {
       setStatus('error');
-      setStatusText('Pick a target and target port first.');
+      setStatusText(uiText.portForwarding.pickTargetPort);
       return;
     }
 
@@ -119,7 +120,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
     setOutput([]);
     setForwardedPort(undefined);
     setStatus('starting');
-    setStatusText(`Starting ${targetKind.slice(0, -1)} port forward...`);
+    setStatusText(uiText.portForwarding.startingPrefix(targetKind));
 
     const socket = new WebSocket(wsUrl('/ws/port-forward', { context: scope.context }));
     socketRef.current = socket;
@@ -149,14 +150,14 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
 
       if (message.type === 'STARTING') {
         setStatus('starting');
-        setStatusText(`Forwarding ${message.targetKind}/${message.targetName}...`);
+        setStatusText(uiText.portForwarding.forwardingPrefix(message.targetKind, message.targetName));
         return;
       }
 
       if (message.type === 'READY') {
         setStatus('running');
         setForwardedPort(String(message.localPort));
-        setStatusText(`Forwarding on 127.0.0.1:${message.localPort}`);
+        setStatusText(uiText.portForwarding.forwardingOnLoopback(message.localPort));
         return;
       }
 
@@ -167,7 +168,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
 
       if (message.type === 'STOPPED') {
         setStatus('stopped');
-        setStatusText(`Port-forward process exited with code ${message.code}.`);
+        setStatusText(uiText.portForwarding.portForwardProcessExitedPrefix(message.code));
         socketRef.current = null;
         return;
       }
@@ -185,7 +186,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
 
     socket.onerror = () => {
       setStatus('error');
-      setStatusText('Port forwarding socket failed.');
+      setStatusText(uiText.portForwarding.socketFailed);
     };
   };
 
@@ -194,26 +195,26 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
 
   return (
     <div className="empty">
-      <h2>Port Forwarding</h2>
-      <p>Forward a pod or service port from the current cluster to your local machine.</p>
+      <h2>{uiText.portForwarding.title}</h2>
+      <p>{uiText.portForwarding.description}</p>
       <div className="actions-bar" style={{ flexWrap: 'wrap', gap: '12px' }}>
         <div className="field">
-          <label>Target</label>
+          <label>{uiText.portForwarding.target}</label>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className={`nav-item ${targetKind === 'pods' ? 'active' : ''}`} type="button" onClick={() => setTargetKind('pods')} disabled={status === 'starting' || status === 'running'}>
-              Pods
+              {uiText.portForwarding.podLabel}
             </button>
             <button className={`nav-item ${targetKind === 'services' ? 'active' : ''}`} type="button" onClick={() => setTargetKind('services')} disabled={status === 'starting' || status === 'running'}>
-              Services
+              {uiText.portForwarding.serviceLabel}
             </button>
           </div>
         </div>
 
         <div className="field">
-          <label>Resource</label>
+          <label>{uiText.portForwarding.resource}</label>
           <select value={targetKey} onChange={(e) => setTargetKey(e.target.value)} disabled={status === 'starting' || status === 'running' || targets.length === 0}>
             {targets.length === 0 ? (
-              <option value="">No {targetKind} found</option>
+              <option value="">{uiText.portForwarding.noResourcesFound(targetKind)}</option>
             ) : (
               targets.map((entry) => (
                 <option key={entry.key} value={entry.key}>
@@ -225,7 +226,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
         </div>
 
         <div className="field">
-          <label>Target Port</label>
+          <label>{uiText.portForwarding.targetPort}</label>
           <input
             list="port-forward-target-ports"
             value={targetPort}
@@ -243,7 +244,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
         </div>
 
         <div className="field">
-          <label>Local Port</label>
+          <label>{uiText.portForwarding.localPort}</label>
           <input
             value={localPort}
             onChange={(e) => setLocalPort(e.target.value.replace(/[^0-9]/g, ''))}
@@ -253,7 +254,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
         </div>
 
         <div className="field" style={{ minWidth: '220px' }}>
-          <label>Status</label>
+          <label>{uiText.portForwarding.status}</label>
           <div className={`badge ${status === 'running' ? 'ok' : status === 'error' ? 'warn' : ''}`}>{status}</div>
         </div>
       </div>
@@ -261,16 +262,16 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
       <div className="actions-bar" style={{ marginTop: '8px' }}>
         {status !== 'running' ? (
           <button className="nav-item" type="button" onClick={startForwarding} disabled={!scope.context || targets.length === 0}>
-            Start Port Forward
+            {uiText.portForwarding.startPortForward}
           </button>
         ) : (
           <button className="nav-item danger" type="button" onClick={stopForwarding}>
-            Stop Port Forward
+            {uiText.portForwarding.stopPortForward}
           </button>
         )}
         {openAddress && status === 'running' && (
           <a className="nav-item" href={openAddress} target="_blank" rel="noreferrer">
-            Open {openAddress}
+            {uiText.portForwarding.open} {openAddress}
           </a>
         )}
         {(podQuery.isFetching || serviceQuery.isFetching) && (
@@ -279,7 +280,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
       </div>
 
       <div className="sidebar-hint" style={{ marginTop: '8px' }}>{statusText}</div>
-      {!scope.context && <div className="sidebar-hint">Select a context to browse targets.</div>}
+      {!scope.context && <div className="sidebar-hint">{uiText.portForwarding.selectContext}</div>}
       {targetKind === 'pods' && selectedTarget?.item && selectedTarget.item.spec?.containers?.length > 0 && (
         <div className="sidebar-hint">
           Pod containers: {selectedTarget.item.spec.containers.map((container: any) => container.name).join(', ')}

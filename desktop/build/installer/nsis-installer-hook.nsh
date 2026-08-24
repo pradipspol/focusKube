@@ -3,11 +3,11 @@
 ; installer in package.js.
 
 !macro customInstall
-  DetailPrint "Running k8-explorer extras install script..."
+  DetailPrint "Running focusKube extras install script..."
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1"'
 !macroend
 
 !macro customUnInit
-  DetailPrint "Running k8-explorer extras uninstall script..."
+  DetailPrint "Running focusKube extras uninstall script..."
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1" -Action uninstall'
 !macroend

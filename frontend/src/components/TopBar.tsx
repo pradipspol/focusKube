@@ -5,6 +5,7 @@ import type { AuthUser } from '../api/types';
 import type { LogLevel } from '../api/types';
 import { ROLE_LABELS, describePermissions } from '../auth/permissions';
 import type { Theme } from '../App';
+import { uiText } from '../text';
 
 interface Props {
   user: AuthUser;
@@ -123,7 +124,7 @@ export function TopBar({
     <>
     {!hideBar && (
     <div className="topbar">
-      <span className="brand">⎈ K8 Explorer</span>
+      <span className="brand">⎈ {uiText.brand.appName}</span>
 
       {/* <button onClick={() => reload.mutate()} title="Reload kubeconfig">
         ⟳ Refresh
@@ -131,11 +132,11 @@ export function TopBar({
 
       <div className="spacer" />
 
-      <div className="auth-user" tabIndex={0} title={`Role: ${ROLE_LABELS[user.role]}`}>
+      <div className="auth-user" tabIndex={0} title={`${uiText.topbar.rolePrefix} ${ROLE_LABELS[user.role]}`}>
         {/* <span className="auth-user-email">{user.email}</span> */}
         {/* <span className="role-badge">{ROLE_LABELS[user.role]}</span> */}
         <div className="user-permissions-popup" role="tooltip">
-          <div className="user-permissions-title">{ROLE_LABELS[user.role]} permissions</div>
+          <div className="user-permissions-title">{ROLE_LABELS[user.role]} {uiText.topbar.permissionsSuffix}</div>
           <ul className="user-permissions-list">
             {describePermissions(user.role).map((perm) => (
               <li key={perm.label} className={perm.granted ? 'granted' : 'denied'}>
@@ -150,15 +151,15 @@ export function TopBar({
         <button
           type="button"
           className="menu-button"
-          title="Open menu"
-          aria-label="Open menu"
+          title={uiText.topbar.openMenu}
+          aria-label={uiText.topbar.openMenu}
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((current) => !current)}
         >
           ☰
         </button>
         {menuOpen && (
-          <div className="topbar-menu-popup" role="menu" aria-label="User menu">
+          <div className="topbar-menu-popup" role="menu" aria-label={uiText.topbar.userMenu}>
             {/* <button
               type="button"
               className="topbar-menu-item"
@@ -179,7 +180,7 @@ export function TopBar({
                   void handleOpenSettings();
                 }}
               >
-                Settings
+                {uiText.topbar.settings}
               </button>
             )}
           </div>
@@ -192,17 +193,17 @@ export function TopBar({
         <div className="overlay center" onClick={() => setSettingsOpen(false)}>
           <div className="modal-card settings-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Preferences</h3>
-              <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">✕</button>
+              <h3 className="modal-title">{uiText.modal.preferences}</h3>
+              <button type="button" onClick={() => setSettingsOpen(false)} aria-label={uiText.topbar.closeSettings}>{uiText.common.close}</button>
             </div>
             <div className="modal-body settings-modal-body">
               {logLevelQuery.isLoading ? (
-                <div className="dim">Loading settings...</div>
+                <div className="dim">{uiText.modal.loadingSettings}</div>
               ) : (
                 <>
                   <div className="settings-row">
                     <label className="settings-field" htmlFor="desktop-theme">
-                      Theme
+                      {uiText.topbar.theme}
                     </label>
                     <select
                       id="desktop-theme"
@@ -219,7 +220,7 @@ export function TopBar({
                   </div>
                   <div className="settings-row">
                     <label className="settings-field" htmlFor="desktop-log-level">
-                      Log level
+                      {uiText.topbar.logLevel}
                     </label>
                     <select
                       id="desktop-log-level"
@@ -235,23 +236,23 @@ export function TopBar({
                     </select>
                   </div>
                   <div className="dim settings-message">
-                    Effective: {logLevelQuery.data?.level?.toUpperCase() ?? 'N/A'}
-                    {logLevelQuery.data?.envLevel ? ` | ENV: ${logLevelQuery.data.envLevel.toUpperCase()}` : ''}
-                    {logLevelQuery.data?.overriddenByUi ? ' | UI override active' : ''}
+                    {uiText.topbar.effectivePrefix} {logLevelQuery.data?.level?.toUpperCase() ?? 'N/A'}
+                    {logLevelQuery.data?.envLevel ? ` | ${uiText.topbar.envPrefix} ${logLevelQuery.data.envLevel.toUpperCase()}` : ''}
+                    {logLevelQuery.data?.overriddenByUi ? ` | ${uiText.topbar.uiOverrideActive}` : ''}
                   </div>
                   {!logLevelQuery.data?.editable && (
-                    <div className="dim settings-message">Log level is editable only in desktop mode.</div>
+                    <div className="dim settings-message">{uiText.topbar.desktopOnly}</div>
                   )}
                   {updateLogLevel.error && (
                     <div className="notice error settings-message">
-                      {updateLogLevel.error instanceof Error ? updateLogLevel.error.message : 'Failed to update log level.'}
+                      {updateLogLevel.error instanceof Error ? updateLogLevel.error.message : uiText.topbar.failedToUpdateLogLevel}
                     </div>
                   )}
                 </>
               )}
             </div>
             <div className="modal-footer">
-              <button type="button" onClick={() => setSettingsOpen(false)} disabled={updateLogLevel.isPending}>Cancel</button>
+              <button type="button" onClick={() => setSettingsOpen(false)} disabled={updateLogLevel.isPending}>{uiText.common.cancel}</button>
               <button
                 type="button"
                 className="primary"
@@ -260,7 +261,7 @@ export function TopBar({
                 }}
                 disabled={updateLogLevel.isPending || logLevelQuery.isLoading || !logLevelQuery.data?.editable}
               >
-                {updateLogLevel.isPending ? 'Saving...' : 'Save'}
+                {updateLogLevel.isPending ? uiText.topbar.saving : uiText.common.save}
               </button>
             </div>
           </div>

@@ -5,6 +5,7 @@ import { wsUrl } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import type { OpenPodTerminalRequest } from './TerminalDock';
+import { uiText } from '../text';
 
 function closeSocket(socket: WebSocket | null): void {
   if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
@@ -119,7 +120,7 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
     <div className="drawer-body">
       <div className="actions-bar">
         <div className="field">
-          <label>Container</label>
+          <label>{uiText.exec.container}</label>
           <select value={container} onChange={(e) => setContainer(e.target.value)}>
             {containers.map((c) => (
               <option key={c} value={c}>
@@ -129,7 +130,7 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
           </select>
         </div>
         <div className="field">
-          <label>Shell</label>
+          <label>{uiText.exec.shell}</label>
           <select value={shell} onChange={(e) => setShell(e.target.value)}>
             <option value="/bin/sh">/bin/sh</option>
             <option value="/bin/bash">/bin/bash</option>
@@ -138,7 +139,7 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
         </div>
         {onOpenInTerminal && (
           <div className="field">
-            <label>Terminal</label>
+            <label>{uiText.exec.terminal}</label>
             <button
               type="button"
               className="primary"
@@ -153,12 +154,12 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
               }
               disabled={!container}
             >
-              Open in terminal
+              {uiText.exec.openInTerminal}
             </button>
           </div>
         )}
         <span className={`badge ${connected ? 'ok' : 'warn'} right`}>
-          {connected ? 'connected' : 'disconnected'}
+          {connected ? uiText.exec.connected : uiText.exec.disconnected}
         </span>
       </div>
       <div className="terminal-host" ref={hostRef} />

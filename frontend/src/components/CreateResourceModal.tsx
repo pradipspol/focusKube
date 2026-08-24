@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import { Modal } from './Modal';
 import { api, type Scope } from '../api/client';
 import type { ToastMessage } from './ToastViewport';
+import { uiText } from '../text';
 
 /**
  * Sample manifests keyed by resource plural. When the Add-resource dialog is
@@ -96,7 +97,7 @@ spec:
       containers:
         - name: hello
           image: busybox:stable
-          command: ["sh", "-c", "echo Hello from k8-explorer && sleep 5"]
+          command: ["sh", "-c", "echo Hello from focusKube && sleep 5"]
 `,
   cronjobs: (s) => `apiVersion: batch/v1
 kind: CronJob
@@ -320,13 +321,13 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
 
   return (
     <Modal
-      title="Add resource"
+      title={uiText.resource.addNewResourceLabel}
       onClose={onClose}
       footer={
         <>
           {error && <span className="badge danger create-resource-error">{error}</span>}
           <button onClick={onClose} disabled={apply.isPending}>
-            Cancel
+            {uiText.common.cancel}
           </button>
           <button
             onClick={() => {
@@ -335,7 +336,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
             }}
             disabled={apply.isPending || validate.isPending || !draft.trim()}
           >
-            {validate.isPending ? 'Validating...' : 'Validate'}
+            {validate.isPending ? 'Validating...' : uiText.common.validate}
           </button>
           <button
             className="primary"

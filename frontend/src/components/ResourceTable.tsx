@@ -11,6 +11,7 @@ import { NamespaceSelector } from './NamespaceSelector';
 import { ResourceDetail } from './ResourceDetail';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
+import { uiText } from '../text';
 
 interface Props {
   watchKey?: string;
@@ -1015,7 +1016,7 @@ export function ResourceTable({
   }, [list.data, onToast, plural, watchedRollout]);
 
   if (!scope.context) {
-    return <div className="empty">Select a context to begin. Use the Azure panel to pull AKS credentials.</div>;
+    return <div className="empty">{uiText.resource.selectContextToBegin}</div>;
   }
 
   const startResize = (key: string, startWidth: number, startX: number) => {
@@ -1168,7 +1169,7 @@ export function ResourceTable({
       <div className="toolbar">
         <input
           className="resource-filter"
-          placeholder={isPods ? 'Search Pods...' : 'Filter by name...'}
+          placeholder={isPods ? uiText.resource.searchPods : uiText.resource.filterByName}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
@@ -1176,29 +1177,29 @@ export function ResourceTable({
         <span className="dim">{items.length} items</span>
         <span className="dim">Last update: {lastUpdatedLabel}</span>
         {authRecoveryRefreshing && (
-          <span className="dim" title="Refreshing resources after authentication">
-            <span className="tiny-spinner" aria-label="refreshing resources" /> Refreshing...
+          <span className="dim" title={uiText.resource.refreshingResourcesAfterAuth}>
+            <span className="tiny-spinner" aria-label={uiText.resource.refreshingResourcesAfterAuth} /> {uiText.resource.refreshing}
           </span>
         )}
         {LIVE_WATCH_PLURALS.has(plural) && (
           <span className={`watch-indicator ${watchState}`} title={`Realtime watch is ${watchState}`}>
             <span className="watch-indicator-dot" />
-            <span>{watchState === 'live' ? 'Live sync' : watchState === 'connecting' ? 'Connecting' : 'Connecting'}</span>
+            <span>{watchState === 'live' ? uiText.resource.liveSync : uiText.resource.connecting}</span>
           </span>
         )}
         <div className="toolbar-actions">
           {plural === 'events' && (
             <select
               value={eventTimeRange}
-              title="Show events from this time range"
+              title={uiText.resource.showEventsFromRange}
               onChange={(e) => setEventTimeRange(e.target.value as EventTimeRange)}
             >
-              <option value="all">All time</option>
-              <option value="5m">Last 5 minutes</option>
-              <option value="15m">Last 15 minutes</option>
-              <option value="1h">Last 1 hour</option>
-              <option value="6h">Last 6 hours</option>
-              <option value="24h">Last 24 hours</option>
+              <option value="all">{uiText.resource.allTime}</option>
+              <option value="5m">{uiText.resource.last5Minutes}</option>
+              <option value="15m">{uiText.resource.last15Minutes}</option>
+              <option value="1h">{uiText.resource.last1Hour}</option>
+              <option value="6h">{uiText.resource.last6Hours}</option>
+              <option value="24h">{uiText.resource.last24Hours}</option>
             </select>
           )}
           {!CLUSTER_SCOPED_TYPES.has(plural) && (
@@ -1211,7 +1212,7 @@ export function ResourceTable({
           <div className="export-dropdown" ref={exportRef}>
             <button
               className="export-button"
-              title="Export the filtered resources"
+              title={uiText.resource.exportFilteredResources}
               onClick={() => setExportOpen((current) => !current)}
             >
               ⭳
@@ -1224,14 +1225,14 @@ export function ResourceTable({
               </div>
             )}
           </div>
-          <button className="toolbar-refresh" onClick={retryConnection} title={connectionState === 'stopped' ? 'Retry' : 'Refresh'}>
+          <button className="toolbar-refresh" onClick={retryConnection} title={connectionState === 'stopped' ? uiText.resource.retry : uiText.common.refresh}>
             ⟳
           </button>
           {canWrite && (
             <button
               className="add-resource-button"
-              title="Add a new resource (deploy YAML)"
-              aria-label="Add a new resource"
+              title={uiText.resource.addNewResource}
+              aria-label={uiText.resource.addNewResourceLabel}
               onClick={onAddResource}
             >
               ＋
@@ -1257,7 +1258,7 @@ export function ResourceTable({
       )}
       {list.isLoading && <div className="empty">Loading…</div>}
 
-      {!list.isLoading && items.length === 0 && <div className="empty">No resources found.</div>}
+      {!list.isLoading && items.length === 0 && <div className="empty">{uiText.resource.noResourcesFound}</div>}
 
       {items.length > 0 && (
         <div className={`data-table-wrapper ${hasManualResize ? 'allow-x-scroll' : 'lock-x-scroll'}`} ref={tableWrapperRef}>

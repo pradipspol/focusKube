@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # install-extras.sh — macOS/Linux counterpart to install-extras.ps1.
-# Ensures node, az (Azure CLI), helm, and Azure kubelogin are available,
+# Ensures node, az (Azure CLI), kubectl, helm, and Azure kubelogin are available,
 # installing them via Homebrew (macOS) or apt (Debian/Ubuntu Linux) when missing.
 # Best-effort: a tool that can't be auto-installed is logged with a manual
 # install link rather than failing the whole run.
@@ -134,6 +134,34 @@ ensure_helm() {
   return 1
 }
 
+# ─── kubectl ────────────────────────────────────────────────────────────────
+
+ensure_kubectl() {
+  step 'Ensuring tool: kubectl'
+  if have kubectl; then
+    ok "kubectl already on PATH: $(command -v kubectl)"
+    return 0
+  fi
+
+  if $IS_MAC && ensure_brew; then
+    step 'brew install kubectl'
+    if brew install kubectl >/dev/null 2>&1 && have kubectl; then
+      ok "kubectl installed via Homebrew: $(command -v kubectl)"
+      return 0
+    fi
+  elif $IS_LINUX && apt_available; then
+    step 'apt-get install kubectl'
+    if apt_install kubectl && have kubectl; then
+      ok "kubectl installed via apt: $(command -v kubectl)"
+      return 0
+    fi
+  fi
+
+  fail 'kubectl could not be installed automatically.'
+  log 'Please install manually: https://kubernetes.io/docs/tasks/tools/' 'WARN'
+  return 1
+}
+
 # ─── Azure kubelogin ─────────────────────────────────────────────────────────
 # Azure kubelogin (Azure/kubelogin) is different from OIDC kubelogin
 # (int128/kubelogin). The official cross-platform install path is
@@ -186,6 +214,7 @@ if [ "$ACTION" = 'install' ]; then
   ensure_node || any_failed=1
   ensure_az || any_failed=1
   ensure_helm || any_failed=1
+  ensure_kubectl || any_failed=1
   ensure_azure_kubelogin || any_failed=1
 
   if [ "$any_failed" -eq 1 ]; then

@@ -1,6 +1,6 @@
 # K8 Explorer
 
-![GitHub package.json version](https://img.shields.io/github/package-json/v/pradipspol/k8-explorer)
+![GitHub package.json version](https://img.shields.io/github/package-json/v/pradipspol/focusKube)
 
 ![Static Badge](https://img.shields.io/badge/Kubernetes-326CE5?style=logo=Kubernetes)
 ![Static Badge](https://img.shields.io/badge/-Windows-blue?logo=microsoft)
@@ -83,10 +83,10 @@ The desktop app installs both of these automatically on first run if they're mis
 
 ## Install the Desktop App
 
-Download the latest installer for your platform from the [Releases page](https://github.com/pradipspol/k8-explorer/releases), then:
+Download the latest installer for your platform from the [Releases page](https://github.com/pradipspol/focusKube/releases), then:
 
 ### Windows
-1. Run `k8-explorer-Setup-<version>.exe` or the `.msi`.
+1. Run `focusKube-Setup-<version>.exe` or the `.msi`.
 2. Launch K8 Explorer from the Start Menu.
 
 ### macOS
@@ -94,8 +94,8 @@ Download the latest installer for your platform from the [Releases page](https:/
 2. The app isn't code-signed yet, so Gatekeeper will block the first launch. Right-click (or Control-click) the app in Finder and choose **Open**, then confirm in the dialog — you only need to do this once.
 
 ### Linux
-- **AppImage**: `chmod +x k8-explorer-Setup-<version>.AppImage && ./k8-explorer-Setup-<version>.AppImage`
-- **Debian/Ubuntu**: `sudo dpkg -i k8-explorer-Setup-<version>.deb` (or `sudo apt install ./k8-explorer-Setup-<version>.deb` to also resolve missing dependencies)
+- **AppImage**: `chmod +x focusKube-Setup-<version>.AppImage && ./focusKube-Setup-<version>.AppImage`
+- **Debian/Ubuntu**: `sudo dpkg -i focusKube-Setup-<version>.deb` (or `sudo apt install ./focusKube-Setup-<version>.deb` to also resolve missing dependencies)
 
 ### After installing (any platform)
 Sign in to Azure or AWS to connect to your AKS or EKS environments.

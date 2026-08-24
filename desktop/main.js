@@ -8,11 +8,11 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const getPort = require('get-port');
 const fs = require('fs');
 
-const GITHUB_REPOSITORY = 'pradipspol/k8-explorer';
+const GITHUB_REPOSITORY = 'pradipspol/focusKube';
 
 async function fetchGithub(url, parseJson = false) {
   const response = await net.fetch(url, {
-    headers: { 'User-Agent': 'k8-explorer-desktop' },
+    headers: { 'User-Agent': 'focusKube-desktop' },
   });
   if (!response.ok) {
     throw new Error(`GitHub request failed with status ${response.status}`);
@@ -39,7 +39,7 @@ ipcMain.handle('fetch-latest-release', async () => {
   return { name: release.name || release.tag_name || 'Latest release', body: release.body || 'No release notes available.' };
 });
 ipcMain.handle('get-app-info', () => ({
-  name: 'K8 Explorer',
+  name: 'FocusKube',
   version: app.getVersion(),
   description: 'Kubernetes Explorer Desktop Client',
 }));
@@ -94,7 +94,7 @@ function resolveExtrasRunner(extrasScript) {
 }
 
 /**
- * Verify that CLI tools (az, helm, kubelogin) are available.
+ * Verify that CLI tools (az, helm, kubectl, kubelogin) are available.
  * Tools are installed by install-extras.ps1 (Windows) / install-extras.sh
  * (macOS, Linux) during packaging or on first dev-mode launch.
  * At startup we only log their availability — we do NOT re-run the installer.
@@ -106,14 +106,13 @@ async function ensureCliTools() {
 
   if (isPackaged) {
     // In packaged mode tools should already be installed by the platform
-    // installer's post-install hook. Verify using the augmented PATH (extras
-    // dir + platform tool dirs) so bundled binaries are visible — the system
-    // PATH alone won't include the extras dir.
+    // installer's post-install hook. Verify using the augmented PATH, which
+    // includes package-manager and platform tool directories.
     const augmented = buildAugmentedPath(process.resourcesPath);
 
     const toolCandidates = process.platform === 'win32'
-      ? { az: ['az.cmd', 'az.exe'], helm: ['helm.exe'], kubelogin: ['kubelogin.exe'] }
-      : { az: ['az'], helm: ['helm'], kubelogin: ['kubelogin'] };
+      ? { az: ['az.cmd', 'az.exe'], helm: ['helm.exe'], kubectl: ['kubectl.exe'], kubelogin: ['kubelogin.exe'] }
+      : { az: ['az'], helm: ['helm'], kubectl: ['kubectl'], kubelogin: ['kubelogin'] };
 
     console.log('[tools] Verifying CLI tools via augmented PATH...');
     for (const [tool, candidates] of Object.entries(toolCandidates)) {
@@ -173,10 +172,9 @@ async function ensureCliTools() {
 }
 
 /**
- * Build an augmented PATH that includes the bundled extras directory and the
- * WinGet links directory. This ensures that helm, kubectl, kubelogin (bundled
- * .exe files) and any tools installed by winget moments ago are immediately
- * runnable by the backend process even when the OS session PATH is stale.
+ * Build an augmented PATH that includes package-manager and platform tool
+ * directories, so recently installed tools are immediately runnable by the
+ * backend process even when the OS session PATH is stale.
  */
 function buildAugmentedPath(resourcesPath) {
   const sep = path.delimiter;
@@ -185,27 +183,6 @@ function buildAugmentedPath(resourcesPath) {
   console.log('[path] Building augmented PATH...');
   console.log('[path] resourcesPath:', resourcesPath || 'undefined');
   console.log('[path] __dirname:', __dirname);
-
-  // Bundled binaries location (helm.exe, kubectl.exe, kubelogin.exe)
-  // Packaged: resources/extras (via extraResources in package.json)
-  // Dev: desktop/extra
-  const extrasDir = resourcesPath
-    ? path.join(resourcesPath, 'extras')
-    : path.join(__dirname, 'extra');
-  
-  console.log('[path] Checking extras dir:', extrasDir);
-  if (fs.existsSync(extrasDir)) {
-    extra.push(extrasDir);
-    console.log('[path]   [OK] Exists, adding to PATH');
-    try {
-      const files = fs.readdirSync(extrasDir);
-      console.log('[path]   Contents:', files.join(', '));
-    } catch (e) {
-      console.log('[path]   (Cannot read contents)');
-    }
-  } else {
-    console.log('[path]   [--] Does not exist');
-  }
 
   // WinGet places command aliases here; may be fresher than the inherited PATH
   if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
@@ -314,7 +291,7 @@ async function startBackend(backendPort) {
     // Write a header so we can detect whether the log file is writable and
     // what path the app is using for logs.
     try {
-      fs.appendFileSync(logFile, `\n=== k8-explorer backend log start: ${new Date().toISOString()} ===\n`);
+      fs.appendFileSync(logFile, `\n=== focusKube backend log start: ${new Date().toISOString()} ===\n`);
     } catch (e) {
       console.error('Failed to write initial header to backend log:', e.message || e);
     }
