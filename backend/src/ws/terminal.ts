@@ -163,7 +163,7 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     });
 
     let stdoutBuffer = '';
-    let stderrBuffer = '';
+    const stderrBuffer = '';
 
     currentChild.onData((textChunk: string) => {
       stdoutBuffer += textChunk;
