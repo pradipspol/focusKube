@@ -65,7 +65,7 @@ async function packageWindows(desktopDir) {
     appDirectory: winUnpacked,
     outputDirectory: msiOutputDir,
     exe: exeName,
-    name: 'FocusKube',
+    name: 'focusKube',
     manufacturer: 'FocusKube',
     version: msiVersion,
     description: 'Kubernetes Cluster Explorer & Operations Console',
