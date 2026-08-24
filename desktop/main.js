@@ -401,6 +401,8 @@ async function createWindow(url) {
         { label: 'Documents', click: () => shell.openExternal(`https://github.com/${GITHUB_REPOSITORY}#readme`) },
         { label: 'Release Notes', click: () => win.webContents.send('desktop-menu-action', 'release-notes') },
         { type: 'separator' },
+        { label: 'Toggle Developer Tools', accelerator: 'F12', click: () => win.webContents.toggleDevTools() },
+        { type: 'separator' },
         { label: 'License', click: () => win.webContents.send('desktop-menu-action', 'license') },
         { label: 'About', click: () => win.webContents.send('desktop-menu-action', 'about') },
       ],

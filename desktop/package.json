@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.focusKube.desktop",
-    "productName": "focusKube",
+    "productName": "FocusKube",
     "electronVersion": "39.8.10",
     "npmRebuild": false,
     "afterPack": "./afterPack.js",

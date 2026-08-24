@@ -34,6 +34,7 @@ const sharedOptions = {
     '.woff': 'file',
     '.woff2': 'file',
   },
+  publicPath: '/assets',
   define: {
     'process.env.NODE_ENV': '"production"',
     'import.meta.env': JSON.stringify({ MODE: 'production', PROD: true, DEV: false, SSR: false }),
@@ -43,7 +44,7 @@ const sharedOptions = {
     'import.meta.env.SSR': 'false',
     'import.meta.env.K8_EXPLORER_DESKTOP': JSON.stringify(process.env.K8_EXPLORER_DESKTOP === 'true' ? 'true' : 'false'),
   },
-  assetNames: 'asset-[hash]',
+  assetNames: '[name]-[hash]',
   logLevel: 'info',
 };
 
