@@ -3,11 +3,11 @@ name: Build and package focusKube desktop app
 on:
   push:
     branches:
-      - main
+      - main_old
   pull_request:
     branches:
-      - main
-      - release/*
+      - main_old
+      - release/*_old
   workflow_dispatch:
 
 permissions:
