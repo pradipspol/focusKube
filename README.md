@@ -1,6 +1,6 @@
 
-# <img src="https://github.com/pradipspol/focusKube/blob/main/desktop/assets/icons/app512.png" width="30" height="30" style="vertical-align:middle; display:inline-block; margin-right:8px;" /> <span style="color:#3537cc">**Focus**</span><span style="color:#b7b5c9">**Kube**</span> - Kubernetes Cluster Explorer & Operations Console
-### Deep visibility into your Kubernetes cluster!
+# <img src="https://github.com/pradipspol/focusKube/blob/main/desktop/assets/icons/app512.png" width="30" height="30" style="vertical-align:middle; display:inline-block; margin-right:8px;"/><span style="color:#3537cc">**Focus**</span><span style="color:#b7b5c9">**Kube**</span> - Deep visibility into your Kubernetes cluster!
+### 
 
 ![GitHub package.json version](https://img.shields.io/github/package-json/v/pradipspol/focusKube)
 
@@ -9,9 +9,11 @@
 ![Static Badge](https://img.shields.io/badge/MacOS--9cf?style=social&logo=Apple)
 ![Static Badge](https://img.shields.io/badge/-Linux-grey?logo=linux)
 
+## **FocusKube** - Kubernetes Cluster Explorer & Operations Console
+
 **FocusKube** is a free, open-source cross-platform Kubernetes Cluster Explorer & Operations Console, desktop GUI and multi-cluster management tool — a self-hosted alternative to Lens and k9s for teams running Azure AKS, AWS EKS, or local kubeconfig clusters. **FocusKube** allows you to browse cluster state, visualize workload topology, tail live logs over WebSockets, and manage Helm releases from one workspace — without giving up kubectl.
 
-## Why FocusKube
+## Why **FocusKube**?
 
 Kubernetes environments can quickly become complex. With multiple clusters, workloads, resources, events, logs, and relationships, finding the information that matters can be difficult.
 
@@ -19,8 +21,8 @@ Kubernetes environments can quickly become complex. With multiple clusters, work
 
 The name combines:
 
-**Focus** — helping you inspect, understand, and troubleshoot the details that matter without getting lost in cluster complexity.
-Kube — a clear reference to Kubernetes, the platform FocusKube is designed to explore and operate.
+- **Focus** — helping you inspect, understand, and troubleshoot the details that matter without getting lost in cluster complexity.
+- **Kube** — a clear reference to Kubernetes, the platform FocusKube is designed to explore and operate.
 
 **FocusKube** brings cluster information, resource relationships, topology, events, logs, and operational workflows into one focused experience.
 
