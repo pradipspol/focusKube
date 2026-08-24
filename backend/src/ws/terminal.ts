@@ -1,11 +1,12 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { URL } from 'node:url';
 import { WebSocket } from 'ws';
+import { spawn as spawnPty, type IPty } from 'node-pty';
 import { activeSessionAzureConfigDir, activeSessionKubeconfigPath } from '../auth/session.js';
 import { sessionEnv } from '../auth/session.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
 import { logError, logInfo, logWarn } from '../util/logger.js';
+import { resolveExecutablePath } from '../util/run.js';
 import { setRequestOperation } from '../util/requestOp.js';
 
 type TerminalRequest = {
@@ -14,7 +15,8 @@ type TerminalRequest = {
 };
 
 type TerminalMessage =
-  | { type: 'run'; command: string }
+  | { type: 'run'; command: string; cols?: number; rows?: number }
+  | { type: 'resize'; cols?: number; rows?: number }
   | { type: 'stop' };
 
 export function parseTerminalRequest(req: any): TerminalRequest {
@@ -34,10 +36,12 @@ export async function handleTerminal(ws: WebSocket, req: any) {
   const context = request.context || session.activeContext || undefined;
   const namespace = request.namespace || undefined;
 
-  let currentChild: ChildProcessWithoutNullStreams | undefined;
+  let currentChild: IPty | undefined;
   let currentExecutable: string | undefined;
   let busy = false;
   let stopping = false;
+  let terminalCols = 80;
+  let terminalRows = 24;
 
   const send = (payload: Record<string, unknown>) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -73,6 +77,19 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     if (message.type === 'stop') {
       stopping = true;
       cleanup();
+      return;
+    }
+
+    if (message.type === 'resize') {
+      terminalCols = normalizeTerminalSize(message.cols, terminalCols, 240);
+      terminalRows = normalizeTerminalSize(message.rows, terminalRows, 120);
+      if (currentChild) {
+        try {
+          currentChild.resize(terminalCols, terminalRows);
+        } catch {
+          /* ignore transient resize errors */
+        }
+      }
       return;
     }
 
@@ -122,10 +139,14 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     const [executable, ...args] = parsed;
     const candidates = process.platform === 'win32' ? [executable, `${executable}.exe`] : [executable];
     const env = sessionEnv(req);
+    terminalCols = normalizeTerminalSize(message.cols, terminalCols, 240);
+    terminalRows = normalizeTerminalSize(message.rows, terminalRows, 120);
+    env.COLUMNS = String(terminalCols);
+    env.LINES = String(terminalRows);
     busy = true;
 
     try {
-      const spawned = await spawnWithCandidates(candidates, args, env);
+      const spawned = await spawnWithCandidates(candidates, args, env, terminalCols, terminalRows);
       currentChild = spawned.child;
       currentExecutable = spawned.executablePath;
     } catch (err) {
@@ -144,36 +165,14 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     let stdoutBuffer = '';
     let stderrBuffer = '';
 
-    currentChild.stdout.on('data', (chunk) => {
-      const textChunk = chunk.toString();
+    currentChild.onData((textChunk: string) => {
       stdoutBuffer += textChunk;
       send({ type: 'OUTPUT', stream: 'stdout', text: textChunk });
     });
 
-    currentChild.stderr.on('data', (chunk) => {
-      const textChunk = chunk.toString();
-      stderrBuffer += textChunk;
-      send({ type: 'OUTPUT', stream: 'stderr', text: textChunk });
-    });
-
-    currentChild.on('error', (err) => {
-      busy = false;
-      logCommandOutcome('error', 'terminal.command.error', 'failed', currentExecutable ?? executable, args, {
-        executablePath: currentExecutable ?? executable,
-        kubeconfigPath,
-        azureConfigDir: azureConfigDir ?? null,
-        context: context ?? null,
-        namespace: namespace ?? null,
-        error: err.message,
-        commandLine: commandLine(currentExecutable ?? executable, args),
-      }, commandReason(err));
-      send({ type: 'ERROR', message: err.message });
-      currentChild = undefined;
-    });
-
-    currentChild.on('close', (code) => {
-      const exitCode = code ?? -1;
-      const reason = (stderrBuffer || stdoutBuffer || `exit code ${exitCode}`).trim();
+    currentChild.onExit((result: { exitCode: number; signal?: number }) => {
+      const code = result.exitCode ?? -1;
+      const reason = (stderrBuffer || stdoutBuffer || `exit code ${code}`).trim();
       if (stopping) {
         stopping = false;
         busy = false;
@@ -182,14 +181,14 @@ export async function handleTerminal(ws: WebSocket, req: any) {
         send({ type: 'STOPPED', code: 130 });
         return;
       }
-      if (exitCode === 0) {
+      if (code === 0) {
         logCommandOutcome('info', 'terminal.command.finish', 'success', currentExecutable ?? executable, args, {
           executablePath: currentExecutable ?? executable,
           kubeconfigPath,
           azureConfigDir: azureConfigDir ?? null,
           context: context ?? null,
           namespace: namespace ?? null,
-          code: exitCode,
+          code,
           commandLine: commandLine(currentExecutable ?? executable, args),
         }, 'command exited cleanly');
       } else {
@@ -199,16 +198,17 @@ export async function handleTerminal(ws: WebSocket, req: any) {
           azureConfigDir: azureConfigDir ?? null,
           context: context ?? null,
           namespace: namespace ?? null,
-          code: exitCode,
+          code,
           commandLine: commandLine(currentExecutable ?? executable, args),
-        }, `exit code ${exitCode}${reason ? ` - ${reason.slice(-400)}` : ''}`);
+        }, `exit code ${code}${reason ? ` - ${reason.slice(-400)}` : ''}`);
       }
 
       busy = false;
       currentChild = undefined;
       currentExecutable = undefined;
-      send({ type: 'DONE', code: exitCode });
+      send({ type: 'DONE', code });
     });
+
   });
 }
 
@@ -216,50 +216,43 @@ async function spawnWithCandidates(
   candidates: string[],
   args: string[],
   env: Record<string, string>,
-): Promise<{ child: ChildProcessWithoutNullStreams; executablePath: string }> {
+  cols: number,
+  rows: number,
+): Promise<{ child: IPty; executablePath: string }> {
   let lastError: NodeJS.ErrnoException | undefined;
 
   for (const cmd of candidates) {
+    const executablePath = resolveExecutablePath(cmd, env);
+    const spawnTarget = executablePath || cmd;
     logInfo('terminal.command.spawn', {
       cmd,
-      executablePath: cmd,
+      executablePath: spawnTarget,
       args,
-      commandLine: commandLine(cmd, args),
+      commandLine: commandLine(spawnTarget, args),
       platform: process.platform,
     });
 
-    const child = spawn(cmd, args, {
-      env: { ...process.env, ...env },
-      shell: false,
-      windowsHide: true,
-    });
+    try {
+      const child = spawnPty(spawnTarget, args, {
+        name: 'xterm-color',
+        cols,
+        rows,
+        cwd: process.cwd(),
+        env: { ...process.env, ...env },
+      });
+      return { child, executablePath: spawnTarget };
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      lastError = err;
+      logWarn('terminal.command.spawn_fallback', {
+        cmd,
+        executablePath: spawnTarget,
+        code: err.code ?? null,
+      });
 
-    const outcome = await new Promise<{ child?: ChildProcessWithoutNullStreams; error?: NodeJS.ErrnoException }>((resolve) => {
-      const onSpawn = () => {
-        child.off('error', onError);
-        resolve({ child });
-      };
-      const onError = (error: NodeJS.ErrnoException) => {
-        child.off('spawn', onSpawn);
-        resolve({ error });
-      };
-      child.once('spawn', onSpawn);
-      child.once('error', onError);
-    });
-
-    if (outcome.child) {
-      return { child: outcome.child, executablePath: cmd };
-    }
-
-    lastError = outcome.error;
-    logWarn('terminal.command.spawn_fallback', {
-      cmd,
-      executablePath: cmd,
-      code: outcome.error?.code ?? null,
-    });
-
-    if (outcome.error?.code !== 'ENOENT' && outcome.error?.code !== 'EINVAL') {
-      throw outcome.error;
+      if (err.code !== 'ENOENT' && err.code !== 'EINVAL') {
+        throw err;
+      }
     }
   }
 
@@ -268,6 +261,12 @@ async function spawnWithCandidates(
     error: lastError?.message ?? null,
   });
   throw new Error('kubectl or helm executable was not found on the backend host');
+}
+
+function normalizeTerminalSize(value: unknown, fallback: number, max: number): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
 function tokenizeCommand(input: string): string[] {

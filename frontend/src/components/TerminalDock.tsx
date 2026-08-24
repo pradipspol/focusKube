@@ -304,7 +304,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: 'SFMono-Regular, Consolas, monospace',
-      fontSize: 13,
+      fontSize: 12,
       theme: { background: themeColor('--black'), foreground: '#fff' },
       scrollback: 4000,
     });
@@ -462,7 +462,17 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
           historyIndexRef.current = historyRef.current.length;
           runningRef.current = true;
           setStatusText('Running');
-          wsRef.current.send(JSON.stringify({ type: 'run', command }));
+          // Fit synchronously first — the scheduled (rAF) fit can leave term.cols/rows stale here.
+          if (fitFrame !== null) {
+            window.cancelAnimationFrame(fitFrame);
+            fitFrame = null;
+          }
+          try {
+            fit.fit();
+          } catch {
+            /* ignore transient sizing errors */
+          }
+          wsRef.current.send(JSON.stringify({ type: 'run', command, cols: term.cols, rows: term.rows }));
           return;
         }
 
@@ -627,7 +637,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
           <span className="terminal-session-search-count">
             {searchQuery.trim() ? `${searchHits ? `${Math.min(searchIndex + 1, searchHits)}/${searchHits}` : '0/0'} matches` : 'scrollback'}
           </span>
-          <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'connected' : 'disconnected'}</span>
+          {/* <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'connected' : 'disconnected'}</span> */}
                     <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? uiText.terminalDock.connected : uiText.terminalDock.disconnected}</span>
           {/* <span className="terminal-session-status">{statusText}</span> */}
         </div>

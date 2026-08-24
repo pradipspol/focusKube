@@ -24,7 +24,7 @@
     "files": [
       "main.js",
       "preload.js",
-      "assets/icons/app_150.png",
+      "assets/icons/app512.png",
       "assets/icons/app512.ico",
       "package.json",
       "node_modules/"

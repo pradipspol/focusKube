@@ -3073,10 +3073,13 @@ tbody tr:hover .row-actions {
   flex: 1;
   min-height: 0;
   background: var(--black);
-  padding: 6px;
+}
+.terminal-host {
+  padding: 0;
 }
 .logs-host {
   overflow: auto;
+  padding: 8px 10px;
   font-family: var(--mono);
   white-space: pre-wrap;
   font-size: var(--fs-sm);

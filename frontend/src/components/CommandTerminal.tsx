@@ -15,6 +15,12 @@ type TerminalSocketMessage =
   | { type: 'ERROR'; message: string }
   | { type: 'STOPPED'; code: number };
 
+type TerminalResizeMessage = {
+  type: 'resize';
+  cols: number;
+  rows: number;
+};
+
 const PROMPT = 'focusKube> ';
 
 function closeSocket(socket: WebSocket | null): void {
@@ -46,6 +52,14 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
   const [connected, setConnected] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
 
+  const sendResize = () => {
+    const socket = wsRef.current;
+    const term = termRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !term) return;
+    const message: TerminalResizeMessage = { type: 'resize', cols: term.cols, rows: term.rows };
+    socket.send(JSON.stringify(message));
+  };
+
   const themeColor = (variable: string) => getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
 
   useEffect(() => {
@@ -54,9 +68,9 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: 'SFMono-Regular, Consolas, monospace',
-      fontSize: 13,
+      fontSize: 12,
       theme: { background: themeColor('--black'), foreground: '#fff' },
-      scrollback: 4000,
+      scrollback: 10000,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -104,6 +118,7 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
         if (disposedRef.current) return;
         try {
           fit.fit();
+          sendResize();
         } catch {
           /* ignore transient sizing errors */
         }
@@ -192,7 +207,6 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
         }
 
         if (command === 'clear' || command === 'cls') {
-          term.clear();
           writePrompt();
           return;
         }
@@ -208,7 +222,19 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
         historyIndexRef.current = historyRef.current.length;
         runningRef.current = true;
         setStatusText('Running');
-        wsRef.current.send(JSON.stringify({ type: 'run', command }));
+        // fitTerminal() defers to rAF, so fit synchronously here first — otherwise
+        // term.cols/rows below can still reflect the pre-fit size.
+        if (fitFrame !== null) {
+          window.cancelAnimationFrame(fitFrame);
+          fitFrame = null;
+        }
+        try {
+          fit.fit();
+        } catch {
+          /* ignore transient sizing errors */
+        }
+        wsRef.current.send(JSON.stringify({ type: 'run', command, cols: term.cols, rows: term.rows }));
+        sendResize();
         return;
       }
 
@@ -238,7 +264,6 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
       }
 
       if (data === '\u000c') {
-        term.clear();
         writePrompt();
         return;
       }
