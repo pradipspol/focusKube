@@ -263,6 +263,17 @@ spec:
 `,
 };
 
+const RESOURCE_TYPE_OPTIONS = Object.keys(SAMPLE_BUILDERS)
+  .sort()
+  .map((value) => ({
+    value,
+    label: value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+  }));
+
+function initialResourceType(resourceType?: string): string {
+  return resourceType && SAMPLE_BUILDERS[resourceType] ? resourceType : 'deployments';
+}
+
 function sampleManifest(resourceType?: string): string {
   const suffix = Math.random().toString(36).slice(2, 7);
   const build = (resourceType && SAMPLE_BUILDERS[resourceType]) || SAMPLE_BUILDERS.deployments;
@@ -271,19 +282,27 @@ function sampleManifest(resourceType?: string): string {
 
 interface Props {
   scope: Scope;
+  namespaces: string[];
+  selectedNamespace?: string;
   /** Active resource view's plural — used to seed a matching sample. */
   resourceType?: string;
   onClose: () => void;
   onToast: (tone: ToastMessage['tone'], text: string, durationMs?: number) => void;
 }
 
-export function CreateResourceModal({ scope, resourceType, onClose, onToast }: Props) {
+export function CreateResourceModal({ scope, namespaces, selectedNamespace, resourceType, onClose, onToast }: Props) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(() => sampleManifest(resourceType));
+  const [selectedResourceType, setSelectedResourceType] = useState(() => initialResourceType(resourceType));
+  const [draft, setDraft] = useState(() => sampleManifest(initialResourceType(resourceType)));
+  const [namespace, setNamespace] = useState(() => selectedNamespace ?? namespaces[0] ?? 'default');
   const [error, setError] = useState('');
 
+  const validate = useMutation({
+    mutationFn: () => api.validateResourceYaml(draft, { context: scope.context, namespace, source: scope.source }),
+  });
+
   const apply = useMutation({
-    mutationFn: () => api.applyResourceYaml(draft, { context: scope.context, namespace: scope.namespace }),
+    mutationFn: () => api.applyResourceYaml(draft, { context: scope.context, namespace, source: scope.source }),
     onSuccess: (result) => {
       const obj = result.object as { kind?: string; metadata?: { name?: string } };
       const label = `${obj?.kind ?? 'Resource'} ${obj?.metadata?.name ?? ''}`.trim();
@@ -297,7 +316,7 @@ export function CreateResourceModal({ scope, resourceType, onClose, onToast }: P
     },
   });
 
-  const targetLabel = `${scope.context ?? 'active context'}${scope.namespace ? ` / ${scope.namespace}` : ''}`;
+  const targetLabel = `${scope.context ?? 'active context'}${namespace ? ` / ${namespace}` : ''}`;
 
   return (
     <Modal
@@ -308,6 +327,15 @@ export function CreateResourceModal({ scope, resourceType, onClose, onToast }: P
           {error && <span className="badge danger create-resource-error">{error}</span>}
           <button onClick={onClose} disabled={apply.isPending}>
             Cancel
+          </button>
+          <button
+            onClick={() => {
+              setError('');
+              validate.mutate();
+            }}
+            disabled={apply.isPending || validate.isPending || !draft.trim()}
+          >
+            {validate.isPending ? 'Validating...' : 'Validate'}
           </button>
           <button
             className="primary"
@@ -325,13 +353,62 @@ export function CreateResourceModal({ scope, resourceType, onClose, onToast }: P
       <p className="dim create-resource-hint">
         Paste a Kubernetes manifest of any kind. It will be applied to <span className="mono">{targetLabel}</span>.
       </p>
+      <div className="create-resource-controls">
+        <div className="form-group create-resource-type">
+          <label htmlFor="create-resource-type">Resource type</label>
+          <select
+            id="create-resource-type"
+            value={selectedResourceType}
+            onChange={(event) => {
+              const nextResourceType = event.target.value;
+              setSelectedResourceType(nextResourceType);
+              setDraft(sampleManifest(nextResourceType));
+              validate.reset();
+            }}
+          >
+            {RESOURCE_TYPE_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group create-resource-namespace">
+          <label htmlFor="create-resource-namespace">Namespace</label>
+          <select
+            id="create-resource-namespace"
+            value={namespace}
+            onChange={(event) => {
+              setNamespace(event.target.value);
+              validate.reset();
+            }}
+          >
+            {namespaces.map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="create-resource-impact" aria-live="polite">
+        {validate.isError ? (
+          <span className="notice error">{validate.error instanceof Error ? validate.error.message : 'YAML validation failed.'}</span>
+        ) : validate.data ? (
+          <span className="notice success">
+            YAML is valid. Applying will create <span className="mono">{validate.data.kind} {validate.data.name}</span> in{' '}
+            <span className="mono">{validate.data.namespace ?? 'cluster scope'}</span>, or update it if it already exists.
+          </span>
+        ) : (
+          <span className="dim">Validate the manifest to preview the resource and target namespace before applying it.</span>
+        )}
+      </div>
       <div className="yaml-editor-host">
         <Editor
           height="100%"
           language="yaml"
           theme="vs-dark"
           value={draft}
-          onChange={(value) => setDraft(value ?? '')}
+          onChange={(value) => {
+            setDraft(value ?? '');
+            validate.reset();
+          }}
           options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
         />
       </div>

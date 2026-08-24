@@ -21,6 +21,23 @@ resourcesRouter.get('/_kinds', withRouteErrorLogging('resources', 'GET /_kinds',
   res.json(resourcesService.listKinds());
 }));
 
+resourcesRouter.post('/_validate', withRouteErrorLogging('resources', 'POST /_validate', async (req, res) => {
+  setRequestOperation(req, 'resources.validate');
+  const body = z.object({ yaml: z.string().min(1) }).safeParse(req.body);
+  if (!body.success) throw badRequest('yaml is required');
+
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
+
+  const manifest = resourcesService.parseApplyManifest(body.data.yaml, ns(req));
+  res.json({
+    apiVersion: manifest.apiVersion,
+    kind: manifest.kind,
+    name: manifest.metadata.name,
+    namespace: manifest.metadata.namespace,
+  });
+}));
+
 resourcesRouter.post('/_apply', withRouteErrorLogging('resources', 'POST /_apply', async (req, res) => {
   setRequestOperation(req, 'resources.apply');
   const body = z.object({ yaml: z.string().min(1) }).safeParse(req.body);

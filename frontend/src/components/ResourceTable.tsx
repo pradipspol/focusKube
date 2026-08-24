@@ -554,7 +554,7 @@ export function ResourceTable({
   const del = useMutation({
     mutationFn: (o: K8sObject) =>
       api.deleteResource(plural, o.metadata!.name!, {
-        context: scope.context,
+        ...scope,
         namespace: o.metadata?.namespace,
       }),
     onSuccess: () => {
@@ -614,7 +614,7 @@ export function ResourceTable({
   const restartDeployment = useMutation({
     mutationFn: (o: K8sObject) =>
       api.restartDeployment(o.metadata!.name!, {
-        context: scope.context,
+        ...scope,
         namespace: o.metadata?.namespace,
       }),
     onMutate: (deployment) => {
@@ -674,7 +674,7 @@ export function ResourceTable({
     queryFn: async () => {
       const batch = await api.getPodMetricsBatch(
         podMetricTargets.map((target) => ({ name: target.name, namespace: target.namespace })),
-        { context: scope.context, namespace: scope.namespace },
+        scope,
       );
       const rows = batch.items.map((item) => {
         const key = `${item.namespace ?? ''}/${item.name}`;

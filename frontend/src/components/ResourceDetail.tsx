@@ -24,7 +24,7 @@ interface Props {
 export function ResourceDetail({ plural, object, scope, initialTab, onClose, onChanged, onOpenPodTerminal, onOpenPodLogsTerminal }: Props) {
   const name = object.metadata!.name!;
   const ns = object.metadata?.namespace;
-  const opScope: Scope = { context: scope.context, namespace: ns };
+  const opScope: Scope = { ...scope, namespace: ns };
   const { canWrite, canDelete } = usePermissions();
   const needsHydration = plural === 'configmaps' || plural === 'secrets';
 
@@ -39,7 +39,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
   const del = useMutation({
     mutationFn: () =>
       api.deleteResource(plural, name, {
-        context: scope.context,
+        ...scope,
         namespace: ns,
       }),
     onSuccess: () => {
@@ -51,7 +51,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
   const restart = useMutation({
     mutationFn: () =>
       api.restartDeployment(name, {
-        context: scope.context,
+        ...scope,
         namespace: ns,
       }),
     onSuccess: () => onChanged(),
@@ -196,7 +196,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
     queryKey: ['pod-events', scope.context, pod.metadata?.namespace, pod.metadata?.name],
     queryFn: () =>
       api.listResource('events', {
-        context: scope.context,
+        ...scope,
         namespace: pod.metadata?.namespace,
       }),
     enabled: !!pod.metadata?.namespace,

@@ -459,8 +459,8 @@ export default function App() {
   const [azureAuthRecoveryRefresh, setAzureAuthRecoveryRefresh] = useState(0);
 
   const namespacesQuery = useQuery({
-    queryKey: ['namespaces', context],
-    queryFn: () => api.listResource('namespaces', { context, attributes: 'name' }),
+    queryKey: ['namespaces', context, activeContextSource],
+    queryFn: () => api.listResource('namespaces', { context, source: activeContextSource ?? undefined, attributes: 'name' }),
     enabled: !!context,
   });
 
@@ -1289,6 +1289,8 @@ export default function App() {
       {createResourceOpen && (
         <CreateResourceModal
           scope={scope}
+          namespaces={namespaces}
+          selectedNamespace={namespace}
           resourceType={activeTab?.view.type === 'resource' ? activeTab.view.plural : undefined}
           onClose={() => setCreateResourceOpen(false)}
           onToast={pushToast}

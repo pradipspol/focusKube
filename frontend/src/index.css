@@ -579,6 +579,39 @@ a {
 .create-resource-hint {
   margin: 0 0 var(--space-md);
 }
+.create-resource-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-md);
+  margin: 0 0 var(--space-md);
+}
+.create-resource-type,
+.create-resource-namespace {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+}
+.create-resource-type label,
+.create-resource-namespace label {
+  margin: 0;
+}
+.create-resource-type select,
+.create-resource-namespace select {
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .create-resource-controls {
+    grid-template-columns: 1fr;
+    gap: var(--space-sm);
+  }
+}
+.create-resource-impact {
+  margin: 0 0 var(--space-md);
+}
+.create-resource-impact .notice {
+  display: block;
+  margin: 0;
+}
 .create-resource-error {
   margin-right: auto;
   max-width: 60%;

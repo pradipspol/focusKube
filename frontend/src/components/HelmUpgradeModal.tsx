@@ -22,12 +22,12 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
 
   const currentValues = useQuery({
     queryKey: ['helm-values', release.name, release.namespace],
-    queryFn: () => api.helmValues(release.name, { context: scope.context, namespace: release.namespace }),
+    queryFn: () => api.helmValues(release.name, { ...scope, namespace: release.namespace }),
   });
 
   const currentManifest = useQuery({
     queryKey: ['helm-manifest', release.name, release.namespace],
-    queryFn: () => api.helmDiff(release.name, { context: scope.context, namespace: release.namespace }),
+    queryFn: () => api.helmDiff(release.name, { ...scope, namespace: release.namespace }),
   });
 
   useEffect(() => {

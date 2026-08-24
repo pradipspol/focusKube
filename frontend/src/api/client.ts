@@ -143,6 +143,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ yaml }),
     }),
+  validateResourceYaml: (yaml: string, scope: Scope = {}) =>
+    request<{ apiVersion: string; kind: string; name: string; namespace?: string }>(`/resources/_validate${qs(scope)}`, {
+      method: 'POST',
+      body: JSON.stringify({ yaml }),
+    }),
   listResource: (plural: string, scope: Scope) =>
     request<{ items: K8sObject[] }>(`/resources/${plural}${qs(scope)}`),
   listResourcePage: (plural: string, scope: Scope, page?: { limit?: number; continue?: string }) => {
@@ -171,7 +176,7 @@ export const api = {
       body: JSON.stringify({ pods }),
     }),
   putResourceYaml: (plural: string, name: string, yaml: string, scope: Scope) =>
-    request<K8sObject>(`/resources/${plural}/${name}/yaml${qs({ context: scope.context })}`, {
+    request<K8sObject>(`/resources/${plural}/${name}/yaml${qs(scope)}`, {
       method: 'PUT',
       body: JSON.stringify({ yaml }),
     }),

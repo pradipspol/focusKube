@@ -106,7 +106,7 @@ export function HelmPanel({
   }, [authRecoveryRefreshToken, charts, mode, releases, scope.context, showCatalog]);
 
   const uninstall = useMutation({
-    mutationFn: (r: HelmRelease) => api.helmUninstall(r.name, { context: scope.context, namespace: r.namespace }),
+    mutationFn: (r: HelmRelease) => api.helmUninstall(r.name, { ...scope, namespace: r.namespace }),
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 
@@ -300,7 +300,7 @@ export function HelmPanel({
       {historyFor && (
         <HelmHistoryModal
           release={historyFor}
-          context={scope.context}
+          scope={scope}
           canWrite={canWrite}
           onClose={() => setHistoryFor(null)}
           onRolledBack={() => qc.invalidateQueries({ queryKey })}
@@ -308,12 +308,13 @@ export function HelmPanel({
         />
       )}
       {valuesFor && (
-        <HelmValuesModal release={valuesFor} context={scope.context} onClose={() => setValuesFor(null)} />
+        <HelmValuesModal release={valuesFor} scope={scope} onClose={() => setValuesFor(null)} />
       )}
       {showInstallModal && (
         <HelmInstallModal
           scope={scope}
           namespaces={selectedNamespaces.length > 0 ? selectedNamespaces : namespaces}
+          selectedNamespace={scope.namespace}
           onClose={() => setShowInstallModal(false)}
           onToast={(tone, text) => onToast?.(tone, text)}
           onInstalled={() => qc.invalidateQueries({ queryKey })}
@@ -322,7 +323,7 @@ export function HelmPanel({
       {upgradeFor && (
         <HelmUpgradeModal
           release={upgradeFor}
-          scope={scope}
+          scope={{ ...scope, namespace: upgradeFor.namespace }}
           onClose={() => setUpgradeFor(null)}
           onToast={(tone, text) => onToast?.(tone, text)}
           onUpgraded={() => qc.invalidateQueries({ queryKey })}
@@ -343,20 +344,20 @@ interface UsedChart {
 
 function HelmHistoryModal({
   release,
-  context,
+  scope: parentScope,
   canWrite,
   onClose,
   onRolledBack,
   onToast,
 }: {
   release: HelmRelease;
-  context?: string;
+  scope: Scope;
   canWrite: boolean;
   onClose: () => void;
   onRolledBack: () => void;
   onToast?: (tone: 'success' | 'error' | 'info', text: string) => void;
 }) {
-  const scope: Scope = { context, namespace: release.namespace };
+  const scope: Scope = { ...parentScope, namespace: release.namespace };
   const history = useQuery({
     queryKey: ['helm-history', release.name, release.namespace],
     queryFn: () => api.helmHistory(release.name, scope),
@@ -415,16 +416,17 @@ function HelmHistoryModal({
 
 function HelmValuesModal({
   release,
-  context,
+  scope,
   onClose,
 }: {
   release: HelmRelease;
-  context?: string;
+  scope: Scope;
   onClose: () => void;
 }) {
+  const releaseScope: Scope = { ...scope, namespace: release.namespace };
   const values = useQuery({
     queryKey: ['helm-values', release.name, release.namespace],
-    queryFn: () => api.helmValues(release.name, { context, namespace: release.namespace }),
+    queryFn: () => api.helmValues(release.name, releaseScope),
   });
   return (
     <Modal title={`Values — ${release.name}`} onClose={onClose}>

@@ -9,6 +9,7 @@ import { HelmAddRepoModal } from './HelmAddRepoModal';
 interface Props {
   scope: Scope;
   namespaces: string[];
+  selectedNamespace?: string;
   onClose: () => void;
   onToast: (tone: 'success' | 'error' | 'info', text: string) => void;
   onInstalled: () => void;
@@ -20,7 +21,7 @@ interface LocalChart {
   values: string;
 }
 
-export function HelmInstallModal({ scope, namespaces, onClose, onToast, onInstalled }: Props) {
+export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose, onToast, onInstalled }: Props) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'config' | 'preview'>('config');
@@ -28,7 +29,7 @@ export function HelmInstallModal({ scope, namespaces, onClose, onToast, onInstal
   const [selectedChart, setSelectedChart] = useState<HelmChart | null>(null);
   const [localChart, setLocalChart] = useState<LocalChart | null>(null);
   const [releaseName, setReleaseName] = useState('');
-  const [namespace, setNamespace] = useState(namespaces[0] ?? 'default');
+  const [namespace, setNamespace] = useState(selectedNamespace ?? namespaces[0] ?? 'default');
   const [version, setVersion] = useState('');
   const [values, setValues] = useState('');
   const [dryRunManifest, setDryRunManifest] = useState('');

@@ -15,7 +15,7 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
   const { canWrite } = usePermissions();
   const name = deployment.metadata!.name!;
   const ns = deployment.metadata?.namespace;
-  const opScope: Scope = { context: scope.context, namespace: ns };
+  const opScope: Scope = { ...scope, namespace: ns };
   const [replicas, setReplicas] = useState<number>(deployment.spec?.replicas ?? 1);
   const [message, setMessage] = useState<string>('');
 

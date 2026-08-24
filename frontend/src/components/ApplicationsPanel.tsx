@@ -231,8 +231,8 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
       const selector = row.obj.spec?.selector?.matchLabels ?? {};
 
       const [podsRes, eventsRes] = await Promise.all([
-        api.listResource('pods', { context: scope.context, namespace: row.namespace }),
-        api.listResource('events', { context: scope.context, namespace: row.namespace }),
+        api.listResource('pods', { ...scope, namespace: row.namespace }),
+        api.listResource('events', { ...scope, namespace: row.namespace }),
       ]);
 
       const pods = (podsRes.items ?? []).filter((pod) => {
@@ -253,7 +253,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         acc.push({ name, namespace: pod.metadata?.namespace ?? row.namespace });
         return acc;
       }, []);
-      const metricsBatch = await api.getPodMetricsBatch(podTargets, { context: scope.context, namespace: row.namespace });
+      const metricsBatch = await api.getPodMetricsBatch(podTargets, { ...scope, namespace: row.namespace });
       const metricsByPod = new Map(
         metricsBatch.items.map((item) => {
           const snapshot = item.snapshot;
