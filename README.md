@@ -1,4 +1,4 @@
-# <img src="https://github.com/pradipspol/focusKube/blob/main/desktop/assets/icons/app512.png" width="30" height="30" style="vertical-align:middle; display:inline-block; margin-right:8px;"/> $\boldsymbol{\mathsf{\color{#3537cc}{Focus}\color{#b7b5c9}{Kube}}}$ - Deep visibility into your Kubernetes cluster!
+# <img src="https://github.com/pradipspol/focusKube/blob/main/desktop/assets/icons/app512.png" width="30" height="30" style="vertical-align:middle; display:inline-block; margin-right:8px;"/> **FocusKube** - Deep visibility into your Kubernetes cluster!
 
 ### 
 
