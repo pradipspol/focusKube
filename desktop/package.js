@@ -2,6 +2,17 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// electron-wix-msi injects these strings straight into the generated .wxs, so
+// unescaped XML characters (e.g. "&") make candle.exe fail with CNDL0104.
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 function ensureMsiIconFile() {
   const iconPath = path.join(__dirname, 'assets', 'icons', 'app512.ico');
   if (!fs.existsSync(iconPath)) {
@@ -65,10 +76,10 @@ async function packageWindows(desktopDir) {
     appDirectory: winUnpacked,
     outputDirectory: msiOutputDir,
     exe: exeName,
-    name: 'focusKube',
-    manufacturer: 'FocusKube',
+    name: escapeXml('focusKube'),
+    manufacturer: escapeXml('FocusKube'),
     version: msiVersion,
-    description: 'Kubernetes Cluster Explorer & Operations Console',
+    description: escapeXml('Kubernetes Cluster Explorer & Operations Console'),
     appIconPath: ensureMsiIconFile(),
     ui: {
       chooseDirectory: true
