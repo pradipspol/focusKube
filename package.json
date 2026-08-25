@@ -1,16 +1,20 @@
 {
   "name": "focusKube",
+  "author": {
+    "name": "FocusKube Team",
+    "email": "pradipspol@gmail.com"
+  },
+  "description": "Kubernetes Cluster Explorer and Operations Console",
   "private": true,
   "version": "0.1.0-2",
-  "workspaces": ["backend", "frontend", "desktop"],
+  "workspaces": ["platform/backend", "platform/frontend", "platform/desktop"],
   "scripts": {
-    "dev:backend": "npm --workspace backend run dev",
-    "dev:backend:restart": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$line = netstat -ano | findstr ':4000' | findstr 'LISTENING' | Select-Object -First 1; if ($line) { $procId = [int](($line -split '\\s+')[-1]); Stop-Process -Id $procId -Force }; npm --workspace backend run build; $backendDir = Join-Path (Get-Location) 'backend'; $entry = Join-Path $backendDir 'dist\\index.js'; Start-Process -FilePath node -ArgumentList $entry -WorkingDirectory $backendDir; Start-Sleep -Milliseconds 700; try { (Invoke-WebRequest -UseBasicParsing 'http://localhost:4000/api/health').Content | Out-Null; Write-Output 'Backend restarted on :4000' } catch { Write-Error 'Backend failed to start on :4000'; exit 1 }\"",
-    "dev:frontend": "npm --workspace frontend run dev",
-    "typecheck": "npm --workspace backend run typecheck && npm --workspace frontend run typecheck",
-    "build": "npm --workspace backend run build && npm --workspace frontend run build",
-    "build:bundle:prod": "npm --workspace backend run build:bundle && npm --workspace frontend run build:bundle",
-    "desktop:start": "npm --workspace desktop run start",
-    "desktop:package": "npm --workspace desktop run package"
+    "dev:backend": "npm --workspace platform/backend run dev",
+    "dev:frontend": "npm --workspace platform/frontend run dev",
+    "typecheck": "npm --workspace platform/backend run typecheck && npm --workspace platform/frontend run typecheck",
+    "build": "npm --workspace platform/backend run build && npm --workspace platform/frontend run build",
+    "build:bundle:prod": "npm --workspace platform/backend run build:bundle && npm --workspace platform/frontend run build:bundle",
+    "desktop:start": "npm --workspace platform/desktop run start",
+    "desktop:package": "npm --workspace platform/desktop run package"
   }
 }

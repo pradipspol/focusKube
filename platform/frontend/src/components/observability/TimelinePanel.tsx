@@ -1,0 +1,203 @@
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../api/client';
+import type { Scope } from '../../api/client';
+import type { ChangeEventDoc } from '../../api/types';
+import type { DataColumn } from '../DataTable';
+import { TimelineScrubber, type TimelineMarker } from '../TimelineScrubber';
+import { DataTable } from '../DataTable';
+import { Modal } from '../Modal';
+import { useObservabilityWs } from '../../lib/useObservabilityWs';
+import { uiText } from '../../text';
+
+interface Props {
+  scope: Scope;
+}
+
+export function TimelinePanel({ scope }: Props) {
+  const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
+  const [showDetailsFor, setShowDetailsFor] = useState<ChangeEventDoc | null>(null);
+  const [liveEvents, setLiveEvents] = useState<ChangeEventDoc[]>([]);
+  const [stateAt, setStateAt] = useState<ChangeEventDoc[]>([]);
+
+  const { subscribe, requestStateAt } = useObservabilityWs(scope.context);
+
+  if (!scope.context) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+        <div className="notice">{uiText.timeline.selectContext}</div>
+      </div>
+    );
+  }
+
+  // Calculate once on mount, not on every render
+  const dayAgo = useMemo(() => Date.now() - 24 * 60 * 60 * 1000, []);
+  const now = useMemo(() => Date.now(), []);
+
+  // Load historical events once on mount, don't refetch
+  const { data: historicalEvents = [] } = useQuery({
+    queryKey: ['observability', 'events', scope.context, 'historical'],
+    queryFn: () =>
+      api.observabilityEvents(scope, {
+        from: new Date(dayAgo),
+        to: new Date(now),
+      }),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  });
+
+  // Subscribe to real-time WebSocket events
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      if (message.type === 'event') {
+        setLiveEvents((prev) => [...prev, message.data]);
+      } else if (message.type === 'state') {
+        setStateAt(message.data || []);
+      }
+    });
+    return unsubscribe;
+  }, [subscribe]);
+
+  // Prime the current state snapshot so the table is populated before the user scrubs.
+  useEffect(() => {
+    requestStateAt(new Date(currentTime));
+    // Intentionally run once for the initial time position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When scrubber is released, request state-at via WebSocket
+  const handleScrubberCommit = (ts: number) => {
+    requestStateAt(new Date(ts));
+  };
+
+  // Combine historical and live events without removing repeated records.
+  const allEvents = useMemo(() => {
+    return [...historicalEvents, ...liveEvents];
+  }, [historicalEvents, liveEvents]);
+
+  const ticks = useMemo(() => {
+    return allEvents.map((e: ChangeEventDoc) => ({
+      ts: new Date(e.ts).getTime(),
+      weight: 1,
+      severity: e.severity as 'info' | 'warning' | 'error',
+    }));
+  }, [allEvents]);
+
+  const markers = useMemo(() => {
+    return allEvents
+      .filter((e: ChangeEventDoc) => e.category === 'workloadChange')
+      .map((e: ChangeEventDoc) => ({
+        ts: new Date(e.ts).getTime(),
+        label: e.summary,
+        kind: e.kind,
+      }));
+  }, [allEvents]);
+
+  const reconstructedState = useMemo(() => {
+    const seen = new Set<string>();
+    const result: ChangeEventDoc[] = [];
+    for (const row of stateAt) {
+      const key = row.uid || `${row.namespace}/${row.name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          ...row,
+          kind: row.kind,
+          name: row.name,
+          namespace: row.namespace,
+          changeType: row.changeType,
+          summary: row.summary,
+        });
+      }
+    }
+    return result;
+  }, [stateAt]);
+
+  const columns: DataColumn<ChangeEventDoc>[] = [
+    { key: 'kind', header: 'Kind', value: (row) => row.kind, width: 100 },
+    { key: 'namespace', header: 'Namespace', value: (row) => row.namespace || '(cluster-scoped)' },
+    { key: 'name', header: 'Name', value: (row) => row.name },
+    { key: 'changeType', header: 'Change Type', value: (row) => row.changeType },
+    { key: 'summary', header: 'Summary', value: (row) => row.summary },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <TimelineScrubber
+        rangeStart={dayAgo}
+        rangeEnd={now}
+        ticks={ticks}
+        markers={markers}
+        value={currentTime}
+        onChange={setCurrentTime}
+        onCommit={handleScrubberCommit}
+        live={currentTime === now}
+        onToggleLive={(live) => setCurrentTime(live ? now : currentTime)}
+      />
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
+        <h3 style={{ margin: '0 0 1rem 0' }}>{uiText.timeline.clusterStatePrefix} {new Date(currentTime).toLocaleString()}</h3>
+
+        {reconstructedState.length === 0 ? (
+          <div className="notice">{uiText.timeline.noWorkloadState}</div>
+        ) : (
+          <DataTable
+            rowKey={(row) => row.uid || row.name}
+            columns={columns}
+            rows={reconstructedState}
+            initialSortKey="name"
+            onShowDetails={(row) => setShowDetailsFor(row)}
+          />
+        )}
+      </div>
+
+      {showDetailsFor && (
+        <Modal
+          title={`${showDetailsFor.kind} ${showDetailsFor.name}`}
+          onClose={() => setShowDetailsFor(null)}
+        >
+          <div style={{ display: 'grid', gap: '1rem' }}>
+            <div>
+              <strong>{uiText.timeline.namespace}</strong> {showDetailsFor.namespace || uiText.timeline.clusterScoped}
+            </div>
+            <div>
+              <strong>{uiText.timeline.uid}</strong> <code>{showDetailsFor.uid}</code>
+            </div>
+            <div>
+              <strong>{uiText.timeline.changeType}</strong> {showDetailsFor.changeType}
+            </div>
+            <div>
+              <strong>{uiText.timeline.severity}</strong> <span className={`badge severity-${showDetailsFor.severity}`}>{showDetailsFor.severity}</span>
+            </div>
+            <div>
+              <strong>{uiText.timeline.summary}</strong> {showDetailsFor.summary}
+            </div>
+            {showDetailsFor.reason && (
+              <div>
+                <strong>{uiText.timeline.reason}</strong> {showDetailsFor.reason}
+              </div>
+            )}
+            {showDetailsFor.before && (
+              <div>
+                <strong>{uiText.timeline.before}</strong>
+                <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
+                  {JSON.stringify(showDetailsFor.before, null, 2)}
+                </pre>
+              </div>
+            )}
+            {showDetailsFor.after && (
+              <div>
+                <strong>{uiText.timeline.after}</strong>
+                <pre style={{ backgroundColor: 'var(--surface-secondary)', padding: '0.5rem', borderRadius: '0.25rem', overflow: 'auto' }}>
+                  {JSON.stringify(showDetailsFor.after, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}

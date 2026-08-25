@@ -2,9 +2,9 @@
 
 ## Project Structure
 
-- `backend/` - Express API, Kubernetes and Helm integration, auth/session handling, observability, and WebSocket support.
-- `frontend/` - React + Vite UI with the main explorer experience.
-- `desktop/` - Electron wrapper and packaging support for Windows, macOS, and Linux.
+- `platform/backend/` - Express API, Kubernetes and Helm integration, auth/session handling, observability, and WebSocket support.
+- `platform/frontend/` - React + Vite UI with the main explorer experience.
+- `platform/desktop/` - Electron wrapper and packaging support for Windows, macOS, and Linux.
 - `k8s/` - Kubernetes manifests and RBAC for deployment-related setup.
 
 ## Getting Started

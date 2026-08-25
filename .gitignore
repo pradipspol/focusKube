@@ -3,7 +3,7 @@ node_modules
 **/dist
 *.log
 .env
-backend/.env
+**/backend/.env
 *.logs
-desktop/installer
+**/desktop/installer
 package-lock.json
