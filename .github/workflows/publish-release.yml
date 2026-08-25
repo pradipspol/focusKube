@@ -86,7 +86,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: release-artifacts/*
           if-no-files-found: error
-          node-version: 24
 
   publish-release:
     runs-on: ubuntu-latest
@@ -122,5 +121,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true
-          overwrite: true
+          overwrite_files: true
           files: release-artifacts/**/*
