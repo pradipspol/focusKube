@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import Editor from '@monaco-editor/react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, getDesktopEmail, type Scope } from '../api/client';
@@ -10,6 +11,32 @@ import { ExecTerminal } from './ExecTerminal';
 import { DeploymentActions } from './DeploymentActions';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
+
+// Kinds without a hand-built Overview tab (pods/deployments/workload controllers,
+// configmaps/secrets) fall back here: a data-driven Properties view plus, for the
+// kinds with list-shaped specs, a card list per entry (ports, rules, subjects, ...).
+const GENERIC_OVERVIEW_PLURALS = new Set([
+  'services',
+  'endpointslices',
+  'endpoints',
+  'ingresses',
+  'ingressclasses',
+  'networkpolicies',
+  'resourcequotas',
+  'limitranges',
+  'horizontalpodautoscalers',
+  'poddisruptionbudgets',
+  'leases',
+  'serviceaccounts',
+  'roles',
+  'rolebindings',
+  'customresourcedefinitions',
+  'persistentvolumeclaims',
+  'storageclasses',
+  'namespaces',
+  'events',
+  'nodes',
+]);
 
 interface Props {
   plural: string;
@@ -65,6 +92,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
     if (plural === 'pods') t.unshift('overview');
     if (['daemonsets', 'statefulsets', 'replicasets', 'jobs', 'cronjobs'].includes(plural)) t.unshift('overview');
     if (plural === 'configmaps' || plural === 'secrets') t.unshift('details');
+    if (GENERIC_OVERVIEW_PLURALS.has(plural)) t.unshift('overview');
     if (plural === 'pods') {
       t.push('logs');
       // Exec opens an interactive shell — a write-capable action.
@@ -136,13 +164,25 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
               </button>
             )}
           </div>
-          <button onClick={onClose}>✕</button>
+          <button onClick={onClose}>{uiText.common.close}</button>
         </div>
 
         <div className="tabs">
           {tabs.map((t) => (
             <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'yaml' ? uiText.resourceDetail.yaml : t === 'overview' ? uiText.resourceDetail.overview : t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === 'yaml'
+                ? uiText.resourceDetail.yaml
+                : t === 'overview'
+                ? uiText.resourceDetail.overview
+                : t === 'details'
+                ? uiText.resourceDetail.details
+                : t === 'actions'
+                ? uiText.resourceDetail.actionsTab
+                : t === 'logs'
+                ? uiText.resourceDetail.logs
+                : t === 'exec'
+                ? uiText.resourceDetail.execTab
+                : uiText.resourceDetail.secretTab}
             </div>
           ))}
         </div>
@@ -151,6 +191,9 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
         {tab === 'overview' && plural === 'deployments' && <DeploymentOverviewTab deployment={currentObject} />}
         {tab === 'overview' && ['daemonsets', 'statefulsets', 'replicasets', 'jobs', 'cronjobs'].includes(plural) && (
           <WorkloadOverviewTab resource={currentObject} plural={plural} />
+        )}
+        {tab === 'overview' && GENERIC_OVERVIEW_PLURALS.has(plural) && (
+          <GenericOverviewTab resource={currentObject} plural={plural} />
         )}
         {tab === 'details' && (plural === 'configmaps' || plural === 'secrets') && (
           <ConfigLikeDetailsTab
@@ -299,27 +342,27 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
   const toggle = (key: string) => setExpanded((current) => ({ ...current, [key]: !current[key] }));
 
   const properties: Array<[string, string]> = [
-    ['Created', formatCreated(pod.metadata?.creationTimestamp)],
-    ['Name', pod.metadata?.name ?? '-'],
-    ['Namespace', pod.metadata?.namespace ?? '-'],
-    ['Labels', `${Object.keys(labels).length} Labels`],
-    ['Controlled', owner?.kind && owner?.name ? `${owner.kind} ${owner.name}` : '-'],
-    ['Status', pod.status?.phase ?? '-'],
-    ['Node', pod.spec?.nodeName ?? '-'],
-    ['Pod IP', pod.status?.podIP ?? '-'],
-    ['Pod IPs', podIps.join(', ') || '-'],
-    ['Service Account', pod.spec?.serviceAccountName ?? '-'],
-    ['QoS Class', pod.status?.qosClass ?? '-'],
-    ['Conditions', conditions.map((c) => c.type).join(', ') || '-'],
-    ['Tolerations', tolerations.length ? String(tolerations.length) : '-'],
-    ['Pod Anti Affinities', antiAffinities.length ? `${antiAffinities.length} Rule${antiAffinities.length > 1 ? 's' : ''}` : '-'],
+    [uiText.resourceDetail.created, formatCreated(pod.metadata?.creationTimestamp)],
+    [uiText.resourceDetail.name, pod.metadata?.name ?? uiText.resourceDetail.dash],
+    [uiText.applications.namespace, pod.metadata?.namespace ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.labels, uiText.resourceDetail.labelsCount(Object.keys(labels).length)],
+    [uiText.resourceDetail.controlled, owner?.kind && owner?.name ? `${owner.kind} ${owner.name}` : uiText.resourceDetail.dash],
+    [uiText.resourceDetail.status, pod.status?.phase ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.node, pod.spec?.nodeName ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.podIP, pod.status?.podIP ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.podIPs, podIps.join(', ') || uiText.resourceDetail.dash],
+    [uiText.resourceDetail.serviceAccount, pod.spec?.serviceAccountName ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.qosClass, pod.status?.qosClass ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.conditions, conditions.map((c) => c.type).join(', ') || uiText.resourceDetail.dash],
+    [uiText.resourceDetail.tolerations, tolerations.length ? String(tolerations.length) : uiText.resourceDetail.dash],
+    [uiText.resourceDetail.podAntiAffinities, antiAffinities.length ? uiText.resourceDetail.ruleCount(antiAffinities.length) : uiText.resourceDetail.dash],
   ];
 
   return (
     <div className="drawer-body pod-overview">
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Metrics</h4>
+          <h4>{uiText.resourceDetail.metrics}</h4>
           <div className="metrics-toolbar">
             <select value={metricsWindow} onChange={(e) => setMetricsWindow(e.target.value as '1h' | '6h' | '24h')}>
               <option value="1h">1h</option>
@@ -328,7 +371,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
             </select>
           </div>
         </div>
-        <div className="metrics-note">Displaying metrics from Kubernetes Metrics Server</div>
+        <div className="metrics-note">{uiText.resourceDetail.metricsDescription}</div>
         <div className="metrics-chart-placeholder">
           <div className="metrics-grid" />
           <svg className="metrics-svg" viewBox="0 0 720 240" preserveAspectRatio="none">
@@ -337,36 +380,36 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
             <path d={cpuSeries} className="metrics-line usage" />
           </svg>
           <div className="metrics-stats">
-            <span>CPU: {totalCpuMillicores.toFixed(0)}m</span>
-            <span>Memory: {formatBytes(totalMemoryBytes)}</span>
-            {metricsData?.timestamp && <span>Updated: {new Date(metricsData.timestamp).toLocaleTimeString()}</span>}
+            <span>{uiText.resourceDetail.cpuPrefix} {totalCpuMillicores.toFixed(0)}m</span>
+            <span>{uiText.resourceDetail.memoryPrefix} {formatBytes(totalMemoryBytes)}</span>
+            {metricsData?.timestamp && <span>{uiText.resourceDetail.updatedPrefix} {new Date(metricsData.timestamp).toLocaleTimeString()}</span>}
             {metricsState !== 'live' && <span className="metrics-status">{metricsState}</span>}
-            {metricsError && <span className="metrics-error">Error: {metricsError}</span>}
+            {metricsError && <span className="metrics-error">{uiText.resourceDetail.errorPrefix} {metricsError}</span>}
           </div>
           <div className="metrics-legend">
-            <span><span className="metrics-swatch usage" />CPU Usage</span>
-            <span><span className="metrics-swatch request" />CPU Requests</span>
-            <span><span className="metrics-swatch limit" />CPU Limits</span>
+            <span><span className="metrics-swatch usage" />{uiText.applications.cpuUsage}</span>
+            <span><span className="metrics-swatch request" />{uiText.resourceDetail.cpuRequestsLegend}</span>
+            <span><span className="metrics-swatch limit" />{uiText.resourceDetail.cpuLimitsLegend}</span>
           </div>
         </div>
       </div>
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Properties</h4>
+          <h4>{uiText.resourceDetail.properties}</h4>
         </div>
         <div className="pod-properties-table">
           {properties.map(([label, value]) => (
             <div key={label} className="pod-property-row">
               <div className="pod-property-label">{label}</div>
-              <div className={`pod-property-value ${label === 'Status' && value === 'Running' ? 'status-running' : ''}`}>
+              <div className={`pod-property-value ${label === uiText.resourceDetail.status && value === 'Running' ? 'status-running' : ''}`}>
                 {value}
               </div>
             </div>
           ))}
           <div className="pod-property-row expandable" onClick={() => toggle('labels')}>
-            <div className="pod-property-label">Labels</div>
-            <div className="pod-property-value linkish">{Object.keys(labels).length} Labels {expanded.labels ? '▾' : '▸'}</div>
+            <div className="pod-property-label">{uiText.resourceDetail.labels}</div>
+            <div className="pod-property-value linkish">{uiText.resourceDetail.labelsCount(Object.keys(labels).length)} {expanded.labels ? '▾' : '▸'}</div>
           </div>
           {expanded.labels && (
             <div className="pod-detail-list">
@@ -374,8 +417,8 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
             </div>
           )}
           <div className="pod-property-row expandable" onClick={() => toggle('annotations')}>
-            <div className="pod-property-label">Annotations</div>
-            <div className="pod-property-value linkish">{Object.keys(annotations).length} Annotations {expanded.annotations ? '▾' : '▸'}</div>
+            <div className="pod-property-label">{uiText.resourceDetail.annotations}</div>
+            <div className="pod-property-value linkish">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)} {expanded.annotations ? '▾' : '▸'}</div>
           </div>
           {expanded.annotations && (
             <div className="pod-detail-list">
@@ -387,15 +430,15 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Pod Volumes</h4>
+          <h4>{uiText.resourceDetail.podVolumesTitle}</h4>
         </div>
         {volumes.length === 0 ? (
-          <div className="dim">No volumes defined</div>
+          <div className="dim">{uiText.resourceDetail.noVolumesDefined}</div>
         ) : (
           <div className="pod-properties-table">
             {volumes.map((volume: any) => (
               <div key={volume.name} className="pod-property-row">
-                <div className="pod-property-label">{volume.projected ? 'Projected' : volume.configMap ? 'ConfigMap' : volume.secret ? 'Secret' : volume.emptyDir ? 'EmptyDir' : 'Volume'}</div>
+                <div className="pod-property-label">{volume.projected ? uiText.resourceDetail.volumeProjected : volume.configMap ? uiText.resourceDetail.volumeConfigMap : volume.secret ? uiText.resourceDetail.volumeSecretType : volume.emptyDir ? uiText.resourceDetail.volumeEmptyDir : uiText.resourceDetail.volumeDefault}</div>
                 <div className="pod-property-value">{volume.name}</div>
               </div>
             ))}
@@ -405,7 +448,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Containers</h4>
+          <h4>{uiText.resourceDetail.containers}</h4>
         </div>
         <div className="container-overview-list">
           {containers.map((container: any) => {
@@ -419,23 +462,23 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
               <div key={container.name} className="container-card">
                 <div className="container-card-title"><span className="container-dot ok" />{container.name}</div>
                 <div className="pod-properties-table">
-                  <div className="pod-property-row"><div className="pod-property-label">Status</div><div className="pod-property-value status-running">running, ready</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Image</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? '-'}</span></div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Ports</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? 'TCP'}`).join(', ') : '-'}</div></div>
-                  <div className="pod-property-row expandable" onClick={() => toggle(`env-${container.name}`)}><div className="pod-property-label">Environment</div><div className="pod-property-value linkish">{envs.length} Environmental Variables {expanded[`env-${container.name}`] ? '▾' : '▸'}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.status}</div><div className="pod-property-value status-running">{uiText.resourceDetail.runningReady}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.image}</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? uiText.resourceDetail.dash}</span></div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.ports}</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? uiText.resourceDetail.tcp}`).join(', ') : uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row expandable" onClick={() => toggle(`env-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.environment}</div><div className="pod-property-value linkish">{uiText.resourceDetail.environmentalVariablesCount(envs.length)} {expanded[`env-${container.name}`] ? '▾' : '▸'}</div></div>
                   {expanded[`env-${container.name}`] && (
                     <div className="pod-detail-list">
                       {envs.map((env: any, index: number) => <span key={`${container.name}-env-${index}`} className="inline-chip mono">{env.name}{env.value !== undefined ? `=${env.value}` : '=valueFrom'}</span>)}
                     </div>
                   )}
-                  <div className="pod-property-row expandable" onClick={() => toggle(`mounts-${container.name}`)}><div className="pod-property-label">Mounts</div><div className="pod-property-value linkish">{mounts.length} Mounts {expanded[`mounts-${container.name}`] ? '▾' : '▸'}</div></div>
+                  <div className="pod-property-row expandable" onClick={() => toggle(`mounts-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.mounts}</div><div className="pod-property-value linkish">{uiText.resourceDetail.mountsCount(mounts.length)} {expanded[`mounts-${container.name}`] ? '▾' : '▸'}</div></div>
                   {expanded[`mounts-${container.name}`] && (
                     <div className="pod-detail-list">
-                      {mounts.map((m: any, index: number) => <span key={`${container.name}-mount-${index}`} className="inline-chip mono">{m.mountPath} from {m.name}{m.readOnly ? ' (ro)' : ''}</span>)}
+                      {mounts.map((m: any, index: number) => <span key={`${container.name}-mount-${index}`} className="inline-chip mono">{uiText.resourceDetail.mountFrom(m.mountPath, m.name)}{m.readOnly ? uiText.resourceDetail.readOnlySuffix : ''}</span>)}
                     </div>
                   )}
-                  <div className="pod-property-row"><div className="pod-property-label">Requests</div><div className="pod-property-value">{requests}</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Limits</div><div className="pod-property-value">{limits}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.requests}</div><div className="pod-property-value">{requests}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.limits}</div><div className="pod-property-value">{limits}</div></div>
                 </div>
               </div>
             );
@@ -445,15 +488,15 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Vulnerabilities</h4>
+          <h4>{uiText.resourceDetail.vulnerabilities}</h4>
         </div>
         <div className="security-placeholder">
-          To perform automatic scanning, k8sexplorer Security Center requires enabling the Trivy Operator. This view is a placeholder until a vulnerability provider is integrated.
+          {uiText.resourceDetail.vulnerabilitiesPlaceholder}
         </div>
         <div className="pod-properties-table" style={{ marginTop: 12 }}>
           {containers.map((container: any) => (
             <div key={container.name} className="pod-property-row">
-              <div className="pod-property-label">Images</div>
+              <div className="pod-property-label">{uiText.resourceDetail.images}</div>
               <div className="pod-property-value"><span className="linkish">{container.image ?? container.name}</span></div>
             </div>
           ))}
@@ -462,16 +505,16 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Events</h4>
+          <h4>{uiText.resourceDetail.events}</h4>
         </div>
-        {eventsQuery.isLoading && <div className="dim">Loading events…</div>}
-        {!eventsQuery.isLoading && relatedEvents.length === 0 && <div className="dim">No events found</div>}
+        {eventsQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
+        {!eventsQuery.isLoading && relatedEvents.length === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
         {relatedEvents.length > 0 && (
           <div className="pod-properties-table">
             {relatedEvents.slice(0, 20).map((event: any, index) => (
               <div key={`${event.metadata?.uid ?? index}`} className="pod-property-row">
-                <div className="pod-property-label"><span className={`event-badge ${String(event.type ?? 'Normal').toLowerCase()}`}>{event.type ?? 'Normal'}</span> {event.reason ?? 'Event'}</div>
-                <div className="pod-property-value">{event.message ?? '-'} <span className="dim event-time">{formatEventTime(event.lastTimestamp ?? event.eventTime ?? event.metadata?.creationTimestamp)}</span></div>
+                <div className="pod-property-label"><span className={`event-badge ${String(event.type ?? uiText.resourceDetail.normalEventType).toLowerCase()}`}>{event.type ?? uiText.resourceDetail.normalEventType}</span> {event.reason ?? uiText.resourceDetail.eventReasonFallback}</div>
+                <div className="pod-property-value">{event.message ?? uiText.resourceDetail.dash} <span className="dim event-time">{formatEventTime(event.lastTimestamp ?? event.eventTime ?? event.metadata?.creationTimestamp)}</span></div>
               </div>
             ))}
           </div>
@@ -492,22 +535,22 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
     : [];
 
   const properties: Array<[string, string]> = [
-    ['Created', formatCreated(deployment.metadata?.creationTimestamp)],
-    ['Name', deployment.metadata?.name ?? '-'],
-    ['Namespace', deployment.metadata?.namespace ?? '-'],
-    ['Labels', `${Object.keys(labels).length} Labels`],
-    ['Replicas', `${deployment.status?.readyReplicas ?? 0}/${deployment.spec?.replicas ?? 0}`],
-    ['Updated Replicas', `${deployment.status?.updatedReplicas ?? 0}`],
-    ['Available Replicas', `${deployment.status?.availableReplicas ?? 0}`],
-    ['Conditions', conditions.map((c) => c.type).join(', ') || '-'],
-    ['Strategy', deployment.spec?.strategy?.type ?? '-'],
+    [uiText.resourceDetail.created, formatCreated(deployment.metadata?.creationTimestamp)],
+    [uiText.resourceDetail.name, deployment.metadata?.name ?? uiText.resourceDetail.dash],
+    [uiText.applications.namespace, deployment.metadata?.namespace ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.labels, uiText.resourceDetail.labelsCount(Object.keys(labels).length)],
+    [uiText.resourceDetail.replicas, `${deployment.status?.readyReplicas ?? 0}/${deployment.spec?.replicas ?? 0}`],
+    [uiText.resourceDetail.updatedReplicas, `${deployment.status?.updatedReplicas ?? 0}`],
+    [uiText.resourceDetail.availableReplicas, `${deployment.status?.availableReplicas ?? 0}`],
+    [uiText.resourceDetail.conditions, conditions.map((c) => c.type).join(', ') || uiText.resourceDetail.dash],
+    [uiText.resourceDetail.strategy, deployment.spec?.strategy?.type ?? uiText.resourceDetail.dash],
   ];
 
   return (
     <div className="drawer-body pod-overview">
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Properties</h4>
+          <h4>{uiText.resourceDetail.properties}</h4>
         </div>
         <div className="pod-properties-table">
           {properties.map(([label, value]) => (
@@ -517,15 +560,15 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
             </div>
           ))}
           <div className="pod-property-row">
-            <div className="pod-property-label">Annotations</div>
-            <div className="pod-property-value">{Object.keys(annotations).length} Annotations</div>
+            <div className="pod-property-label">{uiText.resourceDetail.annotations}</div>
+            <div className="pod-property-value">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)}</div>
           </div>
         </div>
       </div>
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Containers</h4>
+          <h4>{uiText.resourceDetail.containers}</h4>
         </div>
         <div className="container-overview-list">
           {containers.map((container: any) => {
@@ -535,10 +578,10 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
               <div key={container.name} className="container-card">
                 <div className="container-card-title"><span className="container-dot ok" />{container.name}</div>
                 <div className="pod-properties-table">
-                  <div className="pod-property-row"><div className="pod-property-label">Image</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? '-'}</span></div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Ports</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? 'TCP'}`).join(', ') : '-'}</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Requests</div><div className="pod-property-value">{formatResourceBlock(resources.requests)}</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Limits</div><div className="pod-property-value">{formatResourceBlock(resources.limits)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.image}</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? uiText.resourceDetail.dash}</span></div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.ports}</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? uiText.resourceDetail.tcp}`).join(', ') : uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.requests}</div><div className="pod-property-value">{formatResourceBlock(resources.requests)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.limits}</div><div className="pod-property-value">{formatResourceBlock(resources.limits)}</div></div>
                 </div>
               </div>
             );
@@ -556,7 +599,7 @@ function WorkloadOverviewTab({ resource, plural }: { resource: K8sObject; plural
         .filter((condition) => condition.status === 'True')
         .map((condition) => condition.type)
         .join(', ')
-    : '-';
+    : uiText.resourceDetail.dash;
 
   const containers = Array.isArray(resource.spec?.template?.spec?.containers)
     ? resource.spec.template.spec.containers
@@ -564,68 +607,68 @@ function WorkloadOverviewTab({ resource, plural }: { resource: K8sObject; plural
 
   const propsByType: Record<string, Array<[string, string]>> = {
     daemonsets: [
-      ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-      ['Name', resource.metadata?.name ?? '-'],
-      ['Namespace', resource.metadata?.namespace ?? '-'],
-      ['Desired', String(resource.status?.desiredNumberScheduled ?? 0)],
-      ['Current', String(resource.status?.currentNumberScheduled ?? 0)],
-      ['Ready', String(resource.status?.numberReady ?? 0)],
-      ['Up-to-date', String(resource.status?.updatedNumberScheduled ?? 0)],
-      ['Available', String(resource.status?.numberAvailable ?? 0)],
-      ['Node Selector', resource.spec?.template?.spec?.nodeSelector ? Object.entries(resource.spec.template.spec.nodeSelector).map(([k, v]) => `${k}=${String(v)}`).join(', ') : '-'],
-      ['Conditions', conditions],
+      [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+      [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+      [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.desired, String(resource.status?.desiredNumberScheduled ?? 0)],
+      [uiText.resourceDetail.current, String(resource.status?.currentNumberScheduled ?? 0)],
+      [uiText.resourceDetail.ready, String(resource.status?.numberReady ?? 0)],
+      [uiText.resourceDetail.upToDate, String(resource.status?.updatedNumberScheduled ?? 0)],
+      [uiText.resourceDetail.available, String(resource.status?.numberAvailable ?? 0)],
+      [uiText.resourceDetail.nodeSelector, resource.spec?.template?.spec?.nodeSelector ? Object.entries(resource.spec.template.spec.nodeSelector).map(([k, v]) => `${k}=${String(v)}`).join(', ') : uiText.resourceDetail.dash],
+      [uiText.resourceDetail.conditions, conditions],
     ],
     statefulsets: [
-      ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-      ['Name', resource.metadata?.name ?? '-'],
-      ['Namespace', resource.metadata?.namespace ?? '-'],
-      ['Desired', String(resource.spec?.replicas ?? 0)],
-      ['Current', String(resource.status?.currentReplicas ?? 0)],
-      ['Ready', String(resource.status?.readyReplicas ?? 0)],
-      ['Update Strategy', resource.spec?.updateStrategy?.type ?? '-'],
-      ['Service Name', resource.spec?.serviceName ?? '-'],
-      ['Conditions', conditions],
+      [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+      [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+      [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.desired, String(resource.spec?.replicas ?? 0)],
+      [uiText.resourceDetail.current, String(resource.status?.currentReplicas ?? 0)],
+      [uiText.resourceDetail.ready, String(resource.status?.readyReplicas ?? 0)],
+      [uiText.resourceDetail.updateStrategy, resource.spec?.updateStrategy?.type ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.serviceName, resource.spec?.serviceName ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.conditions, conditions],
     ],
     replicasets: [
-      ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-      ['Name', resource.metadata?.name ?? '-'],
-      ['Namespace', resource.metadata?.namespace ?? '-'],
-      ['Pods', `${resource.status?.readyReplicas ?? 0}/${resource.spec?.replicas ?? 0}`],
-      ['Replicas', String(resource.spec?.replicas ?? 0)],
-      ['Conditions', conditions],
+      [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+      [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+      [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
+      [uiText.applications.pods, `${resource.status?.readyReplicas ?? 0}/${resource.spec?.replicas ?? 0}`],
+      [uiText.resourceDetail.replicas, String(resource.spec?.replicas ?? 0)],
+      [uiText.resourceDetail.conditions, conditions],
     ],
     jobs: [
-      ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-      ['Name', resource.metadata?.name ?? '-'],
-      ['Namespace', resource.metadata?.namespace ?? '-'],
-      ['Completions', `${resource.status?.succeeded ?? 0}/${resource.spec?.completions ?? 1}`],
-      ['Parallelism', String(resource.spec?.parallelism ?? 1)],
-      ['Active', String(resource.status?.active ?? 0)],
-      ['Conditions', conditions],
+      [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+      [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+      [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.completions, `${resource.status?.succeeded ?? 0}/${resource.spec?.completions ?? 1}`],
+      [uiText.resourceDetail.parallelism, String(resource.spec?.parallelism ?? 1)],
+      [uiText.resourceDetail.active, String(resource.status?.active ?? 0)],
+      [uiText.resourceDetail.conditions, conditions],
     ],
     cronjobs: [
-      ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-      ['Name', resource.metadata?.name ?? '-'],
-      ['Namespace', resource.metadata?.namespace ?? '-'],
-      ['Schedule', resource.spec?.schedule ?? '-'],
-      ['Suspend', String(Boolean(resource.spec?.suspend))],
-      ['Active', String(Array.isArray(resource.status?.active) ? resource.status.active.length : resource.status?.active ?? 0)],
-      ['Last Schedule', formatCreated(resource.status?.lastScheduleTime)],
-      ['Time Zone', resource.spec?.timeZone ?? '-'],
+      [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+      [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+      [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.schedule, resource.spec?.schedule ?? uiText.resourceDetail.dash],
+      [uiText.resourceDetail.suspend, String(Boolean(resource.spec?.suspend))],
+      [uiText.resourceDetail.active, String(Array.isArray(resource.status?.active) ? resource.status.active.length : resource.status?.active ?? 0)],
+      [uiText.resourceDetail.lastSchedule, formatCreated(resource.status?.lastScheduleTime)],
+      [uiText.resourceDetail.timeZone, resource.spec?.timeZone ?? uiText.resourceDetail.dash],
     ],
   };
 
   const properties = propsByType[plural] ?? [
-    ['Created', formatCreated(resource.metadata?.creationTimestamp)],
-    ['Name', resource.metadata?.name ?? '-'],
-    ['Namespace', resource.metadata?.namespace ?? '-'],
+    [uiText.resourceDetail.created, formatCreated(resource.metadata?.creationTimestamp)],
+    [uiText.resourceDetail.name, resource.metadata?.name ?? uiText.resourceDetail.dash],
+    [uiText.applications.namespace, resource.metadata?.namespace ?? uiText.resourceDetail.dash],
   ];
 
   return (
     <div className="drawer-body pod-overview">
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Properties</h4>
+          <h4>{uiText.resourceDetail.properties}</h4>
         </div>
         <div className="pod-properties-table">
           {properties.map(([label, value]) => (
@@ -635,8 +678,8 @@ function WorkloadOverviewTab({ resource, plural }: { resource: K8sObject; plural
             </div>
           ))}
           <div className="pod-property-row">
-            <div className="pod-property-label">Labels</div>
-            <div className="pod-property-value">{Object.keys(labels).length} Labels</div>
+            <div className="pod-property-label">{uiText.resourceDetail.labels}</div>
+            <div className="pod-property-value">{uiText.resourceDetail.labelsCount(Object.keys(labels).length)}</div>
           </div>
         </div>
       </div>
@@ -644,17 +687,17 @@ function WorkloadOverviewTab({ resource, plural }: { resource: K8sObject; plural
       {containers.length > 0 && (
         <div className="pod-section">
           <div className="pod-section-header">
-            <h4>Containers</h4>
+            <h4>{uiText.resourceDetail.containers}</h4>
           </div>
           <div className="container-overview-list">
             {containers.map((container: any) => (
               <div key={container.name} className="container-card">
                 <div className="container-card-title"><span className="container-dot ok" />{container.name}</div>
                 <div className="pod-properties-table">
-                  <div className="pod-property-row"><div className="pod-property-label">Image</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? '-'}</span></div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Ports</div><div className="pod-property-value">{Array.isArray(container.ports) && container.ports.length ? container.ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? 'TCP'}`).join(', ') : '-'}</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Requests</div><div className="pod-property-value">{formatResourceBlock(container.resources?.requests)}</div></div>
-                  <div className="pod-property-row"><div className="pod-property-label">Limits</div><div className="pod-property-value">{formatResourceBlock(container.resources?.limits)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.image}</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? uiText.resourceDetail.dash}</span></div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.ports}</div><div className="pod-property-value">{Array.isArray(container.ports) && container.ports.length ? container.ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? uiText.resourceDetail.tcp}`).join(', ') : uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.requests}</div><div className="pod-property-value">{formatResourceBlock(container.resources?.requests)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.limits}</div><div className="pod-property-value">{formatResourceBlock(container.resources?.limits)}</div></div>
                 </div>
               </div>
             ))}
@@ -665,19 +708,614 @@ function WorkloadOverviewTab({ resource, plural }: { resource: K8sObject; plural
   );
 }
 
+type PropRow = [string, ReactNode];
+type CardItem = { key: string; heading?: string; rows: PropRow[] };
+type CardSection = { title: string; empty: string; items: CardItem[] };
+type TableRow = { key: string; cells: ReactNode[] };
+type TableSection = { title: string; empty: string; columns: string[]; rows: TableRow[] };
+type Section = CardSection | TableSection;
+
+function isTableSection(section: Section): section is TableSection {
+  return 'columns' in section;
+}
+
+function joinKV(obj?: Record<string, unknown> | null): string {
+  const entries = Object.entries(obj ?? {});
+  return entries.length ? entries.map(([k, v]) => `${k}=${String(v)}`).join(', ') : uiText.resourceDetail.dash;
+}
+
+function joinList(list?: unknown[] | null): string {
+  return Array.isArray(list) && list.length ? list.map((v) => String(v)).join(', ') : uiText.resourceDetail.dash;
+}
+
+// Visual-only hyperlink styling for cross-resource references (namespace, target
+// pod, etc). Not yet wired to real navigation.
+function LinkText({ children }: { children: ReactNode }) {
+  return <span className="linkish">{children}</span>;
+}
+
+function refLabel(ref?: { kind?: string; name?: string } | null): ReactNode {
+  if (!ref?.kind || !ref?.name) return uiText.resourceDetail.dash;
+  return <LinkText>{`${ref.kind}/${ref.name}`}</LinkText>;
+}
+
+function OverviewCards({ title, empty, items }: { title: string; empty: string; items: CardItem[] }) {
+  return (
+    <div className="pod-section">
+      <div className="pod-section-header">
+        <h4>{title}</h4>
+      </div>
+      {items.length === 0 ? (
+        <div className="dim">{empty}</div>
+      ) : (
+        <div className="container-overview-list">
+          {items.map((item) => (
+            <div key={item.key} className="container-card">
+              {item.heading && <div className="container-card-title">{item.heading}</div>}
+              <div className="pod-properties-table">
+                {item.rows.map(([label, value]) => (
+                  <div key={label} className="pod-property-row">
+                    <div className="pod-property-label">{label}</div>
+                    <div className="pod-property-value">{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OverviewTable({ title, empty, columns, rows }: TableSection) {
+  return (
+    <div className="pod-section">
+      <div className="pod-section-header">
+        <h4>{title}</h4>
+      </div>
+      {rows.length === 0 ? (
+        <div className="dim">{empty}</div>
+      ) : (
+        <div className="overview-table-wrapper">
+          <table className="overview-table">
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th key={c}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key}>
+                  {row.cells.map((cell, i) => (
+                    <td key={i}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Builds the Properties table plus, for kinds whose spec is fundamentally a list
+// (ports, rules, subjects, versions, conditions...), one card-list section per list.
+function buildGenericOverview(plural: string, r: any): { properties: PropRow[]; cardSections: Section[] } {
+  const labels = r.metadata?.labels ?? {};
+  const annotations = r.metadata?.annotations ?? {};
+  const base: PropRow[] = [[uiText.resourceDetail.created, formatCreated(r.metadata?.creationTimestamp)], [uiText.resourceDetail.name, r.metadata?.name ?? uiText.resourceDetail.dash]];
+  if (r.metadata?.namespace) base.push([uiText.applications.namespace, <LinkText>{r.metadata.namespace}</LinkText>]);
+  base.push([uiText.resourceDetail.labels, joinKV(labels)], [uiText.resourceDetail.annotations, joinKV(annotations)]);
+
+  const cardSections: Section[] = [];
+
+  switch (plural) {
+    case 'services': {
+      const ports = Array.isArray(r.spec?.ports) ? r.spec.ports : [];
+      const lbIngress = Array.isArray(r.status?.loadBalancer?.ingress) ? r.status.loadBalancer.ingress : [];
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.type, r.spec?.type ?? uiText.resourceDetail.clusterIP],
+        [uiText.resourceDetail.clusterIpLabel, r.spec?.clusterIP ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.clusterIpsLabel, joinList(r.spec?.clusterIPs)],
+        [uiText.resourceDetail.externalIPs, joinList(r.spec?.externalIPs)],
+        [uiText.resourceDetail.loadBalancerIngress, lbIngress.length ? lbIngress.map((i: any) => i.ip ?? i.hostname).join(', ') : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.sessionAffinity, r.spec?.sessionAffinity ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.externalTrafficPolicy, r.spec?.externalTrafficPolicy ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.selector, joinKV(r.spec?.selector)],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.ports,
+        empty: uiText.resourceDetail.noPortsDefined,
+        columns: [uiText.resourceDetail.name, uiText.resourceDetail.colPort, uiText.resourceDetail.colTargetPort, uiText.resourceDetail.colProtocol, uiText.resourceDetail.colNodePort],
+        rows: ports.map((p: any, i: number) => ({
+          key: `${p.name ?? p.port ?? i}`,
+          cells: [p.name ?? uiText.resourceDetail.dash, String(p.port ?? uiText.resourceDetail.dash), String(p.targetPort ?? uiText.resourceDetail.dash), p.protocol ?? uiText.resourceDetail.tcp, p.nodePort ? String(p.nodePort) : uiText.resourceDetail.dash],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'endpointslices': {
+      const ports = Array.isArray(r.ports) ? r.ports : [];
+      const endpoints = Array.isArray(r.endpoints) ? r.endpoints : [];
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.addressType, r.addressType ?? uiText.resourceDetail.dash],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.ports,
+        empty: uiText.resourceDetail.noPortsDefined,
+        columns: [uiText.resourceDetail.name, uiText.resourceDetail.colPort, uiText.resourceDetail.colProtocol],
+        rows: ports.map((p: any, i: number) => ({
+          key: `${p.name ?? p.port ?? i}`,
+          cells: [p.name ?? uiText.resourceDetail.dash, String(p.port ?? uiText.resourceDetail.dash), p.protocol ?? uiText.resourceDetail.tcp],
+        })),
+      });
+      cardSections.push({
+        title: uiText.resourceDetail.endpointsTitle,
+        empty: uiText.resourceDetail.noEndpoints,
+        columns: [uiText.resourceDetail.addresses, uiText.resourceDetail.ready, uiText.resourceDetail.hostname, uiText.resourceDetail.colNodeName, uiText.portForwarding.target],
+        rows: endpoints.map((e: any, i: number) => ({
+          key: String(i),
+          cells: [
+            joinList(e.addresses),
+            String(e.conditions?.ready ?? uiText.resourceDetail.dash),
+            e.hostname ?? uiText.resourceDetail.dash,
+            e.nodeName ?? uiText.resourceDetail.dash,
+            refLabel(e.targetRef),
+          ],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'endpoints': {
+      const subsets = Array.isArray(r.subsets) ? r.subsets : [];
+      const addressRows: TableRow[] = [];
+      const notReadyRows: TableRow[] = [];
+      const portRows: TableRow[] = [];
+      subsets.forEach((s: any, si: number) => {
+        (s.addresses ?? []).forEach((a: any, ai: number) => {
+          addressRows.push({ key: `${si}-${ai}`, cells: [a.ip ?? uiText.resourceDetail.dash, a.hostname ?? uiText.resourceDetail.dash, refLabel(a.targetRef)] });
+        });
+        (s.notReadyAddresses ?? []).forEach((a: any, ai: number) => {
+          notReadyRows.push({ key: `${si}-${ai}`, cells: [a.ip ?? uiText.resourceDetail.dash, a.hostname ?? uiText.resourceDetail.dash, refLabel(a.targetRef)] });
+        });
+        (s.ports ?? []).forEach((p: any, pi: number) => {
+          portRows.push({ key: `${si}-${pi}`, cells: [String(p.port ?? uiText.resourceDetail.dash), p.name ?? uiText.resourceDetail.dash, p.protocol ?? uiText.resourceDetail.tcp] });
+        });
+      });
+      cardSections.push({
+        title: uiText.resourceDetail.addresses,
+        empty: uiText.resourceDetail.noAddresses,
+        columns: [uiText.resourceDetail.colIP, uiText.resourceDetail.hostname, uiText.portForwarding.target],
+        rows: addressRows,
+      });
+      if (notReadyRows.length) {
+        cardSections.push({
+          title: uiText.resourceDetail.notReadyAddressesTitle,
+          empty: uiText.resourceDetail.noNotReadyAddresses,
+          columns: [uiText.resourceDetail.colIP, uiText.resourceDetail.hostname, uiText.portForwarding.target],
+          rows: notReadyRows,
+        });
+      }
+      cardSections.push({
+        title: uiText.resourceDetail.ports,
+        empty: uiText.resourceDetail.noPortsDefined,
+        columns: [uiText.resourceDetail.colPort, uiText.resourceDetail.name, uiText.resourceDetail.colProtocol],
+        rows: portRows,
+      });
+      return { properties: base, cardSections };
+    }
+
+    case 'ingresses': {
+      const rules = Array.isArray(r.spec?.rules) ? r.spec.rules : [];
+      const tls = Array.isArray(r.spec?.tls) ? r.spec.tls : [];
+      const lbIngress = Array.isArray(r.status?.loadBalancer?.ingress) ? r.status.loadBalancer.ingress : [];
+      const defaultBackend = r.spec?.defaultBackend;
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.ingressClass, r.spec?.ingressClassName ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.defaultBackend, defaultBackend?.service ? `${defaultBackend.service.name}:${defaultBackend.service.port?.number ?? defaultBackend.service.port?.name ?? uiText.resourceDetail.dash}` : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.tlsHosts, joinList(tls.flatMap((t: any) => t.hosts ?? []))],
+        [uiText.resourceDetail.loadBalancerIngress, lbIngress.length ? lbIngress.map((i: any) => i.ip ?? i.hostname).join(', ') : uiText.resourceDetail.dash],
+      ];
+      const rows: TableRow[] = [];
+      rules.forEach((rule: any, ri: number) => {
+        const paths = Array.isArray(rule.http?.paths) ? rule.http.paths : [];
+        paths.forEach((p: any, pi: number) => {
+          rows.push({
+            key: `${ri}-${pi}`,
+            cells: [
+              rule.host ?? uiText.resourceDetail.wildcard,
+              p.path ?? '/',
+              p.pathType ?? uiText.resourceDetail.dash,
+              p.backend?.service?.name ?? uiText.resourceDetail.dash,
+              String(p.backend?.service?.port?.number ?? p.backend?.service?.port?.name ?? uiText.resourceDetail.dash),
+            ],
+          });
+        });
+      });
+      cardSections.push({
+        title: uiText.resourceDetail.rulesTitle,
+        empty: uiText.resourceDetail.noRulesDefined,
+        columns: [uiText.resourceDetail.colHost, uiText.resourceDetail.colPath, uiText.resourceDetail.colPathType, uiText.resourceDetail.colBackendService, uiText.resourceDetail.colBackendPort],
+        rows,
+      });
+      return { properties, cardSections };
+    }
+
+    case 'ingressclasses': {
+      const params = r.spec?.parameters;
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.controller, r.spec?.controller ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.isDefaultClass, annotations['ingressclass.kubernetes.io/is-default-class'] ?? uiText.resourceDetail.falseLower],
+        [uiText.resourceDetail.parameters, params ? `${params.kind ?? ''} ${params.name ?? ''}${params.apiGroup ? ` (${params.apiGroup})` : ''}`.trim() : uiText.resourceDetail.dash],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'networkpolicies': {
+      const ingress = Array.isArray(r.spec?.ingress) ? r.spec.ingress : [];
+      const egress = Array.isArray(r.spec?.egress) ? r.spec.egress : [];
+      const peerSummary = (peers: any[]) =>
+        !peers?.length
+          ? uiText.resourceDetail.allCap
+          : peers
+              .map((p) => (p.podSelector ? uiText.resourceDetail.podsPeerSummary(joinKV(p.podSelector.matchLabels)) : p.namespaceSelector ? uiText.resourceDetail.namespacePeerSummary(joinKV(p.namespaceSelector.matchLabels)) : p.ipBlock ? uiText.resourceDetail.ipPeerSummary(p.ipBlock.cidr) : uiText.resourceDetail.dash))
+              .join('; ');
+      const portSummary = (ports: any[]) => (ports?.length ? ports.map((p: any) => `${p.protocol ?? uiText.resourceDetail.tcp}/${p.port ?? uiText.resourceDetail.allLower}`).join(', ') : uiText.resourceDetail.allCap);
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.podSelector, joinKV(r.spec?.podSelector?.matchLabels)],
+        [uiText.resourceDetail.policyTypes, joinList(r.spec?.policyTypes)],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.ingressRulesTitle,
+        empty: uiText.resourceDetail.noIngressRules,
+        columns: [uiText.resourceDetail.colRule, uiText.resourceDetail.colFrom, uiText.resourceDetail.ports],
+        rows: ingress.map((rule: any, i: number) => ({
+          key: String(i),
+          cells: [uiText.resourceDetail.ruleLabel(i + 1), peerSummary(rule.from), portSummary(rule.ports)],
+        })),
+      });
+      cardSections.push({
+        title: uiText.resourceDetail.egressRulesTitle,
+        empty: uiText.resourceDetail.noEgressRules,
+        columns: [uiText.resourceDetail.colRule, uiText.resourceDetail.colTo, uiText.resourceDetail.ports],
+        rows: egress.map((rule: any, i: number) => ({
+          key: String(i),
+          cells: [uiText.resourceDetail.ruleLabel(i + 1), peerSummary(rule.to), portSummary(rule.ports)],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'resourcequotas': {
+      const hard = r.status?.hard ?? r.spec?.hard ?? {};
+      const used = r.status?.used ?? {};
+      cardSections.push({
+        title: uiText.resourceDetail.hardLimitsUsedTitle,
+        empty: uiText.resourceDetail.noQuotaEntries,
+        items: Object.keys(hard).map((key) => ({
+          key,
+          heading: key,
+          rows: [
+            [uiText.resourceDetail.hard, String(hard[key])],
+            [uiText.resourceDetail.used, String(used[key] ?? uiText.resourceDetail.dash)],
+          ],
+        })),
+      });
+      return { properties: base, cardSections };
+    }
+
+    case 'limitranges': {
+      const limits = Array.isArray(r.spec?.limits) ? r.spec.limits : [];
+      cardSections.push({
+        title: uiText.resourceDetail.limits,
+        empty: uiText.resourceDetail.noLimitsDefined,
+        items: limits.map((l: any, i: number) => ({
+          key: String(i),
+          heading: l.type ?? uiText.resourceDetail.limitHeading(i + 1),
+          rows: [
+            [uiText.resourceDetail.default, formatResourceBlock(l.default)],
+            [uiText.resourceDetail.defaultRequest, formatResourceBlock(l.defaultRequest)],
+            [uiText.resourceDetail.max, formatResourceBlock(l.max)],
+            [uiText.resourceDetail.min, formatResourceBlock(l.min)],
+          ],
+        })),
+      });
+      return { properties: base, cardSections };
+    }
+
+    case 'horizontalpodautoscalers': {
+      const metrics = Array.isArray(r.spec?.metrics) ? r.spec.metrics : [];
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.scaleTarget, r.spec?.scaleTargetRef ? `${r.spec.scaleTargetRef.kind}/${r.spec.scaleTargetRef.name}` : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.minReplicas, String(r.spec?.minReplicas ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.maxReplicas, String(r.spec?.maxReplicas ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.currentReplicas, String(r.status?.currentReplicas ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.desiredReplicas, String(r.status?.desiredReplicas ?? uiText.resourceDetail.dash)],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.metrics,
+        empty: uiText.resourceDetail.noMetricsConfigured,
+        items: metrics.map((m: any, i: number) => ({
+          key: String(i),
+          heading: m.type ?? uiText.resourceDetail.metricHeading(i + 1),
+          rows: [
+            [uiText.portForwarding.resource, m.resource?.name ?? m.pods?.metric?.name ?? m.object?.metric?.name ?? uiText.resourceDetail.dash],
+            [uiText.portForwarding.target, m.resource?.target?.averageUtilization ? `${m.resource.target.averageUtilization}%` : m.resource?.target?.averageValue ?? uiText.resourceDetail.dash],
+          ],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'poddisruptionbudgets': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.minAvailable, r.spec?.minAvailable !== undefined ? String(r.spec.minAvailable) : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.maxUnavailable, r.spec?.maxUnavailable !== undefined ? String(r.spec.maxUnavailable) : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.selector, joinKV(r.spec?.selector?.matchLabels)],
+        [uiText.resourceDetail.currentHealthy, String(r.status?.currentHealthy ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.desiredHealthy, String(r.status?.desiredHealthy ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.disruptionsAllowed, String(r.status?.disruptionsAllowed ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.expectedPods, String(r.status?.expectedPods ?? uiText.resourceDetail.dash)],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'leases': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.holderIdentity, r.spec?.holderIdentity ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.leaseDurationSeconds, String(r.spec?.leaseDurationSeconds ?? uiText.resourceDetail.dash)],
+        [uiText.resourceDetail.acquireTime, r.spec?.acquireTime ? formatCreated(r.spec.acquireTime) : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.renewTime, r.spec?.renewTime ? formatCreated(r.spec.renewTime) : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.leaseTransitions, String(r.spec?.leaseTransitions ?? uiText.resourceDetail.dash)],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'serviceaccounts': {
+      const secrets = Array.isArray(r.secrets) ? r.secrets : [];
+      const imagePullSecrets = Array.isArray(r.imagePullSecrets) ? r.imagePullSecrets : [];
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.automountToken, String(r.automountServiceAccountToken ?? true)],
+        [uiText.resourceDetail.secretsLabel, joinList(secrets.map((s: any) => s.name))],
+        [uiText.resourceDetail.imagePullSecrets, joinList(imagePullSecrets.map((s: any) => s.name))],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'roles': {
+      const rules = Array.isArray(r.rules) ? r.rules : [];
+      cardSections.push({
+        title: uiText.resourceDetail.rulesTitle,
+        empty: uiText.resourceDetail.noRulesDefined,
+        items: rules.map((rule: any, i: number) => ({
+          key: String(i),
+          heading: uiText.resourceDetail.ruleLabel(i + 1),
+          rows: [
+            [uiText.resourceDetail.apiGroups, joinList(rule.apiGroups)],
+            [uiText.resourceDetail.resourcesLabel, joinList(rule.resources)],
+            [uiText.resourceDetail.resourceNames, joinList(rule.resourceNames)],
+            [uiText.resourceDetail.verbs, joinList(rule.verbs)],
+          ],
+        })),
+      });
+      return { properties: base, cardSections };
+    }
+
+    case 'rolebindings': {
+      const subjects = Array.isArray(r.subjects) ? r.subjects : [];
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.roleRef, r.roleRef ? `${r.roleRef.kind}/${r.roleRef.name}` : uiText.resourceDetail.dash],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.subjectsTitle,
+        empty: uiText.resourceDetail.noSubjects,
+        items: subjects.map((s: any, i: number) => ({
+          key: String(i),
+          heading: s.name ?? uiText.resourceDetail.subjectHeading(i + 1),
+          rows: [
+            [uiText.resourceDetail.kind, s.kind ?? uiText.resourceDetail.dash],
+            [uiText.applications.namespace, s.namespace ?? uiText.resourceDetail.dash],
+            [uiText.resourceDetail.apiGroup, s.apiGroup ?? uiText.resourceDetail.dash],
+          ],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'customresourcedefinitions': {
+      const versions = Array.isArray(r.spec?.versions) ? r.spec.versions : [];
+      const names = r.spec?.names ?? {};
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.group, r.spec?.group ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.scope, r.spec?.scope ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.kind, names.kind ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.pluralLabel, names.plural ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.singular, names.singular ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.shortNames, joinList(names.shortNames)],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.versionsTitle,
+        empty: uiText.resourceDetail.noVersions,
+        items: versions.map((v: any) => ({
+          key: v.name,
+          heading: v.name,
+          rows: [
+            [uiText.resourceDetail.served, String(v.served ?? false)],
+            [uiText.resourceDetail.storage, String(v.storage ?? false)],
+            [uiText.resourceDetail.deprecated, String(v.deprecated ?? false)],
+          ],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    case 'persistentvolumeclaims': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.status, r.status?.phase ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.accessModes, joinList(r.spec?.accessModes)],
+        [uiText.resourceDetail.storageClass, r.spec?.storageClassName ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.volumeName, r.spec?.volumeName ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.volumeMode, r.spec?.volumeMode ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.requestedStorage, r.spec?.resources?.requests?.storage ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.capacity, r.status?.capacity?.storage ?? uiText.resourceDetail.dash],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'storageclasses': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.provisioner, r.provisioner ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.reclaimPolicy, r.reclaimPolicy ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.volumeBindingMode, r.volumeBindingMode ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.allowVolumeExpansion, String(r.allowVolumeExpansion ?? false)],
+        [uiText.resourceDetail.mountOptions, joinList(r.mountOptions)],
+        [uiText.resourceDetail.isDefaultClass, annotations['storageclass.kubernetes.io/is-default-class'] ?? uiText.resourceDetail.falseLower],
+        [uiText.resourceDetail.parameters, joinKV(r.parameters)],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'namespaces': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.status, r.status?.phase ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.finalizers, joinList(r.spec?.finalizers)],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'events': {
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.type, r.type ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.reason, r.reason ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.message, r.message ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.count, String(r.count ?? 1)],
+        [uiText.resourceDetail.firstSeen, formatCreated(r.firstTimestamp ?? r.eventTime)],
+        [uiText.resourceDetail.lastSeen, formatCreated(r.lastTimestamp ?? r.eventTime)],
+        [uiText.resourceDetail.involvedObjectLabel, r.involvedObject ? `${r.involvedObject.kind}/${r.involvedObject.name}` : uiText.resourceDetail.dash],
+        [uiText.resourceDetail.source, r.source?.component ?? r.reportingComponent ?? uiText.resourceDetail.dash],
+      ];
+      return { properties, cardSections };
+    }
+
+    case 'nodes': {
+      const conditions = Array.isArray(r.status?.conditions) ? r.status.conditions : [];
+      const taints = Array.isArray(r.spec?.taints) ? r.spec.taints : [];
+      const addresses = Array.isArray(r.status?.addresses) ? r.status.addresses : [];
+      const info = r.status?.nodeInfo ?? {};
+      const readyCondition = conditions.find((c: any) => c.type === 'Ready');
+      const properties: PropRow[] = [
+        ...base,
+        [uiText.resourceDetail.ready, readyCondition?.status === 'True' ? uiText.resourceDetail.trueLabel : uiText.resourceDetail.falseLabel],
+        [uiText.resourceDetail.unschedulable, String(r.spec?.unschedulable ?? false)],
+        [uiText.resourceDetail.internalIP, addresses.find((a: any) => a.type === 'InternalIP')?.address ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.externalIP, addresses.find((a: any) => a.type === 'ExternalIP')?.address ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.hostname, addresses.find((a: any) => a.type === 'Hostname')?.address ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.podCIDR, r.spec?.podCIDR ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.kubeletVersion, info.kubeletVersion ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.osImage, info.osImage ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.containerRuntime, info.containerRuntimeVersion ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.kernelVersion, info.kernelVersion ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.architecture, info.architecture ?? uiText.resourceDetail.dash],
+        [uiText.resourceDetail.capacity, formatResourceBlock(r.status?.capacity)],
+        [uiText.resourceDetail.allocatable, formatResourceBlock(r.status?.allocatable)],
+      ];
+      cardSections.push({
+        title: uiText.resourceDetail.conditions,
+        empty: uiText.resourceDetail.noConditionsReported,
+        items: conditions.map((c: any) => ({
+          key: c.type,
+          heading: c.type,
+          rows: [
+            [uiText.resourceDetail.status, c.status ?? uiText.resourceDetail.dash],
+            [uiText.resourceDetail.reason, c.reason ?? uiText.resourceDetail.dash],
+            [uiText.resourceDetail.message, c.message ?? uiText.resourceDetail.dash],
+          ],
+        })),
+      });
+      cardSections.push({
+        title: uiText.resourceDetail.taintsTitle,
+        empty: uiText.resourceDetail.noTaints,
+        items: taints.map((t: any, i: number) => ({
+          key: String(i),
+          heading: t.key,
+          rows: [
+            [uiText.resourceDetail.value, t.value ?? uiText.resourceDetail.dash],
+            [uiText.resourceDetail.effect, t.effect ?? uiText.resourceDetail.dash],
+          ],
+        })),
+      });
+      return { properties, cardSections };
+    }
+
+    default:
+      return { properties: base, cardSections };
+  }
+}
+
+function GenericOverviewTab({ resource, plural }: { resource: K8sObject; plural: string }) {
+  const { properties, cardSections } = useMemo(() => buildGenericOverview(plural, resource as any), [plural, resource]);
+  return (
+    <div className="drawer-body pod-overview">
+      <div className="pod-section">
+        <div className="pod-section-header">
+          <h4>{uiText.resourceDetail.properties}</h4>
+        </div>
+        <div className="pod-properties-table">
+          {properties.map(([label, value]) => (
+            <div key={label} className="pod-property-row">
+              <div className="pod-property-label">{label}</div>
+              <div className="pod-property-value">{value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {cardSections.map((section) =>
+        isTableSection(section) ? (
+          <OverviewTable key={section.title} title={section.title} empty={section.empty} columns={section.columns} rows={section.rows} />
+        ) : (
+          <OverviewCards key={section.title} title={section.title} empty={section.empty} items={section.items} />
+        ),
+      )}
+    </div>
+  );
+}
+
 function formatCreated(createdAt?: string): string {
-  if (!createdAt) return '-';
+  if (!createdAt) return uiText.resourceDetail.dash;
   const created = new Date(createdAt);
   const diffMs = Date.now() - created.getTime();
   const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
   const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
-  const ago = days > 0 ? `${days}d ${hours}h ${minutes}m ago` : `${hours}h ${minutes}m ago`;
+  const ago = days > 0
+    ? `${days}d ${hours}h ${minutes}m ${uiText.resourceDetail.agoSuffix}`
+    : `${hours}h ${minutes}m ${uiText.resourceDetail.agoSuffix}`;
   return `${ago} (${created.toLocaleString()})`;
 }
 
 function formatResourceBlock(resources?: Record<string, string>): string {
-  if (!resources || Object.keys(resources).length === 0) return '-';
+  if (!resources || Object.keys(resources).length === 0) return uiText.resourceDetail.dash;
   return Object.entries(resources)
     .map(([key, value]) => `${key.toUpperCase()}: ${value}`)
     .join(', ');
@@ -739,7 +1377,7 @@ function sumContainerResources(containers: any[], key: 'requests' | 'limits') {
 }
 
 function formatEventTime(value?: string): string {
-  if (!value) return '-';
+  if (!value) return uiText.resourceDetail.dash;
   const date = new Date(value);
   return `${date.toLocaleString()}`;
 }
@@ -769,7 +1407,7 @@ function YamlTab({
   const save = useMutation({
     mutationFn: () => api.putResourceYaml(plural, name, value, scope),
     onSuccess: () => {
-      setMessage('Saved successfully.');
+      setMessage(uiText.resourceDetail.savedSuccessfully);
       onSaved();
     },
     onError: (e) => setMessage((e as Error).message),
@@ -781,12 +1419,12 @@ function YamlTab({
         {canWrite ? (
           <>
             <button className="primary" onClick={() => save.mutate()} disabled={save.isPending || yamlQuery.isLoading}>
-              💾 Save
+              {`💾 ${uiText.common.save}`}
             </button>
-            <button onClick={() => { setDraft(''); yamlQuery.refetch(); setMessage(''); }}>Revert</button>
+            <button onClick={() => { setDraft(''); yamlQuery.refetch(); setMessage(''); }}>{uiText.resourceDetail.revert}</button>
           </>
         ) : (
-          <span className="dim">Read-only — your role cannot edit this resource.</span>
+          <span className="dim">{uiText.resourceDetail.readOnlyNotice}</span>
         )}
         {message && <span className={save.isError ? 'badge danger' : 'badge ok'}>{message}</span>}
       </div>
@@ -810,17 +1448,17 @@ function SecretTab({ name, scope }: { name: string; scope: Scope }) {
     queryFn: () => api.revealSecret(name, scope),
   });
 
-  if (reveal.isLoading) return <div className="empty">Decoding…</div>;
+  if (reveal.isLoading) return <div className="empty">{uiText.resourceDetail.decoding}</div>;
   if (reveal.isError) return <div className="notice error">{(reveal.error as Error).message}</div>;
 
   return (
     <div style={{ padding: 14, overflow: 'auto' }}>
-      <p className="dim">Decoded values (server-side, requires ALLOW_SECRET_REVEAL=true)</p>
+      <p className="dim">{uiText.resourceDetail.decodedValues}</p>
       <table>
         <thead>
           <tr>
-            <th>Key</th>
-            <th>Value</th>
+            <th>{uiText.resourceDetail.keyColumn}</th>
+            <th>{uiText.resourceDetail.value}</th>
           </tr>
         </thead>
         <tbody>
@@ -888,7 +1526,7 @@ function ConfigLikeDetailsTab({
         ? api.putSecretData(name, draft, scope)
         : api.putConfigMapData(name, draft, scope),
     onSuccess: () => {
-      setMessage('Saved successfully.');
+      setMessage(uiText.resourceDetail.savedSuccessfully);
       onChanged();
     },
     onError: (error) => setMessage((error as Error).message),
@@ -925,9 +1563,9 @@ function ConfigLikeDetailsTab({
 
   const removeKey = (key: string) => {
     const warning = [
-      `Delete key "${key}" from this ${kind === 'secrets' ? 'secret' : 'config map'}?`,
+      uiText.resourceDetail.deleteKeyConfirm(key, kind === 'secrets' ? uiText.resourceDetail.secretKindLabel : uiText.resourceDetail.configMapKindLabel),
       '',
-      'This change is local until you click Save.',
+      uiText.resourceDetail.localChangeUntilSave,
     ].join('\n');
     if (!confirm(warning)) return;
 
@@ -972,12 +1610,12 @@ function ConfigLikeDetailsTab({
     const removedKeys = originalKeys.filter((key) => !Object.prototype.hasOwnProperty.call(draft, key));
     if (removedKeys.length > 0) {
       const preview = removedKeys.slice(0, 5).join(', ');
-      const more = removedKeys.length > 5 ? ` and ${removedKeys.length - 5} more` : '';
+      const more = removedKeys.length > 5 ? uiText.resourceDetail.andMoreSuffix(removedKeys.length - 5) : '';
       const warning = [
-        `You removed ${removedKeys.length} key(s): ${preview}${more}.`,
+        uiText.resourceDetail.removedKeysWarning(removedKeys.length, preview, more),
         '',
-        'Saving will permanently remove them from Kubernetes.',
-        'Do you want to continue?',
+        uiText.resourceDetail.savingWillRemove,
+        uiText.resourceDetail.continuePrompt,
       ].join('\n');
       if (!confirm(warning)) return;
     }
@@ -988,30 +1626,30 @@ function ConfigLikeDetailsTab({
     <div className="drawer-body pod-overview">
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Properties</h4>
+          <h4>{uiText.resourceDetail.properties}</h4>
         </div>
         <div className="pod-properties-table">
-          <div className="pod-property-row"><div className="pod-property-label">Created</div><div className="pod-property-value">{formatCreated(object.metadata?.creationTimestamp)}</div></div>
-          <div className="pod-property-row"><div className="pod-property-label">Name</div><div className="pod-property-value">{name || '-'}</div></div>
-          <div className="pod-property-row"><div className="pod-property-label">Namespace</div><div className="pod-property-value">{object.metadata?.namespace ?? '-'}</div></div>
-          <div className="pod-property-row"><div className="pod-property-label">Labels</div><div className="pod-property-value">{Object.keys(labels).length} Labels</div></div>
-          <div className="pod-property-row"><div className="pod-property-label">Annotations</div><div className="pod-property-value">{Object.keys(annotations).length} Annotations</div></div>
-          {kind === 'secrets' && <div className="pod-property-row"><div className="pod-property-label">Type</div><div className="pod-property-value">{(object as any).type ?? '-'}</div></div>}
+          <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.created}</div><div className="pod-property-value">{formatCreated(object.metadata?.creationTimestamp)}</div></div>
+          <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.name}</div><div className="pod-property-value">{name || uiText.resourceDetail.dash}</div></div>
+          <div className="pod-property-row"><div className="pod-property-label">{uiText.applications.namespace}</div><div className="pod-property-value">{object.metadata?.namespace ?? uiText.resourceDetail.dash}</div></div>
+          <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.labels}</div><div className="pod-property-value">{uiText.resourceDetail.labelsCount(Object.keys(labels).length)}</div></div>
+          <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.annotations}</div><div className="pod-property-value">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)}</div></div>
+          {kind === 'secrets' && <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.type}</div><div className="pod-property-value">{(object as any).type ?? uiText.resourceDetail.dash}</div></div>}
         </div>
       </div>
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Events</h4>
+          <h4>{uiText.resourceDetail.events}</h4>
         </div>
-        {eventsQuery.isLoading && <div className="dim">Loading events…</div>}
-        {!eventsQuery.isLoading && relatedEvents.length === 0 && <div className="dim">No events found</div>}
+        {eventsQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
+        {!eventsQuery.isLoading && relatedEvents.length === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
         {relatedEvents.length > 0 && (
           <div className="pod-properties-table">
             {relatedEvents.slice(0, 10).map((event: any, index) => (
               <div key={`${event.metadata?.uid ?? index}`} className="pod-property-row">
-                <div className="pod-property-label">{event.reason ?? event.type ?? 'Event'}</div>
-                <div className="pod-property-value">{event.message ?? '-'}</div>
+                <div className="pod-property-label">{event.reason ?? event.type ?? uiText.resourceDetail.eventReasonFallback}</div>
+                <div className="pod-property-value">{event.message ?? uiText.resourceDetail.dash}</div>
               </div>
             ))}
           </div>
@@ -1020,17 +1658,17 @@ function ConfigLikeDetailsTab({
 
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>Data</h4>
+          <h4>{uiText.resourceDetail.data}</h4>
           {canWrite && (
             <div className="metrics-toolbar">
-              <button onClick={addRow}>+ Add</button>
-              <button className="primary" onClick={handleSave} disabled={save.isPending}>Save</button>
+              <button onClick={addRow}>{uiText.resourceDetail.addButton}</button>
+              <button className="primary" onClick={handleSave} disabled={save.isPending}>{uiText.common.save}</button>
             </div>
           )}
         </div>
         {message && <div className={`notice ${save.isError ? 'error' : ''}`}>{message}</div>}
         <div className="kv-editor">
-          {Object.keys(draft).length === 0 && <div className="dim">No data entries</div>}
+          {Object.keys(draft).length === 0 && <div className="dim">{uiText.resourceDetail.noDataEntries}</div>}
           {Object.entries(draft).map(([key, value]) => (
             <div key={key} className="kv-editor-row">
               <input
@@ -1049,8 +1687,8 @@ function ConfigLikeDetailsTab({
               {kind === 'secrets' && (
                 <button
                   className={`icon-action eye-toggle ${visibleSecrets[key] ? 'is-visible' : 'is-hidden'}`}
-                  title={visibleSecrets[key] ? 'Hide secret value' : 'Show secret value'}
-                  aria-label={visibleSecrets[key] ? 'Hide secret value' : 'Show secret value'}
+                  title={visibleSecrets[key] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
+                  aria-label={visibleSecrets[key] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
                   onClick={() => toggleSecretVisibility(key)}
                 >
                   👁
@@ -1059,8 +1697,8 @@ function ConfigLikeDetailsTab({
               {canWrite && (
                 <button
                   className={`icon-action ${kind === 'secrets' ? 'danger' : ''}`}
-                  title="Delete key"
-                  aria-label="Delete key"
+                  title={uiText.resourceDetail.deleteKey}
+                  aria-label={uiText.resourceDetail.deleteKey}
                   onClick={() => removeKey(key)}
                 >
                   🗑

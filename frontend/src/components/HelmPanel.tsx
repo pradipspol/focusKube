@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import type { HelmRelease } from '../api/types';
@@ -97,14 +97,18 @@ export function HelmPanel({
   const activeError = mode === 'charts' && showCatalog ? charts.error : releases.error;
   useAzureAuthRequiredEffect(activeError, onAzureAuthRequired);
 
+  const lastAuthRecoveryTokenRef = useRef<number>(0);
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;
+    if (lastAuthRecoveryTokenRef.current === authRecoveryRefreshToken) return;
+    lastAuthRecoveryTokenRef.current = authRecoveryRefreshToken;
+
     if (mode === 'charts' && showCatalog) {
       void charts.refetch();
       return;
     }
     void releases.refetch();
-  }, [authRecoveryRefreshToken, charts, mode, releases, scope.context, showCatalog]);
+  }, [authRecoveryRefreshToken, mode, scope.context, showCatalog, charts.refetch, releases.refetch]);
 
   const uninstall = useMutation({
     mutationFn: (r: HelmRelease) => api.helmUninstall(r.name, { ...scope, namespace: r.namespace }),

@@ -107,139 +107,139 @@ function allowedActionKeys(keys: string[], ctx: ActionContext): string[] {
 
 const POD_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 25, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 110 },
-  { key: 'cpu', label: 'CPU', width: 70 },
-  { key: 'memory', label: 'Memory', width: 85 },
-  { key: 'container', label: 'Containers', width: 100 },
-  { key: 'restarts', label: 'Restarts', width: 70 },
-  { key: 'controlledBy', label: 'Controlled', width: 130 },
-  { key: 'node', label: 'Node', width: 100 },
-  { key: 'qos', label: 'QoS', width: 80 },
-  { key: 'status', label: 'Status', width: 80 },
-  { key: 'age', label: 'Age', width: 70 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 110 },
+  { key: 'cpu', label: uiText.resource.colCpu, width: 70 },
+  { key: 'memory', label: uiText.resource.colMemory, width: 85 },
+  { key: 'container', label: uiText.resource.colContainers, width: 100 },
+  { key: 'restarts', label: uiText.resource.colRestarts, width: 70 },
+  { key: 'controlledBy', label: uiText.resource.colControlled, width: 130 },
+  { key: 'node', label: uiText.resource.colNode, width: 100 },
+  { key: 'qos', label: uiText.resource.colQos, width: 80 },
+  { key: 'status', label: uiText.resource.colStatus, width: 80 },
+  { key: 'age', label: uiText.resource.colAge, width: 70 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const DEPLOYMENT_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 110 },
-  { key: 'pods', label: 'Pods', width: 90 },
-  { key: 'replicas', label: 'Replicas', width: 100 },
-  { key: 'age', label: 'Age', width: 90 },
-  { key: 'status', label: 'Status', width: 120 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 110 },
+  { key: 'pods', label: uiText.resource.colPods, width: 90 },
+  { key: 'replicas', label: uiText.resource.colReplicas, width: 100 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
+  { key: 'status', label: uiText.resource.colStatus, width: 120 },
   { key: 'actions', label: '', width: 220, resizable: false },
 ];
 
 const DAEMONSET_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'desired', label: 'Desired', width: 100 },
-  { key: 'current', label: 'Current', width: 100 },
-  { key: 'ready', label: 'Ready', width: 100 },
-  { key: 'upToDate', label: 'Up-to-date', width: 120 },
-  { key: 'available', label: 'Available', width: 110 },
-  { key: 'nodeSelector', label: 'Node Selector', width: 180 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'desired', label: uiText.resource.colDesired, width: 100 },
+  { key: 'current', label: uiText.resource.colCurrent, width: 100 },
+  { key: 'ready', label: uiText.resource.colReady, width: 100 },
+  { key: 'upToDate', label: uiText.resource.colUpToDate, width: 120 },
+  { key: 'available', label: uiText.resource.colAvailable, width: 110 },
+  { key: 'nodeSelector', label: uiText.resource.colNodeSelector, width: 180 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const STATEFULSET_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'desired', label: 'Desired', width: 100 },
-  { key: 'current', label: 'Current', width: 100 },
-  { key: 'ready', label: 'Ready', width: 100 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'desired', label: uiText.resource.colDesired, width: 100 },
+  { key: 'current', label: uiText.resource.colCurrent, width: 100 },
+  { key: 'ready', label: uiText.resource.colReady, width: 100 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const REPLICASET_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'pods', label: 'Pods', width: 90 },
-  { key: 'replicas', label: 'Replicas', width: 100 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'pods', label: uiText.resource.colPods, width: 90 },
+  { key: 'replicas', label: uiText.resource.colReplicas, width: 100 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const JOB_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'completions', label: 'Completions', width: 110 },
-  { key: 'age', label: 'Age', width: 90 },
-  { key: 'conditions', label: 'Conditions', width: 160 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'completions', label: uiText.resource.colCompletions, width: 110 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
+  { key: 'conditions', label: uiText.resource.colConditions, width: 160 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const CRONJOB_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 240 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'schedule', label: 'Schedule', width: 130 },
-  { key: 'suspend', label: 'Suspend', width: 100 },
-  { key: 'active', label: 'Active', width: 90 },
-  { key: 'lastSchedule', label: 'Last schedule', width: 130 },
-  { key: 'nextExecution', label: 'Next execution', width: 180 },
-  { key: 'timeZone', label: 'Time zone', width: 120 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 240 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'schedule', label: uiText.resource.colSchedule, width: 130 },
+  { key: 'suspend', label: uiText.resource.colSuspend, width: 100 },
+  { key: 'active', label: uiText.resource.colActive, width: 90 },
+  { key: 'lastSchedule', label: uiText.resource.colLastSchedule, width: 130 },
+  { key: 'nextExecution', label: uiText.resource.colNextExecution, width: 180 },
+  { key: 'timeZone', label: uiText.resource.colTimeZone, width: 120 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const CONFIGMAP_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'labels', label: 'Labels', width: 120 },
-  { key: 'keys', label: 'Keys', width: 100 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'labels', label: uiText.resource.colLabels, width: 120 },
+  { key: 'keys', label: uiText.resource.colKeys, width: 100 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const SECRET_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'labels', label: 'Labels', width: 120 },
-  { key: 'keys', label: 'Keys', width: 100 },
-  { key: 'type', label: 'Type', width: 210 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'labels', label: uiText.resource.colLabels, width: 120 },
+  { key: 'keys', label: uiText.resource.colKeys, width: 100 },
+  { key: 'type', label: uiText.resource.colType, width: 210 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 120, resizable: false },
 ];
 
 const NAMESPACE_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'labels', label: 'Labels', width: 320 },
-  { key: 'status', label: 'Status', width: 120 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'labels', label: uiText.resource.colLabels, width: 320 },
+  { key: 'status', label: uiText.resource.colStatus, width: 120 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 92, resizable: false },
 ];
 
 const EVENTS_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'type', label: 'Type', width: 90 },
-  { key: 'message', label: 'Message', width: 320 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'involvedObject', label: 'Involved Object', width: 200 },
-  { key: 'reason', label: 'Reason', width: 140 },
-  { key: 'source', label: 'Source', width: 140 },
-  { key: 'count', label: 'Count', width: 80 },
-  { key: 'age', label: 'Last Seen', width: 100 },
+  { key: 'type', label: uiText.resource.colType, width: 90 },
+  { key: 'message', label: uiText.resource.colMessage, width: 320 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'involvedObject', label: uiText.resource.colInvolvedObject, width: 200 },
+  { key: 'reason', label: uiText.resource.colReason, width: 140 },
+  { key: 'source', label: uiText.resource.colSource, width: 140 },
+  { key: 'count', label: uiText.resource.colCount, width: 80 },
+  { key: 'age', label: uiText.resource.colLastSeen, width: 100 },
   { key: 'actions', label: '', width: 92, resizable: false },
 ];
 
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { key: 'select', label: '', width: 36, resizable: false },
-  { key: 'name', label: 'Name', width: 260 },
-  { key: 'namespace', label: 'Namespace', width: 140 },
-  { key: 'status', label: 'Status', width: 120 },
-  { key: 'age', label: 'Age', width: 90 },
+  { key: 'name', label: uiText.resource.colName, width: 260 },
+  { key: 'namespace', label: uiText.resource.colNamespace, width: 140 },
+  { key: 'status', label: uiText.resource.colStatus, width: 120 },
+  { key: 'age', label: uiText.resource.colAge, width: 90 },
   { key: 'actions', label: '', width: 92, resizable: false },
 ];
 
@@ -311,51 +311,51 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
   const o = ctx.resource;
   switch (key) {
     case 'common.showDetails':
-      return { label: 'Show details', title: 'Open details', onClick: () => ctx.setSelected({ obj: o }) };
+      return { label: uiText.resource.showDetails, title: uiText.resource.openDetailsTitle, onClick: () => ctx.setSelected({ obj: o }) };
     case 'pods.logs':
-      return { label: 'View logs', title: 'Open pod logs', quickIcon: '≣', onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
+      return { label: uiText.resource.viewLogs, title: uiText.resource.openPodLogsTitle, quickIcon: '≣', onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
     case 'pods.shell':
-      return { label: 'Open shell', title: 'Open exec shell', quickIcon: '>_', onClick: () => ctx.setSelected({ obj: o, tab: 'exec' }) };
+      return { label: uiText.resource.openShell, title: uiText.resource.openExecShellTitle, quickIcon: '>_', onClick: () => ctx.setSelected({ obj: o, tab: 'exec' }) };
     case 'deploy.restart':
       return {
-        label: 'Restart deployment',
-        title: 'Trigger rollout restart',
+        label: uiText.resource.restartDeploymentAction,
+        title: uiText.resource.triggerRolloutRestart,
         quickIcon: '↻',
         onClick: () => ctx.restartDeployment.mutate(o),
         disabled: ctx.restartDeployment.isPending,
       };
     case 'deploy.overview':
-      return { label: 'Overview', title: 'Open deployment overview', quickIcon: '◫', onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }) };
+      return { label: uiText.resourceDetail.overview, title: uiText.resource.openDeploymentOverview, quickIcon: '◫', onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }) };
     case 'deploy.actions':
-      return { label: 'Actions', title: 'Open deployment actions', quickIcon: '⚙', onClick: () => ctx.setSelected({ obj: o, tab: 'actions' }) };
+      return { label: uiText.resourceDetail.actionsTab, title: uiText.resource.openDeploymentActions, quickIcon: '⚙', onClick: () => ctx.setSelected({ obj: o, tab: 'actions' }) };
     case 'workload.overview':
       return {
-        label: 'Overview',
-        title: `Open ${ctx.plural.slice(0, -1)} overview`,
+        label: uiText.resourceDetail.overview,
+        title: uiText.resource.openResourceKindOverview(ctx.plural.slice(0, -1)),
         onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }),
       };
     case 'common.editYaml':
-      return { label: 'Edit YAML', title: 'Edit resource YAML', quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
+      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
     case 'common.delete': {
       const name = o.metadata?.name;
       return {
-        label: `Delete ${ctx.plural.slice(0, -1) || ctx.plural}`,
-        title: `Delete ${name}`,
+        label: `${uiText.resourceDetail.deletePrefix} ${ctx.plural.slice(0, -1) || ctx.plural}`,
+        title: `${uiText.resourceDetail.deletePrefix} ${name}`,
         danger: true,
         onClick: () => {
           const podWarning = [
-            `WARNING: You are deleting pod "${name}".`,
-            'This is an immediate destructive action and may interrupt traffic.',
+            `${uiText.resourceDetail.warningPrefix} "${name}".`,
+            uiText.resourceDetail.destructiveActionNotice,
             '',
-            'Do you want to continue?',
+            uiText.resourceDetail.continuePrompt,
           ].join('\n');
-          const genericWarning = `Delete ${ctx.plural} "${name}"?`;
+          const genericWarning = `${uiText.resourceDetail.deletePrefix} ${ctx.plural} "${name}"?`;
           if (confirm(ctx.plural === 'pods' ? podWarning : genericWarning)) ctx.del.mutate(o);
         },
       };
     }
     default:
-      return { label: 'Edit YAML', title: 'Edit resource YAML', quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
+      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
   }
 }
 
@@ -389,7 +389,6 @@ type WatchState = 'connecting' | 'live' | 'disconnected';
 // giving up. The user can resume by clicking Refresh.
 const MAX_CONNECT_RETRIES = 10;
 const RETRY_INTERVAL_MS = 5000;
-const POLL_INTERVAL_MS = 1000;
 const WATCH_FALLBACK_POLL_MS = 1500;
 const WATCH_RESYNC_THROTTLE_MS = 5000;
 
@@ -518,18 +517,18 @@ export function ResourceTable({
     // Cluster-scoped resources (namespaces, nodes, storage classes, etc.) change
     // rarely and aren't worth polling — load once and let the user hit Refresh.
     refetchOnWindowFocus: !isClusterScoped,
+    // Kinds outside the live-watch allowlist (configmaps, secrets, endpoints, etc.)
+    // fetch once and rely on the user hitting Refresh, same as cluster-scoped kinds.
     refetchInterval:
       connectionState === 'stopped'
         ? false
         : connectionState === 'retrying'
           ? RETRY_INTERVAL_MS
-          : isClusterScoped
+          : isClusterScoped || !LIVE_WATCH_PLURALS.has(plural)
             ? false
-            : LIVE_WATCH_PLURALS.has(plural)
-              // For live-watch resources, poll only while websocket isn't live yet.
-              // Once watch is live, websocket events become the source of truth.
-              ? (watchState === 'live' || hasInitialSnapshot ? false : WATCH_FALLBACK_POLL_MS)
-              : POLL_INTERVAL_MS,
+            // For live-watch resources, poll only while websocket isn't live yet.
+            // Once watch is live, websocket events become the source of truth.
+            : (watchState === 'live' || hasInitialSnapshot ? false : WATCH_FALLBACK_POLL_MS),
   });
 
   useAzureAuthRequiredEffect(plainList.error, onAzureAuthRequired);
@@ -559,7 +558,7 @@ export function ResourceTable({
         namespace: o.metadata?.namespace,
       }),
     onSuccess: () => {
-      onToast('success', 'Resource deleted.');
+      onToast('success', uiText.resource.resourceDeleted);
       qc.invalidateQueries({ queryKey });
     },
     onError: (error) => onToast('error', (error as Error).message, 4200),
@@ -619,11 +618,11 @@ export function ResourceTable({
         namespace: o.metadata?.namespace,
       }),
     onMutate: (deployment) => {
-      onToast('info', `Restarting deployment ${deployment.metadata?.name}...`, 1800);
+      onToast('info', uiText.resource.restartingDeployment(deployment.metadata?.name ?? ''), 1800);
     },
     onSuccess: (deployment) => {
       setWatchedRollout(deployment.metadata?.name ?? null);
-      onToast('info', `Restart requested for ${deployment.metadata?.name}. Watching rollout...`, 2400);
+      onToast('info', uiText.resource.restartRequested(deployment.metadata?.name ?? ''), 2400);
       qc.invalidateQueries({ queryKey });
     },
     onError: (error) => onToast('error', (error as Error).message, 4200),
@@ -741,7 +740,7 @@ export function ResourceTable({
     /cluster scope|forbidden/i.test(errorMessage);
   const lastUpdatedLabel = lastUpdateAt
     ? new Date(lastUpdateAt).toLocaleTimeString()
-    : '-';
+    : uiText.resourceDetail.dash;
 
   useEffect(() => {
     // Keep relative age values (e.g. 8m -> 8m1s style progression) moving in real-time.
@@ -1004,13 +1003,13 @@ export function ResourceTable({
       : undefined;
 
     if (progressingCondition?.status === 'False') {
-      onToast('error', progressingCondition.message || `Deployment ${watchedRollout} rollout failed.`, 5200);
+      onToast('error', progressingCondition.message || uiText.resource.rolloutFailed(watchedRollout), 5200);
       setWatchedRollout(null);
       return;
     }
 
     if (desired > 0 && updated === desired && ready === desired && available === desired) {
-      onToast('success', `Deployment ${watchedRollout} rollout completed.`);
+      onToast('success', uiText.resource.rolloutCompleted(watchedRollout));
       setWatchedRollout(null);
     }
   }, [list.data, onToast, plural, watchedRollout]);
@@ -1086,7 +1085,7 @@ export function ResourceTable({
         return String(Number(o.status?.numberAvailable ?? o.status?.availableReplicas ?? 0));
       case 'nodeSelector': {
         const sel = o.spec?.template?.spec?.nodeSelector;
-        return sel ? Object.entries(sel).map(([k, v]) => `${k}=${String(v)}`).join(', ') : '-';
+        return sel ? Object.entries(sel).map(([k, v]) => `${k}=${String(v)}`).join(', ') : uiText.resourceDetail.dash;
       }
       case 'completions':
         return `${Number(o.status?.succeeded ?? 0)}/${Number(o.spec?.completions ?? 1)}`;
@@ -1096,9 +1095,9 @@ export function ResourceTable({
               .filter((c) => c.status === 'True')
               .map((c) => c.type)
               .join(', ')
-          : '-';
+          : uiText.resourceDetail.dash;
       case 'schedule':
-        return o.spec?.schedule ?? '-';
+        return o.spec?.schedule ?? uiText.resourceDetail.dash;
       case 'suspend':
         return String(Boolean(o.spec?.suspend));
       case 'active':
@@ -1106,16 +1105,16 @@ export function ResourceTable({
       case 'lastSchedule':
         return age(o.status?.lastScheduleTime);
       case 'nextExecution':
-        return '-';
+        return uiText.resourceDetail.dash;
       case 'timeZone':
-        return o.spec?.timeZone ?? '-';
+        return o.spec?.timeZone ?? uiText.resourceDetail.dash;
       case 'cpu':
         return formatPodCpuCell(podMetrics.data?.get(`${meta.namespace}/${meta.name}`)?.cpuMillicores, o).text;
       case 'memory':
         return formatPodMemoryCell(podMetrics.data?.get(`${meta.namespace}/${meta.name}`)?.memoryBytes, o).text;
       case 'container': {
         const statuses = (o.status?.containerStatuses ?? []) as Array<{ ready?: boolean }>;
-        return statuses.length > 0 ? `${statuses.filter((c) => c.ready).length}/${statuses.length}` : '-';
+        return statuses.length > 0 ? `${statuses.filter((c) => c.ready).length}/${statuses.length}` : uiText.resourceDetail.dash;
       }
       case 'restarts': {
         const statuses = (o.status?.containerStatuses ?? []) as Array<{ restartCount?: number }>;
@@ -1125,12 +1124,12 @@ export function ResourceTable({
         const owner = (Array.isArray((meta as any).ownerReferences)
           ? (meta as any).ownerReferences[0]
           : undefined) as { kind?: string; name?: string } | undefined;
-        return owner ? `${owner.kind ?? '-'}${owner.name ? `/${owner.name}` : ''}` : '-';
+        return owner ? `${owner.kind ?? uiText.resourceDetail.dash}${owner.name ? `/${owner.name}` : ''}` : uiText.resourceDetail.dash;
       }
       case 'node':
-        return o.spec?.nodeName ?? '-';
+        return o.spec?.nodeName ?? uiText.resourceDetail.dash;
       case 'qos':
-        return o.status?.qosClass ?? '-';
+        return o.status?.qosClass ?? uiText.resourceDetail.dash;
       case 'status':
         return statusOf(plural, o).text;
       case 'age':
@@ -1145,7 +1144,7 @@ export function ResourceTable({
   const handleExport = (format: ExportFormat) => {
     setExportOpen(false);
     if (sortedItems.length === 0) {
-      onToast('info', 'Nothing to export — the filtered list is empty.');
+      onToast('info', uiText.resource.nothingToExport);
       return;
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1161,7 +1160,7 @@ export function ResourceTable({
       else downloadFile(`${base}.txt`, toTxt(headers, rows), 'text/plain');
     }
 
-    onToast('success', `Exported ${sortedItems.length} ${plural} as ${format.toUpperCase()}`);
+    onToast('success', uiText.resource.exportedSummary(sortedItems.length, plural, format.toUpperCase()));
   };
 
   return (
@@ -1174,15 +1173,15 @@ export function ResourceTable({
           onChange={(e) => setFilter(e.target.value)}
         />
         {/* <h2 className="resource-title">{plural}{scope.context ? ` - ${scope.context}` : ''}</h2> */}
-        <span className="dim">{items.length} items</span>
-        <span className="dim">Last update: {lastUpdatedLabel}</span>
+        <span className="dim">{items.length} {uiText.resource.itemsCountSuffix}</span>
+        <span className="dim">{uiText.resource.lastUpdatePrefix} {lastUpdatedLabel}</span>
         {authRecoveryRefreshing && (
           <span className="dim" title={uiText.resource.refreshingResourcesAfterAuth}>
             <span className="tiny-spinner" aria-label={uiText.resource.refreshingResourcesAfterAuth} /> {uiText.resource.refreshing}
           </span>
         )}
         {LIVE_WATCH_PLURALS.has(plural) && (
-          <span className={`watch-indicator ${watchState}`} title={`Realtime watch is ${watchState}`}>
+          <span className={`watch-indicator ${watchState}`} title={uiText.resource.realtimeWatchTitle(watchState)}>
             <span className="watch-indicator-dot" />
             <span>{watchState === 'live' ? uiText.resource.liveSync : uiText.resource.connecting}</span>
           </span>
@@ -1219,9 +1218,9 @@ export function ResourceTable({
             </button>
             {exportOpen && (
               <div className="export-menu">
-                <button className="action-menu-item" onClick={() => handleExport('csv')}>Export as CSV</button>
-                <button className="action-menu-item" onClick={() => handleExport('json')}>Export as JSON</button>
-                <button className="action-menu-item" onClick={() => handleExport('txt')}>Export as TXT</button>
+                <button className="action-menu-item" onClick={() => handleExport('csv')}>{uiText.resource.exportAsLabel('CSV')}</button>
+                <button className="action-menu-item" onClick={() => handleExport('json')}>{uiText.resource.exportAsLabel('JSON')}</button>
+                <button className="action-menu-item" onClick={() => handleExport('txt')}>{uiText.resource.exportAsLabel('TXT')}</button>
               </div>
             )}
           </div>
@@ -1245,18 +1244,17 @@ export function ResourceTable({
         <div className="notice error">
           {errorMessage}
           {connectionState === 'stopped' && isForbiddenNow &&
-            ' — access denied, so automatic retries were stopped. Pick a different namespace or click Refresh.'}
+            uiText.resource.accessDeniedStopped}
           {connectionState === 'stopped' && !isForbiddenNow &&
-            ` — stopped after ${MAX_CONNECT_RETRIES} attempts. Click Retry to try again.`}
+            uiText.resource.stoppedAfterAttempts(MAX_CONNECT_RETRIES)}
         </div>
       )}
       {needsNamespaceHint && (
         <div className="notice">
-          Your current role cannot list <span className="mono">{plural}</span> across all namespaces.
-          Pick a namespace from the dropdown, or type one in the top bar and click Apply.
+          {uiText.resource.roleCannotListPrefix}<span className="mono">{plural}</span>{uiText.resource.roleCannotListSuffix}
         </div>
       )}
-      {list.isLoading && <div className="empty">Loading…</div>}
+      {list.isLoading && <div className="empty">{uiText.resource.loading}</div>}
 
       {!list.isLoading && items.length === 0 && <div className="empty">{uiText.resource.noResourcesFound}</div>}
 
@@ -1300,7 +1298,7 @@ export function ResourceTable({
                       column.resizable !== false && column.label && (
                         <span
                           className="col-resizer"
-                          title={`Resize ${column.label} column`}
+                          title={uiText.resource.resizeColumnTitle(column.label)}
                           onMouseDown={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -1334,7 +1332,7 @@ export function ResourceTable({
                     .filter((condition) => condition.status === 'True')
                     .map((condition) => condition.type)
                     .join(', ')
-                : '-';
+                : uiText.resourceDetail.dash;
               const completionsText = (() => {
                 const succeeded = Number(o.status?.succeeded ?? 0);
                 const target = Number(o.spec?.completions ?? 1);
@@ -1347,7 +1345,7 @@ export function ResourceTable({
                 ? Object.entries(o.spec.template.spec.nodeSelector)
                     .map(([key, value]) => `${key}=${String(value)}`)
                     .join(', ')
-                : '-';
+                : uiText.resourceDetail.dash;
               const ownerRefs = Array.isArray((o.metadata as any)?.ownerReferences)
                 ? ((o.metadata as any).ownerReferences as Array<{ kind?: string; name?: string }>)
                 : [];
@@ -1384,18 +1382,18 @@ export function ResourceTable({
                   {columns.map((column) => {
                     switch (column.key) {
                       case 'select':
-                        return <td key={column.key}><input type="checkbox" title="Select row" /></td>;
+                        return <td key={column.key}><input type="checkbox" title={uiText.resource.selectRow} /></td>;
                       case 'name':
                         return <td key={column.key} className="clickable mono" title={o.metadata?.name ?? ''} onClick={() => setSelected({ obj: o })}>{o.metadata?.name}</td>;
                       case 'namespace':
-                        return <td key={column.key} className="dim">{o.metadata?.namespace ?? '-'}</td>;
+                        return <td key={column.key} className="dim">{o.metadata?.namespace ?? uiText.resourceDetail.dash}</td>;
                       case 'labels': {
                         const labelEntries = Object.entries(o.metadata?.labels ?? {});
                         if (plural === 'namespaces') {
                           const text = labelEntries.map(([labelKey, value]) => `${labelKey}=${value}`).join(', ');
                           return (
-                            <td key={column.key} className="dim" title={text || 'No labels'}>
-                              {text || '-'}
+                            <td key={column.key} className="dim" title={text || uiText.resource.noLabels}>
+                              {text || uiText.resourceDetail.dash}
                             </td>
                           );
                         }
@@ -1404,7 +1402,7 @@ export function ResourceTable({
                       case 'keys':
                         return <td key={column.key} className="dim">{Array.isArray((o as any).dataKeys) ? (o as any).dataKeys.length : Object.keys((o as any).data ?? {}).length}</td>;
                       case 'type': {
-                        const typeValue = String((o as any).type ?? '-');
+                        const typeValue = String((o as any).type ?? uiText.resourceDetail.dash);
                         if (plural === 'events') {
                           const tone = typeValue === 'Warning' ? 'warn' : typeValue === 'Normal' ? 'ok' : '';
                           return <td key={column.key}><span className={`badge ${tone}`}>{typeValue}</span></td>;
@@ -1412,21 +1410,21 @@ export function ResourceTable({
                         return <td key={column.key} className="dim">{typeValue}</td>;
                       }
                       case 'message':
-                        return <td key={column.key} title={String((o as any).message ?? '')}>{(o as any).message ?? '-'}</td>;
+                        return <td key={column.key} title={String((o as any).message ?? '')}>{(o as any).message ?? uiText.resourceDetail.dash}</td>;
                       case 'reason':
-                        return <td key={column.key} className="dim">{(o as any).reason ?? '-'}</td>;
+                        return <td key={column.key} className="dim">{(o as any).reason ?? uiText.resourceDetail.dash}</td>;
                       case 'source': {
                         const source = (o as any).source as { component?: string; host?: string } | undefined;
                         const text = source?.component
                           ? source.host
                             ? `${source.component} (${source.host})`
                             : source.component
-                          : '-';
+                          : uiText.resourceDetail.dash;
                         return <td key={column.key} className="dim" title={text}>{text}</td>;
                       }
                       case 'involvedObject': {
                         const involved = (o as any).involvedObject as { kind?: string; name?: string } | undefined;
-                        return <td key={column.key} className="dim">{involved?.kind ?? '-'}{involved?.name ? `/${involved.name}` : ''}</td>;
+                        return <td key={column.key} className="dim">{involved?.kind ?? uiText.resourceDetail.dash}{involved?.name ? `/${involved.name}` : ''}</td>;
                       }
                       case 'count':
                         return <td key={column.key}>{Number((o as any).count ?? 1)}</td>;
@@ -1451,7 +1449,7 @@ export function ResourceTable({
                       case 'conditions':
                         return <td key={column.key} className="dim">{conditionsText}</td>;
                       case 'schedule':
-                        return <td key={column.key}>{o.spec?.schedule ?? '-'}</td>;
+                        return <td key={column.key}>{o.spec?.schedule ?? uiText.resourceDetail.dash}</td>;
                       case 'suspend':
                         return <td key={column.key}>{String(Boolean(o.spec?.suspend))}</td>;
                       case 'active':
@@ -1459,9 +1457,9 @@ export function ResourceTable({
                       case 'lastSchedule':
                         return <td key={column.key} className="dim">{age(o.status?.lastScheduleTime)}</td>;
                       case 'nextExecution':
-                        return <td key={column.key} className="dim">-</td>;
+                        return <td key={column.key} className="dim">{uiText.resourceDetail.dash}</td>;
                       case 'timeZone':
-                        return <td key={column.key} className="dim">{o.spec?.timeZone ?? '-'}</td>;
+                        return <td key={column.key} className="dim">{o.spec?.timeZone ?? uiText.resourceDetail.dash}</td>;
                       case 'cpu':
                         return <td key={column.key} className="dim"><span title={cpuCell.title}>{cpuCell.text}</span></td>;
                       case 'memory':
@@ -1475,19 +1473,19 @@ export function ResourceTable({
                                   <span
                                     key={container.name}
                                     className={`container-dot container-state-${container.stateType}`}
-                                    aria-label={`${container.name}: ${container.ready ? 'ready' : 'not ready'}`}
+                                    aria-label={uiText.resource.containerReadyAriaLabel(container.name, container.ready)}
                                   >
                                     <span className="container-details-popup" role="tooltip">
                                       <strong>{container.name}</strong>
-                                      <span>{container.ready ? 'Ready' : 'Not Ready'}</span>
-                                      <span>State: {container.state}</span>
-                                      <span>Restarts: {container.restarts}</span>
+                                      <span>{container.ready ? uiText.resourceDetail.ready : uiText.resource.notReady}</span>
+                                      <span>{uiText.resource.statePrefix} {container.state}</span>
+                                      <span>{uiText.resource.restartsPrefix} {container.restarts}</span>
                                     </span>
                                   </span>
                                 ))
                               ) : (
                                 <span className={`container-ready ${allReady ? 'ok' : 'warn'}`}>
-                                  {totalContainerCount > 0 ? `${readyContainerCount}/${totalContainerCount}` : '-'}
+                                  {totalContainerCount > 0 ? `${readyContainerCount}/${totalContainerCount}` : uiText.resourceDetail.dash}
                                 </span>
                               )}
                             </div>
@@ -1496,11 +1494,11 @@ export function ResourceTable({
                       case 'restarts':
                         return <td key={column.key}>{restartCount}</td>;
                       case 'controlledBy':
-                        return <td key={column.key} className="dim">{owner?.kind ?? '-'}{owner?.name ? `/${owner.name}` : ''}</td>;
+                        return <td key={column.key} className="dim">{owner?.kind ?? uiText.resourceDetail.dash}{owner?.name ? `/${owner.name}` : ''}</td>;
                       case 'node':
-                        return <td key={column.key} className="dim">{o.spec?.nodeName ?? '-'}</td>;
+                        return <td key={column.key} className="dim">{o.spec?.nodeName ?? uiText.resourceDetail.dash}</td>;
                       case 'qos':
-                        return <td key={column.key} className="dim">{o.status?.qosClass ?? '-'}</td>;
+                        return <td key={column.key} className="dim">{o.status?.qosClass ?? uiText.resourceDetail.dash}</td>;
                       case 'status':
                         return (
                           <td key={column.key}>
@@ -1535,7 +1533,7 @@ export function ResourceTable({
                               ))}
                               <button
                                 className="action-trigger"
-                                title="Actions"
+                                title={uiText.resourceDetail.actionsTab}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   const trigger = event.currentTarget as HTMLElement;
@@ -1594,11 +1592,11 @@ export function ResourceTable({
           </tbody>
         </table>
         {usesLazyPaging && pagedList.isFetchingNextPage && (
-          <div className="empty" style={{ padding: '10px 0' }}>Loading more…</div>
+          <div className="empty" style={{ padding: '10px 0' }}>{uiText.resource.loadingMore}</div>
         )}
         {usesLazyPaging && pagedList.hasNextPage && !pagedList.isFetchingNextPage && (
           <div className="dim" style={{ padding: '10px 0', textAlign: 'center' }}>
-            Scroll to load more
+            {uiText.resource.scrollToLoadMore}
           </div>
         )}
         </div>
@@ -1698,12 +1696,12 @@ function getContainerDetails(
       : status.state?.running ? 'running'
       : 'unknown';
     const state =
-      !status ? 'Not Started'
+      !status ? uiText.resource.notStarted
       : status.state?.terminated?.reason
       ?? status.state?.waiting?.reason
-      ?? (status.state?.running ? 'Running' : 'Unknown');
+      ?? (status.state?.running ? uiText.resource.runningState : uiText.resource.unknownState);
     return {
-      name: container.name ?? '-',
+      name: container.name ?? uiText.resourceDetail.dash,
       ready: Boolean(status?.ready),
       restarts: Number(status?.restartCount ?? 0),
       state,
@@ -1717,15 +1715,15 @@ function isSortableColumn(key: string): boolean {
 }
 
 function headerLabel(column: ColumnDef): string {
-  if (column.key === 'cpu') return 'CPU';
-  if (column.key === 'memory') return 'Memory';
+  if (column.key === 'cpu') return uiText.resource.colCpu;
+  if (column.key === 'memory') return uiText.resource.colMemory;
   return column.label;
 }
 
 function headerTitle(key: string): string {
-  if (key === 'cpu') return 'CPU in millicores. 1000m = 1 vCPU/core.';
-  if (key === 'memory') return 'Memory in mebibytes/gibibytes. 1 Mi = 1024 KiB.';
-  return isSortableColumn(key) ? 'Click to sort' : '';
+  if (key === 'cpu') return uiText.resource.cpuColumnTooltip;
+  if (key === 'memory') return uiText.resource.memoryColumnTooltip;
+  return isSortableColumn(key) ? uiText.resource.clickToSort : '';
 }
 
 function compareResourceRows(
@@ -1848,7 +1846,7 @@ function formatPodCpuCell(cpuMillicores: number | undefined, pod: K8sObject): { 
   if (typeof cpuMillicores === 'number' && Number.isFinite(cpuMillicores) && cpuMillicores >= 0) {
     return {
       text: `${Number(cpuMillicores).toFixed(1)}m`,
-      title: `Live CPU usage from metrics server is ${Number(cpuMillicores)}m. The m = millicores (1000m = 1 core).`,
+      title: uiText.resource.liveCpuUsageTooltip(Number(cpuMillicores)),
     };
   }
 
@@ -1856,13 +1854,13 @@ function formatPodCpuCell(cpuMillicores: number | undefined, pod: K8sObject): { 
   if (requestedMillicores > 0) {
     return {
       text: `${Math.round(requestedMillicores)}m req`,
-      title: `Fallback value from pod resource requests is ${Math.round(requestedMillicores)}m. The m = millicores (1000m = 1 core).`,
+      title: uiText.resource.fallbackCpuRequestTooltip(Math.round(requestedMillicores)),
     };
   }
 
   return {
-    text: '-',
-    title: 'No live metrics and no CPU request configured.',
+    text: uiText.resourceDetail.dash,
+    title: uiText.resource.noCpuMetricsConfigured,
   };
 }
 
@@ -1870,7 +1868,7 @@ function formatPodMemoryCell(memoryBytes: number | undefined, pod: K8sObject): {
   if (typeof memoryBytes === 'number' && Number.isFinite(memoryBytes) && memoryBytes > 0) {
     return {
       text: formatBytes(memoryBytes),
-      title: 'Live memory usage from metrics server. Mi = mebibytes (1024 KiB).',
+      title: uiText.resource.liveMemoryUsageTooltip,
     };
   }
 
@@ -1878,13 +1876,13 @@ function formatPodMemoryCell(memoryBytes: number | undefined, pod: K8sObject): {
   if (requestedBytes > 0) {
     return {
       text: `${formatBytes(requestedBytes)} req`,
-      title: 'Fallback value from pod resource requests. Mi = mebibytes (1024 KiB).',
+      title: uiText.resource.fallbackMemoryRequestTooltip,
     };
   }
 
   return {
-    text: '-',
-    title: 'No live metrics and no memory request configured.',
+    text: uiText.resourceDetail.dash,
+    title: uiText.resource.noMemoryMetricsConfigured,
   };
 }
 

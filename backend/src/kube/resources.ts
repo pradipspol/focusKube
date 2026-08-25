@@ -304,9 +304,15 @@ export async function listResource(
           { action: 'list', plural: rk.plural, context, namespace: ns },
           { timeoutMs: config.k8sListTimeoutMs },
         );
-      } else {
+      } else if (rk.namespaced) {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}ForAllNamespaces`](),
+          { action: 'list', plural: rk.plural, context },
+          { timeoutMs: config.k8sListTimeoutMs },
+        );
+      } else {
+        res = await callK8s(
+          () => (api as any)[`list${rk.kind}`](),
           { action: 'list', plural: rk.plural, context },
           { timeoutMs: config.k8sListTimeoutMs },
         );

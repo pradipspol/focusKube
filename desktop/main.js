@@ -279,14 +279,61 @@ async function startBackend(backendPort) {
     // Write backend stdout/stderr to a log file so we can diagnose startup
     // failures (ECONNREFUSED) without opening visible consoles.
     const logDir = app.getPath('userData') || backendDir;
-    const logFile = path.join(logDir, 'k8s-backend.log');
+    const logFile = path.join(logDir, 'focusKube.log');
     try {
       fs.mkdirSync(logDir, { recursive: true });
     } catch (e) {
       /* ignore */
     }
-    const outStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+    // Cap the log file size so a chatty backend (or a long-running session)
+    // can never fill the disk. Once it crosses MAX_LOG_BYTES we rotate it
+    // through up to MAX_LOG_BACKUPS numbered backups and start a fresh file.
+    const MAX_LOG_BYTES = 5 * 1024 * 1024; // 5 MB
+    const MAX_LOG_BACKUPS = 5;
+    let writtenBytes = 0;
+    try {
+      writtenBytes = fs.statSync(logFile).size;
+    } catch (e) {
+      /* file doesn't exist yet */
+    }
+    let outStream = fs.createWriteStream(logFile, { flags: 'a' });
     console.log('Backend log:', logFile);
+
+    function rotateLogIfNeeded(nextChunkSize) {
+      if (writtenBytes + nextChunkSize <= MAX_LOG_BYTES) return;
+      outStream.end();
+      try {
+        // Shift logFile.4 -> .5, logFile.3 -> .4, ..., logFile -> .1, oldest dropped.
+        try {
+          fs.rmSync(`${logFile}.${MAX_LOG_BACKUPS}`, { force: true });
+        } catch (e) {
+          /* ignore */
+        }
+        for (let i = MAX_LOG_BACKUPS - 1; i >= 1; i--) {
+          try {
+            fs.renameSync(`${logFile}.${i}`, `${logFile}.${i + 1}`);
+          } catch (e) {
+            /* ignore missing intermediate backups */
+          }
+        }
+        fs.renameSync(logFile, `${logFile}.1`);
+      } catch (e) {
+        /* ignore rotation failures; worst case we keep appending to the same file */
+      }
+      outStream = fs.createWriteStream(logFile, { flags: 'a' });
+      writtenBytes = 0;
+    }
+
+    function writeToLog(chunk) {
+      try {
+        rotateLogIfNeeded(chunk.length);
+        outStream.write(chunk);
+        writtenBytes += chunk.length;
+      } catch (e) {
+        /* ignore individual write failures so the backend keeps running */
+      }
+    }
 
     // Write a header so we can detect whether the log file is writable and
     // what path the app is using for logs.
@@ -306,8 +353,8 @@ async function startBackend(backendPort) {
       windowsHide: true,
     });
 
-    if (backendProc.stdout) backendProc.stdout.pipe(outStream);
-    if (backendProc.stderr) backendProc.stderr.pipe(outStream);
+    if (backendProc.stdout) backendProc.stdout.on('data', writeToLog);
+    if (backendProc.stderr) backendProc.stderr.on('data', writeToLog);
   } catch (err) {
     throw new Error(`Failed to spawn backend: ${err.message}`);
   }

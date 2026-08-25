@@ -49,11 +49,14 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
 
   useAzureAuthRequiredEffect(serviceQuery.error, onAzureAuthRequired);
 
+  const lastAuthRecoveryTokenRef = useRef<number>(0);
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;
+    if (lastAuthRecoveryTokenRef.current === authRecoveryRefreshToken) return;
+    lastAuthRecoveryTokenRef.current = authRecoveryRefreshToken;
     void podQuery.refetch();
     void serviceQuery.refetch();
-  }, [authRecoveryRefreshToken, podQuery, scope.context, serviceQuery]);
+  }, [authRecoveryRefreshToken, scope.context, podQuery.refetch, serviceQuery.refetch]);
 
   const targets = useMemo(() => {
     const items = targetKind === 'pods' ? podQuery.data?.items ?? [] : serviceQuery.data?.items ?? [];

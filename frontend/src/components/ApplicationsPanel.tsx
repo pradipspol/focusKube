@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
@@ -106,10 +106,13 @@ export function ApplicationsPanel({
 
   useAzureAuthRequiredEffect(applications.error, onAzureAuthRequired);
 
+  const lastAuthRecoveryTokenRef = useRef<number>(0);
   useEffect(() => {
     if (!authRecoveryRefreshToken || !scope.context) return;
+    if (lastAuthRecoveryTokenRef.current === authRecoveryRefreshToken) return;
+    lastAuthRecoveryTokenRef.current = authRecoveryRefreshToken;
     void applications.refetch();
-  }, [applications, authRecoveryRefreshToken, scope.context]);
+  }, [authRecoveryRefreshToken, scope.context, applications.refetch]);
 
   const items = useMemo(() => {
     const rows = applications.data?.rows ?? [];

@@ -9,6 +9,10 @@
 ![Static Badge](https://img.shields.io/badge/MacOS--9cf?style=social&logo=Apple)
 ![Static Badge](https://img.shields.io/badge/-Linux-grey?logo=linux)
 
+![FocusKube](docs/screenshots/app.png)
+![FocusKube/Topology](docs/screenshots/toplogy.png)
+
+
 ## **FocusKube** - Kubernetes Cluster Explorer & Operations Console
 
 **FocusKube** is a free, open-source cross-platform Kubernetes Cluster Explorer & Operations Console, desktop GUI and multi-cluster management tool — a self-hosted alternative to Lens and k9s for teams running Azure AKS, AWS EKS, or local kubeconfig clusters. **FocusKube** allows you to browse cluster state, visualize workload topology, tail live logs over WebSockets, and manage Helm releases from one workspace — without giving up kubectl.
