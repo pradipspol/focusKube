@@ -26,17 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Lint backend
-        run: npm --workspace backend run lint
+      - name: Lint
+        run: npm run lint:all
 
-      - name: Lint frontend
-        run: npm --workspace frontend run lint
+      - name: Build Backend
+        run: npm run build:backend
 
-      - name: Build backend
-        run: npm --workspace backend run build
-
-      - name: Build frontend
-        run: npm --workspace frontend run build
+      - name: Build UI
+        run: npm run build:frontend
 
   build-installer:
     runs-on: ${{ matrix.os }}
@@ -75,8 +72,8 @@ jobs:
         run: |
           set -e
           mkdir -p release-artifacts
-          find desktop/installer -maxdepth 1 -type f \( -name '*.msi' -o -name '*.exe' \) -exec cp {} release-artifacts/ \; 2>/dev/null || true
-          find desktop/dist -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} release-artifacts/ \; 2>/dev/null || true
+          find platform/desktop/installer -maxdepth 1 -type f \( -name '*.msi' -o -name '*.exe' \) -exec cp {} release-artifacts/ \; 2>/dev/null || true
+          find platform/desktop/dist -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} release-artifacts/ \; 2>/dev/null || true
           echo "Collected artifacts:"
           ls -la release-artifacts
 
@@ -108,7 +105,7 @@ jobs:
       - name: Read desktop package version
         id: version
         run: |
-          version=$(node -p "require('./desktop/package.json').version")
+          version=$(node -p "require('./platform/desktop/package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish release asset

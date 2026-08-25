@@ -12,7 +12,12 @@
     "dev:backend": "npm --workspace platform/backend run dev",
     "dev:frontend": "npm --workspace platform/frontend run dev",
     "typecheck": "npm --workspace platform/backend run typecheck && npm --workspace platform/frontend run typecheck",
-    "build": "npm --workspace platform/backend run build && npm --workspace platform/frontend run build",
+    "lint:frontend": "npm --workspace platform/frontend run lint",
+    "lint:backend": "npm --workspace platform/backend run lint",
+    "lint:all": "npm run lint:backend && npm run lint:frontend",
+    "build:backend": "npm --workspace platform/backend run build",
+    "build:frontend": "npm --workspace platform/frontend run build",
+    "build:all": "npm run build:backend && npm run build:frontend",
     "build:bundle:prod": "npm --workspace platform/backend run build:bundle && npm --workspace platform/frontend run build:bundle",
     "desktop:start": "npm --workspace platform/desktop run start",
     "desktop:package": "npm --workspace platform/desktop run package"
