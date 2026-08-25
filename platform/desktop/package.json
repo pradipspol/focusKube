@@ -2,7 +2,7 @@
   "name": "focusKube",
   "author": "TechAvise", 
   "description": "Kubernetes Cluster Explorer & Operations Console",
-  "version": "0.1.0-2",
+  "version": "0.1.1-1",
   "private": true,
   "homepage": "https://github.com/pradipspol/focusKube",
   "main": "main.js",
@@ -49,7 +49,7 @@
       "uninstallerIcon": "assets/icons/app512.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "include": "installer/nsis-installer-hook.nsh"
+      "include": "build/installer/nsis-installer-hook.nsh"
     },
     "msi": {
       "createDesktopShortcut": true,

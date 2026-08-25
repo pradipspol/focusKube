@@ -6,7 +6,7 @@
   },
   "description": "Kubernetes Cluster Explorer and Operations Console",
   "private": true,
-  "version": "0.1.0-2",
+  "version": "0.1.1-1",
   "workspaces": ["platform/backend", "platform/frontend", "platform/desktop"],
   "scripts": {
     "dev:backend": "npm --workspace platform/backend run dev",

@@ -95,19 +95,15 @@ function resolveExtrasRunner(extrasScript) {
 
 /**
  * Verify that CLI tools (az, helm, kubectl, kubelogin) are available.
- * Tools are installed by install-extras.ps1 (Windows) / install-extras.sh
- * (macOS, Linux) during packaging or on first dev-mode launch.
- * At startup we only log their availability — we do NOT re-run the installer.
- * In dev mode (no installer ran), we do run the script once so developers don't
- * need to install tools manually.
+ * Packaged applications verify tools installed by the installer. Development
+ * mode also runs the local helper script for convenience.
  */
 async function ensureCliTools() {
   const isPackaged = app.isPackaged;
 
   if (isPackaged) {
-    // In packaged mode tools should already be installed by the platform
-    // installer's post-install hook. Verify using the augmented PATH, which
-    // includes package-manager and platform tool directories.
+    // In packaged mode, verify tools installed by the helper using the
+    // augmented PATH, which includes package-manager and platform tool directories.
     const augmented = buildAugmentedPath(process.resourcesPath);
 
     const toolCandidates = process.platform === 'win32'
@@ -120,7 +116,7 @@ async function ensureCliTools() {
       if (found) {
         console.log(`[tools] [OK] ${tool}: ${found}`);
       } else {
-        console.warn(`[tools] [--] ${tool}: not found — installer hook may not have run`);
+        console.warn(`[tools] [--] ${tool}: not found — installer helper may have failed`);
       }
     }
     return;

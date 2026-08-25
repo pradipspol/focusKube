@@ -112,7 +112,7 @@ function Try-Install-WithWinget {
     }
     Write-Step "winget install $display ($id)"
     try {
-        & winget install --id $id -e --accept-package-agreements --accept-source-agreements
+        & winget install --id $id -e --accept-package-agreements --accept-source-agreements --disable-interactivity
         $code = $LASTEXITCODE
         if ($code -eq 0 -or $code -eq $WINGET_ALREADY_INSTALLED) {
             Write-Ok "winget install succeeded for $display (exit $code)"
@@ -131,7 +131,7 @@ function Try-Uninstall-WithWinget {
     if (-not (Test-CommandExists 'winget')) { return $false }
     Write-Step "winget uninstall $display ($id)"
     try {
-        & winget uninstall --id $id -e --accept-package-agreements --accept-source-agreements
+        & winget uninstall --id $id -e --accept-package-agreements --accept-source-agreements --disable-interactivity
         if ($LASTEXITCODE -eq 0) { Write-Ok "$display uninstalled via winget"; return $true }
         Write-Log "winget uninstall exited $LASTEXITCODE for $display" 'WARN'
         return $false

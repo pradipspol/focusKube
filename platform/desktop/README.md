@@ -29,4 +29,4 @@ Packaging:
   - Windows: NSIS `.exe` and, if the WiX Toolset (`candle.exe`/`light.exe`) is on `PATH`, an MSI via `electron-wix-msi`. Output lands in `desktop/installer` (MSI) and `desktop/dist` (NSIS).
   - macOS: `.dmg` and `.zip`, output in `desktop/dist`.
   - Linux: `.AppImage` and `.deb`, output in `desktop/dist`.
-- CLI tools (`az`, `helm`, Azure `kubelogin`) are provisioned by `desktop/extra/install-extras.ps1` (Windows) or `desktop/extra/install-extras.sh` (macOS/Linux), run by the installer's post-install hook and, in dev mode, once on first launch.
+- The desktop installer bundles and runs the platform-specific helper in `desktop/extra/` to provision required CLI tools. In development mode, the helper scripts may also run on first launch.

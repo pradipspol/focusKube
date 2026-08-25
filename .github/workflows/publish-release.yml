@@ -105,7 +105,9 @@ jobs:
       - name: Read desktop package version
         id: version
         run: |
+          major=$(node -p "require('./platform/desktop/package.json').version.split('-')[0]")
           version=$(node -p "require('./platform/desktop/package.json').version")
+          echo "major=$major" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish release asset
@@ -114,7 +116,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name: FocusKube v${{ steps.version.outputs.version }}
+          name: FocusKube v${{ steps.version.outputs.major }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true

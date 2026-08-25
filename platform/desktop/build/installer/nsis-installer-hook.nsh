@@ -1,13 +1,12 @@
 ; Runs the bundled extras provisioning script (helm, az CLI, PATH setup) during
-; NSIS install/uninstall, mirroring the WiX custom actions used for the MSI
-; installer in package.js.
+; NSIS install/uninstall.
 
 !macro customInstall
-  DetailPrint "Running focusKube extras install script..."
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1"'
+	DetailPrint "Running FocusKube extras install script..."
+	nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1"'
 !macroend
 
 !macro customUnInit
-  DetailPrint "Running focusKube extras uninstall script..."
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1" -Action uninstall'
+	DetailPrint "Running FocusKube extras uninstall script..."
+	nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "$INSTDIR\resources\extras\install-extras.ps1" -Action uninstall'
 !macroend

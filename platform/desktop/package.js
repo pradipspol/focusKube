@@ -76,8 +76,8 @@ async function packageWindows(desktopDir) {
     appDirectory: winUnpacked,
     outputDirectory: msiOutputDir,
     exe: exeName,
-    name: escapeXml('focusKube'),
-    manufacturer: escapeXml('FocusKube'),
+    name: escapeXml('FocusKube'),
+    manufacturer: escapeXml('TechAvise'),
     version: msiVersion,
     description: escapeXml('Kubernetes Cluster Explorer & Operations Console'),
     appIconPath: ensureMsiIconFile(),
@@ -88,34 +88,20 @@ async function packageWindows(desktopDir) {
 
   // Create a .wxs template
   await creator.create();
-  // If a post-install script was bundled, patch the generated .wxs to run it during MSI install and during uninstall.
+  // Run the bundled prerequisite helper during MSI install and uninstall.
   const installScriptPath = path.join(winUnpacked, 'extras', 'install-extras.ps1');
   if (fs.existsSync(installScriptPath)) {
-      console.log('post-install script found; patching .wxs to run it before install finalization and during uninstall');
     const wxsFiles = (fs.readdirSync(msiOutputDir) || []).filter(f => f.endsWith('.wxs'));
     if (wxsFiles.length) {
       const wxsFile = path.join(msiOutputDir, wxsFiles[0]);
       let content = fs.readFileSync(wxsFile, 'utf8');
-      // Insert WixUtilExtension namespace if missing
-      if (!content.includes('WixUtilExtension')) {
-        content = content.replace(/<Wix([^>]*)>/, '<Wix$1 xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">');
-      }
-      // Add CustomActions to execute PowerShell against the bundled script for install and uninstall.
-        const customActionSnippet = `\n  <!-- Custom actions to run bundled extra-tools script during install and uninstall -->\n  <CustomAction Id=\"RunPostInstallScript\" Execute=\"deferred\" Return=\"check\" Impersonate=\"no\" ExeCommand=\"[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot;\" />\n  <CustomAction Id=\"RunUninstallScript\" Execute=\"deferred\" Return=\"ignore\" Impersonate=\"no\" ExeCommand=\"[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot; -Action uninstall\" />\n`;
-      // Inject into the Product element (after the opening <Product ...>)
+      const customActionSnippet = `\n  <CustomAction Id="RunPostInstallScript" Execute="deferred" Return="check" Impersonate="no" ExeCommand="[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot;" />\n  <CustomAction Id="RunUninstallScript" Execute="deferred" Return="ignore" Impersonate="no" ExeCommand="[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot; -Action uninstall" />\n`;
       content = content.replace(/(<Product[\s\S]*?>)/, `$1${customActionSnippet}`);
-      // Schedule the custom actions: run post-install after InstallFiles, and run uninstall before RemoveFiles when removing all.
       if (content.includes('</InstallExecuteSequence>')) {
-            content = content.replace(/(<\/InstallExecuteSequence>)/, '  <Custom Action="RunPostInstallScript" Before="InstallFinalize" />\n  <Custom Action="RunUninstallScript" Before="RemoveFiles">REMOVE="ALL"</Custom>\n$1');
-      } else {
-        // Fallback: append a minimal InstallExecuteSequence with our custom actions
-          const seq = '\n  <InstallExecuteSequence>\n    <Custom Action="RunPostInstallScript" Before="InstallFinalize" />\n    <Custom Action="RunUninstallScript" Before="RemoveFiles">REMOVE="ALL"</Custom>\n  </InstallExecuteSequence>\n';
-        content = content.replace(/(<\/Product>)/, `${seq}$1`);
+        content = content.replace(/(<\/InstallExecuteSequence>)/, '  <Custom Action="RunPostInstallScript" Before="InstallFinalize" />\n  <Custom Action="RunUninstallScript" Before="RemoveFiles">REMOVE="ALL"</Custom>\n$1');
       }
       fs.writeFileSync(wxsFile, content, 'utf8');
       console.log('Patched', wxsFile);
-    } else {
-      console.warn('No .wxs file found to patch for post-install script');
     }
   }
   // Compile the template to a .msi
@@ -131,7 +117,21 @@ async function packageWindows(desktopDir) {
 
   if (exeExistsInPath('candle.exe') && exeExistsInPath('light.exe')) {
     await creator.compile();
-    console.log('MSI created in', msiOutputDir);
+    const packageVersion = require('./package.json').version;
+    const desiredMsiName = `FocusKube-Setup-${packageVersion}.msi`;
+    const generatedMsi = fs
+      .readdirSync(msiOutputDir)
+      .filter(file => file.endsWith('.msi'))
+      .find(file => file !== desiredMsiName);
+
+    if (generatedMsi) {
+      fs.renameSync(
+        path.join(msiOutputDir, generatedMsi),
+        path.join(msiOutputDir, desiredMsiName),
+      );
+    }
+
+    console.log('MSI created in', path.join(msiOutputDir, desiredMsiName));
     return;
   }
 
