@@ -86,24 +86,10 @@ async function packageWindows(desktopDir) {
     }
   });
 
-  // Create a .wxs template
+  // Keep the MSI limited to installing the application files. Microsoft
+  // silent validation runs MSI actions in a noninteractive service context;
+  // prerequisite provisioning belongs in the NSIS/bootstrapper installer.
   await creator.create();
-  // Run the bundled prerequisite helper during MSI install and uninstall.
-  const installScriptPath = path.join(winUnpacked, 'extras', 'install-extras.ps1');
-  if (fs.existsSync(installScriptPath)) {
-    const wxsFiles = (fs.readdirSync(msiOutputDir) || []).filter(f => f.endsWith('.wxs'));
-    if (wxsFiles.length) {
-      const wxsFile = path.join(msiOutputDir, wxsFiles[0]);
-      let content = fs.readFileSync(wxsFile, 'utf8');
-      const customActionSnippet = `\n  <CustomAction Id="RunPostInstallScript" Execute="deferred" Return="check" Impersonate="no" ExeCommand="[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot;" />\n  <CustomAction Id="RunUninstallScript" Execute="deferred" Return="ignore" Impersonate="no" ExeCommand="[SystemFolder]WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File &quot;[INSTALLDIR]extras\\install-extras.ps1&quot; -Action uninstall" />\n`;
-      content = content.replace(/(<Product[\s\S]*?>)/, `$1${customActionSnippet}`);
-      if (content.includes('</InstallExecuteSequence>')) {
-        content = content.replace(/(<\/InstallExecuteSequence>)/, '  <Custom Action="RunPostInstallScript" Before="InstallFinalize" />\n  <Custom Action="RunUninstallScript" Before="RemoveFiles">REMOVE="ALL"</Custom>\n$1');
-      }
-      fs.writeFileSync(wxsFile, content, 'utf8');
-      console.log('Patched', wxsFile);
-    }
-  }
   // Compile the template to a .msi
   // Ensure WiX toolset is installed (candle.exe and light.exe) before compiling
   function exeExistsInPath(exeName) {

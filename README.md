@@ -39,6 +39,7 @@ The goal is simple: less noise, more context, and a clearer view of what's happe
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Install the Desktop App](#install-the-desktop-app)
+- [How to Use](docs/HOW_TO_USE.md)
 - [Development](#development)
 - [License](#license)
 

@@ -29,4 +29,4 @@ Packaging:
   - Windows: NSIS `.exe` and, if the WiX Toolset (`candle.exe`/`light.exe`) is on `PATH`, an MSI via `electron-wix-msi`. Output lands in `desktop/installer` (MSI) and `desktop/dist` (NSIS).
   - macOS: `.dmg` and `.zip`, output in `desktop/dist`.
   - Linux: `.AppImage` and `.deb`, output in `desktop/dist`.
-- The desktop installer bundles and runs the platform-specific helper in `desktop/extra/` to provision required CLI tools. In development mode, the helper scripts may also run on first launch.
+- The desktop installers bundle the platform-specific helper from `desktop/extra/`. The NSIS installer runs it during installation; MSI copies it to `%APPDATA%\focusKube` and the packaged app runs it once on first launch as the logged-in user. In development mode, the helper scripts run on launch.

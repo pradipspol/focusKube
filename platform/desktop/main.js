@@ -93,49 +93,7 @@ function resolveExtrasRunner(extrasScript) {
   return { cmd: process.platform === 'darwin' ? '/bin/bash' : 'bash', args: [extrasScript, 'install'] };
 }
 
-/**
- * Verify that CLI tools (az, helm, kubectl, kubelogin) are available.
- * Packaged applications verify tools installed by the installer. Development
- * mode also runs the local helper script for convenience.
- */
-async function ensureCliTools() {
-  const isPackaged = app.isPackaged;
-
-  if (isPackaged) {
-    // In packaged mode, verify tools installed by the helper using the
-    // augmented PATH, which includes package-manager and platform tool directories.
-    const augmented = buildAugmentedPath(process.resourcesPath);
-
-    const toolCandidates = process.platform === 'win32'
-      ? { az: ['az.cmd', 'az.exe'], helm: ['helm.exe'], kubectl: ['kubectl.exe'], kubelogin: ['kubelogin.exe'] }
-      : { az: ['az'], helm: ['helm'], kubectl: ['kubectl'], kubelogin: ['kubelogin'] };
-
-    console.log('[tools] Verifying CLI tools via augmented PATH...');
-    for (const [tool, candidates] of Object.entries(toolCandidates)) {
-      const found = candidates.map((c) => findOnAugmentedPath(c, augmented)).find(Boolean);
-      if (found) {
-        console.log(`[tools] [OK] ${tool}: ${found}`);
-      } else {
-        console.warn(`[tools] [--] ${tool}: not found — installer helper may have failed`);
-      }
-    }
-    return;
-  }
-
-  // Dev mode: run install script so developers don't need to set up tools manually.
-  const scriptName = process.platform === 'win32' ? 'install-extras.ps1' : 'install-extras.sh';
-  let extrasScript = path.join(__dirname, 'extra', scriptName);
-  if (!fs.existsSync(extrasScript) && process.resourcesPath) {
-    extrasScript = path.join(process.resourcesPath, 'extras', scriptName);
-  }
-
-  console.log('[tools] Dev mode: running install script at: ' + extrasScript);
-  if (!fs.existsSync(extrasScript)) {
-    console.log('[tools] Install script not found, skipping. Tried:');
-    console.log('[tools]   - ' + path.join(__dirname, 'extra', scriptName));
-    return;
-  }
-
+function runExtrasInstaller(extrasScript) {
   const { cmd, args } = resolveExtrasRunner(extrasScript);
 
   return new Promise((resolve) => {
@@ -157,14 +115,90 @@ async function ensureCliTools() {
       } else {
         console.warn(`[tools] Install script exited with code ${code}. Tools may be missing.`);
       }
-      resolve();
+      resolve(code === 0);
     });
 
     proc.on('error', (err) => {
       console.warn('[tools] Failed to run install script:', err.message);
-      resolve();
+      resolve(false);
     });
   });
+}
+
+/**
+ * Verify that CLI tools (az, helm, kubectl, kubelogin) are available.
+ * Packaged applications provision them on first launch; development mode
+ * runs the local helper script on every launch for convenience.
+ */
+async function ensureCliTools() {
+  const isPackaged = app.isPackaged;
+
+  if (isPackaged) {
+    const scriptName = process.platform === 'win32' ? 'install-extras.ps1' : 'install-extras.sh';
+    const bundledExtrasScript = path.join(process.resourcesPath, 'extras', scriptName);
+    const extrasDir = app.getPath('userData');
+    const extrasScript = path.join(extrasDir, scriptName);
+    const markerPath = path.join(extrasDir, '.extras-installed');
+
+    if (!fs.existsSync(markerPath)){
+      if (!fs.existsSync(extrasScript) && fs.existsSync(bundledExtrasScript)) {
+        try {
+          fs.mkdirSync(extrasDir, { recursive: true });
+          fs.copyFileSync(bundledExtrasScript, extrasScript);
+          console.log('[tools] Copied install script to ' + extrasScript);
+        } catch (err) {
+          console.warn('[tools] Could not copy install script:', err.message);
+        }
+      }
+
+      if (fs.existsSync(extrasScript)) {
+        console.log('[tools] First launch: running install script at ' + extrasScript);
+        if (await runExtrasInstaller(extrasScript)) {
+          try {
+            fs.writeFileSync(markerPath, new Date().toISOString(), 'utf8');
+          } catch (err) {
+            console.warn('[tools] Could not write install marker:', err.message);
+          }
+        }
+      }
+    }
+
+    // Verify tools using the augmented PATH, which includes package-manager
+    // and platform tool directories.
+    const augmented = buildAugmentedPath(process.resourcesPath);
+
+    const toolCandidates = process.platform === 'win32'
+      ? { az: ['az.cmd', 'az.exe'], helm: ['helm.exe'], kubectl: ['kubectl.exe'], kubelogin: ['kubelogin.exe'] }
+      : { az: ['az'], helm: ['helm'], kubectl: ['kubectl'], kubelogin: ['kubelogin'] };
+
+    console.log('[tools] Verifying CLI tools via augmented PATH...');
+    for (const [tool, candidates] of Object.entries(toolCandidates)) {
+      const found = candidates.map((c) => findOnAugmentedPath(c, augmented)).find(Boolean);
+      if (found) {
+        console.log(`[tools] [OK] ${tool}: ${found}`);
+      } else {
+        console.warn(`[tools] [--] ${tool}: not found — installer helper may have failed`);
+        await runExtrasInstaller(extrasScript);
+      }
+    }
+    return;
+  }
+
+  // Dev mode: run install script so developers don't need to set up tools manually.
+  const scriptName = process.platform === 'win32' ? 'install-extras.ps1' : 'install-extras.sh';
+  let extrasScript = path.join(__dirname, 'extra', scriptName);
+  if (!fs.existsSync(extrasScript) && process.resourcesPath) {
+    extrasScript = path.join(process.resourcesPath, 'extras', scriptName);
+  }
+
+  console.log('[tools] Dev mode: running install script at: ' + extrasScript);
+  if (!fs.existsSync(extrasScript)) {
+    console.log('[tools] Install script not found, skipping. Tried:');
+    console.log('[tools]   - ' + path.join(__dirname, 'extra', scriptName));
+    return;
+  }
+
+  await runExtrasInstaller(extrasScript);
 }
 
 /**
