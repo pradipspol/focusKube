@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 function copyRecursiveSync(src, dest) {
   const stat = fs.statSync(src);
@@ -33,4 +34,15 @@ module.exports = async function afterPack(context) {
 
   copyRecursiveSync(backendSource, path.join(resourceRoot, 'k8x-be'));
   copyRecursiveSync(frontendSource, path.join(resourceRoot, 'k8x-fe'));
+
+  if (context.electronPlatformName === 'darwin') {
+    // Ad-hoc sign after adding resources, otherwise the fully unsigned bundle
+    // triggers "app is damaged" on newer macOS instead of the Gatekeeper prompt.
+    const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+    try {
+      execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
+    } catch (err) {
+      console.warn('Ad-hoc codesign failed; app may show as damaged on newer macOS:', err.message);
+    }
+  }
 };

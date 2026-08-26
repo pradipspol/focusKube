@@ -59,7 +59,8 @@
     "mac": {
       "icon": "assets/icons/app512.png",
       "category": "public.app-category.developer-tools",
-      "target": ["dmg", "zip"]
+      "target": ["dmg", "zip"],
+      "identity": null
     },
     "linux": {
       "icon": "assets/icons/app512.png",

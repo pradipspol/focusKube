@@ -113,7 +113,12 @@ Download the latest installer for your platform from the [Releases page](https:/
 
 ### macOS
 1. Open the `.dmg` and drag **FocusKube** into **Applications** (or unzip the `.zip` and move the `.app` there yourself).
-2. The app isn't code-signed yet, so Gatekeeper will block the first launch. Right-click (or Control-click) the app in Finder and choose **Open**, then confirm in the dialog — you only need to do this once.
+2. The app isn't notarized yet, so Gatekeeper will block the first launch. Right-click (or Control-click) the app in Finder and choose **Open**, then confirm in the dialog — you only need to do this once.
+3. If macOS instead reports "FocusKube is damaged and can't be opened" (common on macOS Sequoia and later for downloaded, non-notarized apps), clear the quarantine flag from a terminal instead:
+   ```bash
+   xattr -cr /Applications/FocusKube.app
+   ```
+   Then launch the app normally.
 
 ### Linux
 - **AppImage**: `chmod +x focusKube-Setup-<version>.AppImage && ./focusKube-Setup-<version>.AppImage`
