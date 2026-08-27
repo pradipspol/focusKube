@@ -594,6 +594,7 @@ export function ResourceTable({
     failureCountRef.current = 0;
     setConnectionState('ok');
     setWatchRetryToken((token) => token + 1);
+    void qc.invalidateQueries({ queryKey: ['namespaces', scope.context, scope.source] });
     list.refetch();
   };
 

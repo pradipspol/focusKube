@@ -62,6 +62,7 @@ test('resolveScopedRequestContext resolves local source paths for local context 
   assert.deepEqual(kubeOpts, {
     kubeconfigPath: '/tmp/local-kubeconfig',
     fallbackContext: 'ctx-active',
+    azureConfigDir: '/tmp/local-azure',
   });
 });
 

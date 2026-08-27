@@ -1108,9 +1108,9 @@ a {
   display: inline-block;
 }
 .context-sections {
-  padding-left: 10px;
+  /* padding-left: 10px; */
   border-left: 1px solid var(--subtle-border);
-  margin-left: 18px;
+  margin-left: 12px;
   margin-bottom: 6px;
 }
 .aks-tree-group {
@@ -1163,16 +1163,16 @@ a {
   }
 }
 .nested-group .k8sexplorer-title {
-  padding-left: 8px;
+  padding-left: 2px;
 }
 .nested-group .section-toggle {
   display: grid;
   grid-template-columns: 12px 14px 1fr;
-  column-gap: 8px;
+  column-gap: 4px;
   align-items: center;
 }
 .nested-items .nav-item {
-  padding-left: 42px;
+  padding-left: 36px;
 }
 .nav-item.disabled {
   opacity: 0.62;

@@ -595,6 +595,7 @@ export function SidebarProviderSources({
   }, [menuLocalKubeconfigId, menuLocalContextKey, azureHeaderMenuOpen, azureAccountMenuEmail, awsHeaderMenuOpen]);
 
   const refreshAzureTree = () => {
+    expandGroup('azureRoot');
     setAzureAccounts([]);
     setSubscriptionClusterCache({});
     setResourceGroupClusters({});
@@ -695,17 +696,15 @@ export function SidebarProviderSources({
                     Reconnect Azure
                   </button>
                 )} */}
-                {hasAzureCloudAccount && (
-                  <button
-                    className="action-menu-item"
-                    onClick={() => {
-                      setAzureHeaderMenuOpen(false);
-                      refreshAzureTree();
-                    }}
-                  >
-                    Refresh
-                  </button>
-                )}
+                <button
+                  className="action-menu-item"
+                  onClick={() => {
+                    setAzureHeaderMenuOpen(false);
+                    refreshAzureTree();
+                  }}
+                >
+                  Refresh
+                </button>
                 {hasAzureCloudAccount && (
                   <button
                     className="action-menu-item danger"
