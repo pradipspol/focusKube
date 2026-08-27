@@ -1,27 +1,140 @@
 import { promises as fsp } from 'node:fs';
-import fs from 'node:fs';
 import path from 'node:path';
 import * as k8s from '@kubernetes/client-node';
 import { run } from '../util/run.js';
 import { logInfo, logError, logWarn } from '../util/logger.js';
 
-interface KubeloginCacheEntry {
+interface SharedTokenEntry {
   token: string;
   expiresAt: number;
-  context: string;
 }
+
+/**
+ * Keyed by "${tenantId}::${serverId}". A token is scoped to an Azure AD
+ * tenant's identity and the AKS server app it was issued for - not to any one
+ * cluster. Every context in the same tenant using the same server app
+ * (virtually all of them, since it's normally the shared first-party AKS
+ * server app id) shares one cached token instead of each cluster fetching
+ * and storing its own copy of what is functionally the same credential.
+ */
+type SharedTokenFile = Record<string, SharedTokenEntry>;
+
+interface ContextPin {
+  tenantId?: string;
+  /**
+   * 'ground-truth' = pinned at AKS-credential-import time from the actually
+   * selected subscription's tenantId (verified Azure metadata) - never
+   * auto-cleared by a failed request. 'reactive' = merely inferred from
+   * whatever tenant a kubelogin fetch happened to use (the ambient Azure CLI
+   * default at the time) - if that turns out to be wrong, a 401 clears it so
+   * the context can self-correct instead of being stuck on a bad guess.
+   */
+  tenantSource?: 'ground-truth' | 'reactive';
+  serverId?: string;
+}
+
+/**
+ * Keyed by context name. Sticky per-context facts - which tenant and server
+ * app a context's credentials resolve to - used to look up the shared token
+ * cache above without re-parsing the kubeconfig on every request.
+ */
+type ContextPinFile = Record<string, ContextPin>;
 
 const kubeloginFetchInflight = new Map<string, Promise<string | null>>();
 
-function buildKubeloginFetchKey(
-  azureConfigDir: string,
-  kubeconfigPath: string,
-  context: string,
-): string {
-  return `${azureConfigDir}::${kubeconfigPath}::${context}`;
+function tokensFilePath(azureConfigDir: string): string {
+  return path.join(azureConfigDir, '.kube', 'tokens.json');
 }
 
-function withAzureCliLoginMode(args: string[]): string[] {
+function pinsFilePath(azureConfigDir: string): string {
+  return path.join(azureConfigDir, '.kube', 'context-pins.json');
+}
+
+async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    const content = await fsp.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, JSON.stringify(data, null, 2));
+}
+
+function tokenKey(tenantId: string, serverId: string): string {
+  return `${tenantId}::${serverId}`;
+}
+
+/**
+ * Pull the AAD tenant id (`tid` claim) out of a JWT without verifying its
+ * signature. Diagnostic only - lets logs show which Azure tenant a token
+ * belongs to so a "wrong account signed in" mismatch is visible without an
+ * extra `az account show` round-trip.
+ */
+export function decodeJwtTenantId(token: string): string | undefined {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return undefined;
+    const json = Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const claims = JSON.parse(json);
+    return typeof claims?.tid === 'string' ? claims.tid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Pull `--server-id <value>` out of a kubeconfig exec plugin's args array. */
+export function extractServerId(execArgs: unknown): string | undefined {
+  if (!Array.isArray(execArgs)) return undefined;
+  for (let i = 0; i < execArgs.length; i++) {
+    if (String(execArgs[i]).toLowerCase() === '--server-id') {
+      const value = execArgs[i + 1];
+      return value !== undefined ? String(value) : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Pull `--tenant-id <value>` out of a kubeconfig exec plugin's args array.
+ * `az aks get-credentials` / `kubelogin convert-kubeconfig` bake the tenant a
+ * cluster actually belongs to directly into the file at generation time -
+ * ground truth for that specific cluster, and for contexts that came from an
+ * already-existing/local kubeconfig (never routed through our own
+ * subscription-import flow) it's the only ground truth available at all.
+ */
+export function extractTenantId(execArgs: unknown): string | undefined {
+  if (!Array.isArray(execArgs)) return undefined;
+  for (let i = 0; i < execArgs.length; i++) {
+    const lower = String(execArgs[i]).toLowerCase();
+    if (lower === '--tenant-id' || lower === '-t') {
+      const value = execArgs[i + 1];
+      return value !== undefined ? String(value) : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Force azurecli login mode (never prompt interactively) and, when we know
+ * which tenant previously worked for this context, pin the fetch to that
+ * tenant explicitly via --tenant-id. Without the pin, azurecli mode just asks
+ * whatever Azure CLI identity is currently active in this config dir for a
+ * token - which can silently be a different tenant than the one this
+ * specific cluster trusts, especially right after switching contexts.
+ *
+ * Only strips an existing --tenant-id from the original args when we're
+ * actually overriding it with a known-better value. If the caller doesn't
+ * know a tenant, whatever --tenant-id the kubeconfig already had (baked in
+ * at generation time) must survive untouched - dropping it silently falls
+ * back to azurecli's ambient default identity, which is frequently the wrong
+ * tenant for this specific cluster.
+ */
+function withAzureCliAuthArgs(args: string[], tenantId?: string): string[] {
   const normalized: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -32,50 +145,206 @@ function withAzureCliLoginMode(args: string[]): string[] {
       i += 1; // Skip current login mode value.
       continue;
     }
+    if (tenantId && (lower === '--tenant-id' || lower === '-t')) {
+      i += 1; // Skip current tenant value - we're overriding it below.
+      continue;
+    }
 
     normalized.push(arg);
   }
 
   normalized.push('--login', 'azurecli');
+  if (tenantId) normalized.push('--tenant-id', tenantId);
   return normalized;
 }
 
+/** Read a context's own pin (tenant id / server id last recorded for it). */
+export async function getContextPin(azureConfigDir: string, context: string): Promise<ContextPin> {
+  const pins = await readJsonFile<ContextPinFile>(pinsFilePath(azureConfigDir), {});
+  return pins[context] ?? {};
+}
+
+async function updateContextPin(azureConfigDir: string, context: string, patch: ContextPin): Promise<void> {
+  try {
+    const pins = await readJsonFile<ContextPinFile>(pinsFilePath(azureConfigDir), {});
+    pins[context] = { ...pins[context], ...patch };
+    await writeJsonFile(pinsFilePath(azureConfigDir), pins);
+  } catch (err) {
+    logWarn('kubelogin.pin.write_failed', {
+      context,
+      azureConfigDir,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
- * Get cached kubelogin token for a context in this session.
- * Returns null if no valid cached token exists.
+ * Pin a context to the tenant its Azure subscription actually belongs to,
+ * known at AKS-credential-import time straight from `az account list`
+ * (ground truth), rather than waiting to infer it reactively from whatever
+ * tenant a first, possibly-wrong-ambient-default kubelogin fetch happens to
+ * produce. This is verified Azure metadata, not a guess - a later 401 will
+ * never auto-clear it.
+ */
+export async function pinTenantId(azureConfigDir: string, context: string, tenantId: string): Promise<void> {
+  await updateContextPin(azureConfigDir, context, { tenantId, tenantSource: 'ground-truth' });
+  logInfo('kubelogin.cache.tenant_pinned', { context, tenantId, azureConfigDir });
+}
+
+/**
+ * Record a tenant a context happened to authenticate with when nothing had
+ * pinned it yet - this is a guess (whatever the ambient Azure CLI default
+ * was at fetch time), not verified, so it never overwrites an existing
+ * ground-truth pin and a later 401 is allowed to clear it again.
+ */
+async function learnTenantIdReactively(azureConfigDir: string, context: string, tenantId: string): Promise<void> {
+  const current = await getContextPin(azureConfigDir, context);
+  if (current.tenantSource === 'ground-truth') return;
+  await updateContextPin(azureConfigDir, context, { tenantId, tenantSource: 'reactive' });
+  logInfo('kubelogin.cache.tenant_learned_reactively', { context, tenantId, azureConfigDir });
+}
+
+/**
+ * Clear a context's tenant pin so the next fetch re-derives it, instead of
+ * being permanently stuck reusing a tenant that just got a token rejected.
+ * Refuses to touch a ground-truth pin - that's verified Azure metadata, so a
+ * 401 for it means something else is wrong (revoked RBAC, etc.), not a bad
+ * tenant guess.
+ */
+export async function clearTenantPinIfGuessed(azureConfigDir: string, context: string): Promise<void> {
+  const current = await getContextPin(azureConfigDir, context);
+  if (!current.tenantId || current.tenantSource === 'ground-truth') return;
+  await updateContextPin(azureConfigDir, context, { tenantId: undefined, tenantSource: undefined });
+  logInfo('kubelogin.pin.tenant_cleared', { context, azureConfigDir, previousTenantId: current.tenantId });
+}
+
+/** Record which AKS server app a context's exec plugin targets, once known. */
+export async function recordContextServerId(azureConfigDir: string, context: string, serverId: string): Promise<void> {
+  const current = await getContextPin(azureConfigDir, context);
+  if (current.serverId === serverId) return;
+  await updateContextPin(azureConfigDir, context, { serverId });
+}
+
+/**
+ * Get the cached token for a tenant + server-id pair - the actual scope a
+ * token is valid for - not for any one cluster. Every context in that tenant
+ * using that server app shares this entry. Returns null if no valid cached
+ * token exists.
  */
 export async function getCachedKubeloginToken(
   azureConfigDir: string,
-  context: string,
+  tenantId: string,
+  serverId: string,
 ): Promise<string | null> {
-  const cacheFile = path.join(azureConfigDir, '.kube', `token`);
-  try {
-    if (!fs.existsSync(cacheFile)) {
-      logInfo('kubelogin.cache.miss', { context, reason: 'file_not_found' });
-      return null;
-    }
-
-    const content = await fsp.readFile(cacheFile, 'utf8');
-    const entry = JSON.parse(content) as KubeloginCacheEntry;
-
-    // Check if token is still valid (not expired)
-
-    // expiresAt is a timestamp in milliseconds and we compare it with the current time in miliseconds
-    const currentTimeMs = Date.now();
-    if (!entry.expiresAt || entry.expiresAt < currentTimeMs) {
-      logInfo('kubelogin.cache.expired', { context, expiresAt: entry.expiresAt });
-      return null;
-    }
-
-    logInfo('kubelogin.cache.hit', { context, expiresAt: entry.expiresAt });
-    return entry.token;
-  } catch (err) {
-    logError('kubelogin.cache.read_error', {
-      context,
-      error: err instanceof Error ? err.message : String(err),
-    });
+  const tokens = await readJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {});
+  const entry = tokens[tokenKey(tenantId, serverId)];
+  if (!entry?.token) {
+    logInfo('kubelogin.cache.miss', { tenantId, serverId, reason: 'no_entry' });
     return null;
   }
+
+  // expiresAt is a timestamp in milliseconds and we compare it with the current time in miliseconds
+  const currentTimeMs = Date.now();
+  if (!entry.expiresAt || entry.expiresAt < currentTimeMs) {
+    logInfo('kubelogin.cache.expired', { tenantId, serverId, expiresAt: entry.expiresAt });
+    return null;
+  }
+
+  logInfo('kubelogin.cache.hit', { tenantId, serverId, expiresAt: entry.expiresAt });
+  return entry.token;
+}
+
+async function cacheKubeloginToken(
+  azureConfigDir: string,
+  tenantId: string,
+  serverId: string,
+  token: string,
+  expiresAt: number,
+): Promise<void> {
+  const tokens = await readJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {});
+  tokens[tokenKey(tenantId, serverId)] = { token, expiresAt };
+  await writeJsonFile(tokensFilePath(azureConfigDir), tokens);
+}
+
+/**
+ * Drop the cached token for one tenant + server-id pair so the next auth
+ * attempt fetches a fresh one instead of reusing a token the Kubernetes API
+ * server already rejected. Since the token is shared, this affects every
+ * context in that tenant using that server app - which is correct: a token
+ * rejected for one of them is the exact same bearer token every other one
+ * would also be (re)sending.
+ */
+export async function invalidateKubeloginToken(azureConfigDir: string, tenantId: string, serverId: string): Promise<void> {
+  try {
+    const tokens = await readJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {});
+    const key = tokenKey(tenantId, serverId);
+    if (!(key in tokens)) return;
+    delete tokens[key];
+    await writeJsonFile(tokensFilePath(azureConfigDir), tokens);
+    logInfo('kubelogin.cache.invalidated', { tenantId, serverId, azureConfigDir });
+  } catch (err) {
+    logWarn('kubelogin.cache.invalidate_failed', {
+      tenantId,
+      serverId,
+      azureConfigDir,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Read a context's exec plugin args straight from a kubeconfig file, without invoking kubelogin. */
+async function readContextExecArgs(kubeconfigPath: string, context: string): Promise<unknown> {
+  try {
+    const kc = new k8s.KubeConfig();
+    const content = await fsp.readFile(kubeconfigPath, 'utf8');
+    kc.loadFromString(content);
+    const ctx = kc.contexts.find((c) => c.name === context);
+    const user = ctx?.user ? kc.users.find((u) => u.name === ctx.user) : undefined;
+    return (user as any)?.exec?.args;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve which tenant/server-id a context's credentials actually belong to,
+ * consulting the sticky pin first and falling back to a cheap kubeconfig
+ * parse (no kubelogin invocation) when the server-id hasn't been learned yet,
+ * or when the tenant isn't pinned as ground truth yet - the kubeconfig's own
+ * exec args may already embed the real tenant (see extractTenantId), which
+ * for contexts that never go through subscription-import pinning (any
+ * local/pre-existing kubeconfig) is the only ground truth this context will
+ * ever get.
+ */
+export async function resolveContextIdentity(
+  azureConfigDir: string,
+  context: string,
+  kubeconfigPath?: string,
+): Promise<ContextPin> {
+  let pin = await getContextPin(azureConfigDir, context);
+  const needsServerId = !pin.serverId;
+  const needsTenantId = pin.tenantSource !== 'ground-truth';
+  if ((!needsServerId && !needsTenantId) || !kubeconfigPath) return pin;
+
+  const execArgs = await readContextExecArgs(kubeconfigPath, context);
+
+  if (needsServerId) {
+    const serverId = extractServerId(execArgs);
+    if (serverId) {
+      await recordContextServerId(azureConfigDir, context, serverId);
+      pin = { ...pin, serverId };
+    }
+  }
+
+  if (needsTenantId) {
+    const embeddedTenantId = extractTenantId(execArgs);
+    if (embeddedTenantId) {
+      await pinTenantId(azureConfigDir, context, embeddedTenantId);
+      pin = { ...pin, tenantId: embeddedTenantId, tenantSource: 'ground-truth' };
+    }
+  }
+
+  return pin;
 }
 
 /**
@@ -87,18 +356,22 @@ export async function fetchAndCacheKubeloginToken(
   kubeconfigPath: string,
   context: string,
 ): Promise<string | null> {
-  const fetchKey = buildKubeloginFetchKey(azureConfigDir, kubeconfigPath, context);
+  const pin = await resolveContextIdentity(azureConfigDir, context, kubeconfigPath);
+  // Once identity (tenant+server-id) is known, this also joins concurrent
+  // fetches across *different* contexts that share it - not just the same
+  // context - so opening several clusters in one tenant at once doesn't
+  // spawn a kubelogin process per cluster.
+  const fetchKey =
+    pin.tenantId && pin.serverId
+      ? `${azureConfigDir}::${pin.tenantId}::${pin.serverId}`
+      : `${azureConfigDir}::context::${context}`;
   const existing = kubeloginFetchInflight.get(fetchKey);
   if (existing) {
-    logInfo('kubelogin.fetch.join_inflight', { context });
+    logInfo('kubelogin.fetch.join_inflight', { context, fetchKey });
     return existing;
   }
 
-  const fetchPromise = fetchAndCacheKubeloginTokenInternal(
-    azureConfigDir,
-    kubeconfigPath,
-    context,
-  );
+  const fetchPromise = fetchAndCacheKubeloginTokenInternal(azureConfigDir, kubeconfigPath, context, pin.tenantId);
   kubeloginFetchInflight.set(fetchKey, fetchPromise);
 
   try {
@@ -112,6 +385,7 @@ async function fetchAndCacheKubeloginTokenInternal(
   azureConfigDir: string,
   kubeconfigPath: string,
   context: string,
+  knownTenantId: string | undefined,
 ): Promise<string | null> {
   try {
     logInfo('kubelogin.fetch.start', { context, kubeconfigPath, azureConfigDir });
@@ -143,13 +417,18 @@ async function fetchAndCacheKubeloginTokenInternal(
     const rawExecArgs = Array.isArray(execConfig?.args)
       ? execConfig.args.map((arg: any) => String(arg))
       : ['get-token'];
-    const execArgs = withAzureCliLoginMode(rawExecArgs);
+    const serverId = extractServerId(rawExecArgs);
+    if (serverId) await recordContextServerId(azureConfigDir, context, serverId);
+
+    const execArgs = withAzureCliAuthArgs(rawExecArgs, knownTenantId);
     logInfo('kubelogin.fetch.exec_config', {
       context,
       hasExecConfig: !!execConfig,
       rawArgsCount: rawExecArgs.length,
       argsCount: execArgs.length,
       execConfigKeys: execConfig ? Object.keys(execConfig as any) : [],
+      pinnedTenantId: knownTenantId ?? null,
+      serverId: serverId ?? null,
     });
 
     // Ensure the Azure config directory exists so the cache can live beside
@@ -199,7 +478,8 @@ async function fetchAndCacheKubeloginTokenInternal(
       const js = JSON.parse(response); // Ensure it's valid JSON
       const token = js?.status?.token;
       const expiresIn = js?.status?.expirationTimestamp;
-      logInfo('kubelogin.fetch.token_extracted', { context, hasToken: !!token, expiresIn });
+      const tenantId = token ? decodeJwtTenantId(token) : undefined;
+      logInfo('kubelogin.fetch.token_extracted', { context, hasToken: !!token, expiresIn, tenantId: tenantId ?? null });
 
       if (!token) {
         logError('kubelogin.fetch.no_token', {
@@ -208,18 +488,20 @@ async function fetchAndCacheKubeloginTokenInternal(
         return null;
       }
 
-      // Cache the token with a 1-hour expiry
-      const cacheFile = path.join(azureConfigDir, '.kube', `token`);
-      const entry: KubeloginCacheEntry = {
-        token,
-        expiresAt: Date.parse(expiresIn), // Convert expirationTimestamp to a timestamp in milliseconds
-        context,
-      };
+      if (tenantId) await learnTenantIdReactively(azureConfigDir, context, tenantId);
 
-      logInfo('kubelogin.fetch.write_cache_start', { cacheFile });
-      await fsp.mkdir(path.dirname(cacheFile), { recursive: true });
-      await fsp.writeFile(cacheFile, JSON.stringify(entry, null, 2));
-      logInfo('kubelogin.fetch.write_cache_complete', { cacheFile, expiresAt: entry.expiresAt });
+      const expiresAt = Date.parse(expiresIn);
+      if (tenantId && serverId) {
+        await cacheKubeloginToken(azureConfigDir, tenantId, serverId, token, expiresAt);
+        logInfo('kubelogin.fetch.write_cache_complete', { context, tenantId, serverId, expiresAt });
+      } else {
+        logWarn('kubelogin.fetch.not_cached', {
+          context,
+          tenantId: tenantId ?? null,
+          serverId: serverId ?? null,
+          reason: 'missing tenantId or serverId - token returned for this call only, not shared',
+        });
+      }
 
       logInfo('kubelogin.fetch.success', { context });
       return token;

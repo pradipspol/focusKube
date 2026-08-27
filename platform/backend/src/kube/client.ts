@@ -6,10 +6,12 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { HttpError, notFound } from '../util/httpError.js';
 import { logInfo, logWarn, logError } from '../util/logger.js';
+import { extractServerId, extractTenantId, getCachedKubeloginToken, getContextPin, pinTenantId, recordContextServerId } from './kubeloginCache.js';
 
 interface KubeClientOptions {
   kubeconfigPath?: string;
   fallbackContext?: string | null;
+  azureConfigDir?: string;
 }
 
 /**
@@ -190,6 +192,7 @@ class KubeManager {
       logInfo('kubeconfig.clone.complete', { target, elapsedMs: Date.now() - loadStart, operation: 'kube.configForContext' });
 
       cloned.setCurrentContext(target);
+      await this.applyCachedAzureToken(cloned, target, options.azureConfigDir);
       return cloned;
     } catch (err) {
       logError('kubeconfig.clone.failed', {
@@ -201,6 +204,62 @@ class KubeManager {
       });
       throw err;
     }
+  }
+
+  private async applyCachedAzureToken(
+    kc: k8s.KubeConfig,
+    contextName: string,
+    azureConfigDir?: string,
+  ): Promise<void> {
+    const trimmedAzureConfigDir = azureConfigDir?.trim();
+    if (!trimmedAzureConfigDir) return;
+
+    const context = kc.getContexts().find((candidate) => candidate.name === contextName);
+    const user = context?.user ? kc.getUsers().find((candidate) => candidate.name === context.user) : undefined;
+    if (!user) return;
+
+    const userWithAuth = user as any;
+    // Runs on every request, so opportunistically learn this context's
+    // server-id from its own exec config while we already have it parsed -
+    // no extra file read needed. This is what lets a context share the
+    // tenant-scoped token cache from the very first time it's used, instead
+    // of only benefiting after its own kubelogin fetch has run once.
+    const exec = userWithAuth?.exec ?? userWithAuth?.authProvider?.config?.exec ?? userWithAuth?.authProvider?.exec;
+    const serverId = extractServerId(exec?.args);
+    if (serverId) await recordContextServerId(trimmedAzureConfigDir, contextName, serverId);
+
+    let pin = await getContextPin(trimmedAzureConfigDir, contextName);
+    // Same opportunistic win as the server-id above: the exec args are
+    // already parsed, so if the kubeconfig has its own --tenant-id baked in
+    // and nothing better (subscription-import) has pinned this context yet,
+    // ground-truth-pin it now instead of waiting for a kubelogin fetch to
+    // stumble onto it (or, for local/pre-existing kubeconfigs that never go
+    // through subscription import, never learning it at all).
+    if (pin.tenantSource !== 'ground-truth') {
+      const embeddedTenantId = extractTenantId(exec?.args);
+      if (embeddedTenantId) {
+        await pinTenantId(trimmedAzureConfigDir, contextName, embeddedTenantId);
+        pin = { ...pin, tenantId: embeddedTenantId, tenantSource: 'ground-truth' };
+      }
+    }
+
+    const effectiveServerId = serverId ?? pin.serverId;
+    if (!pin.tenantId || !effectiveServerId) return;
+
+    const token = await getCachedKubeloginToken(trimmedAzureConfigDir, pin.tenantId, effectiveServerId);
+    if (!token) return;
+
+    userWithAuth.token = token;
+    delete userWithAuth.exec;
+    delete userWithAuth.authProvider;
+
+    logInfo('kubeconfig.clone.cached_azure_token_applied', {
+      context: contextName,
+      user: user.name,
+      azureConfigDir: trimmedAzureConfigDir,
+      tenantId: pin.tenantId,
+      serverId: effectiveServerId,
+    });
   }
 
   private isUsableContext(kc: k8s.KubeConfig, name: string): boolean {

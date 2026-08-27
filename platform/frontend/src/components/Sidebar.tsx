@@ -18,6 +18,9 @@ interface Props {
    * when no tab is open to supply activeTabOrigin* directly. */
   activeContextOriginSource?: 'aks' | 'eks' | 'local';
   activeContextOriginKubeconfigId?: string;
+  /** Mirrors App.tsx's suppressTreeReveal - true right after a Starred Contexts
+   * selection, so the cloud tree's location-reveal effects know to stay put. */
+  suppressTreeReveal?: boolean;
   onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onOpenExplorer: () => void;
@@ -30,7 +33,7 @@ interface Props {
   awsRefreshToken?: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string }) => Promise<void> | void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
@@ -186,6 +189,7 @@ export function Sidebar({
   activeTabOriginKubeconfigId,
   activeContextOriginSource,
   activeContextOriginKubeconfigId,
+  suppressTreeReveal,
   onSelect,
   onPin,
   onOpenExplorer,
@@ -539,6 +543,10 @@ export function Sidebar({
     // Distinguishes this rendered node from any other node that happens to share
     // the same context name (e.g. a starred entry vs. its local-kubeconfig source).
     const nodeIdentityKey = `${nodeKeyPrefix}:${resolvedSource ?? 'unknown'}:${ctx.name}`;
+    // Starred Contexts is a shortcut meant to bypass the full Azure/AWS tree -
+    // selecting through it shouldn't force that (possibly deliberately
+    // collapsed) tree open to reveal where the cluster lives.
+    const isFromStarredList = nodeKeyPrefix === 'starred';
 
     return (
       <div key={nodeIdentityKey} className="context-root">
@@ -552,7 +560,9 @@ export function Sidebar({
             }
             setConnectingContextKey(nodeIdentityKey);
             try {
-              await Promise.resolve(onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId }));
+              await Promise.resolve(
+                onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId, reveal: !isFromStarredList }),
+              );
               await new Promise(resolve => setTimeout(resolve, 300));
             } finally {
               setConnectingContextKey(undefined);
@@ -631,7 +641,9 @@ export function Sidebar({
                         }
                         setConnectingContextKey(nodeIdentityKey);
                         try {
-                          await Promise.resolve(onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId }));
+                          await Promise.resolve(
+                            onContextChange(ctx.name, { source: resolvedSource, kubeconfigId: originKubeconfigId, reveal: !isFromStarredList }),
+                          );
                           await new Promise(resolve => setTimeout(resolve, 300));
                         } finally {
                           setConnectingContextKey(undefined);
@@ -721,6 +733,7 @@ export function Sidebar({
                 view={view}
                 activeTabOriginContext={activeTabOriginContext}
                 activeTabOriginSource={activeTabOriginSource}
+                suppressTreeReveal={suppressTreeReveal}
                 orderedContexts={orderedContexts}
                 localKubeconfigs={localKubeconfigs}
                 azureSignedIn={azureSignedIn}

@@ -23,6 +23,7 @@ const POD_METRICS_BATCH_CONCURRENCY = 10;
 export type KubeOptions = {
   kubeconfigPath: string;
   fallbackContext: string | null;
+  azureConfigDir?: string;
 };
 
 function wrapInteractiveAzureAuthError(err: unknown, source: SessionScope): never {
@@ -183,8 +184,9 @@ export class ResourcesService {
     options: KubeOptions,
   ) {
     const api = (await kube.rawConfig(context, options)).makeApiClient(k8s.CustomObjectsApi);
-    const metricsRes = await callK8s(() =>
-      api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', namespace, 'pods', podName),
+    const metricsRes = await callK8s(
+      () => api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', namespace, 'pods', podName),
+      { action: 'read', plural: 'pods', context, namespace, name: podName, azureConfigDir: options.azureConfigDir },
     );
     return buildPodMetricsSnapshot((metricsRes as any).body ?? metricsRes);
   }
@@ -216,8 +218,9 @@ export class ResourcesService {
       const chunkItems = await Promise.all(
         chunk.map(async (pod) => {
           try {
-            const metricsRes = await callK8s(() =>
-              api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', pod.namespace!, 'pods', pod.name),
+            const metricsRes = await callK8s(
+              () => api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', pod.namespace!, 'pods', pod.name),
+              { action: 'read', plural: 'pods', context, namespace: pod.namespace, name: pod.name, azureConfigDir: options.azureConfigDir },
             );
             return {
               name: pod.name,

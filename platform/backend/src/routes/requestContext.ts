@@ -44,10 +44,11 @@ export async function resolveScopedRequestContext(
   };
 }
 
-export function kubeOptionsForScope(req: Request, scoped: ScopedRequestContext): { kubeconfigPath: string; fallbackContext: string | null } {
+export function kubeOptionsForScope(req: Request, scoped: ScopedRequestContext): { kubeconfigPath: string; fallbackContext: string | null; azureConfigDir: string } {
   return {
     kubeconfigPath: scoped.selectedKubeconfigPath,
     fallbackContext: req.userSession.activeContext,
+    azureConfigDir: scoped.selectedAzureConfigDir,
   };
 }
 

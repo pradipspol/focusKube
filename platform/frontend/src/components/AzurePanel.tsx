@@ -8,7 +8,7 @@ import { uiText } from '../text';
 interface Props {
   azureSource?: AzureScope;
   onContextsChanged: () => Promise<void> | void;
-  onPickContext: (name: string) => void;
+  onPickContext: (name: string) => Promise<void> | void;
   /** Called when the set of signed-in Azure accounts changes (login/logout). */
   onAccountsChanged?: (account: AzureAccount | null, scope?: AzureScope) => void;
 }
@@ -146,7 +146,7 @@ export function AzurePanel({
       setMessage(`${uiText.azure.importCredsPrefix} ${c.name}.`);
       setMessageIsError(false);
       await onContextsChanged();
-      onPickContext(c.name);
+      await onPickContext(c.name);
     },
     onError: (e) => {
       setMessage((e as Error).message);

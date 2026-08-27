@@ -6,11 +6,13 @@ import {
   azListAks,
   azLogout,
   azListSubscriptions,
+  azListTenants,
   invalidateAzureCliLoginCache,
   azSetSubscription,
 } from '../azure/azure.js';
 import { kube } from '../kube/client.js';
 import { removeContextsFromKubeconfigFile } from '../kube/kubeconfigFile.js';
+import { pinTenantId } from '../kube/kubeloginCache.js';
 import { badRequest } from '../util/httpError.js';
 import {
   azureConfigDirForSource,
@@ -43,12 +45,6 @@ const azureAksCaches = new Map<string, AsyncRefreshCache<{ clusters: unknown[] }
 // one in-flight import instead of letting them both run.
 const aksCredentialsInflight = new Map<string, Promise<{ contexts: Awaited<ReturnType<typeof kube.getContexts>>; activeContext: string | null | undefined }>>();
 
-type SubscriptionSummary = {
-  id: string;
-  name: string;
-  isDefault: boolean;
-};
-
 type RawSubscription = {
   id: string;
   name: string;
@@ -58,19 +54,25 @@ type RawSubscription = {
   user?: { name?: string; type?: string };
 };
 
+type RawTenant = {
+  tenantId?: string;
+  displayName?: string;
+};
+
 /** A signed-in Azure identity, grouped with the subscriptions it owns. */
 type AzureAccountGroup = {
   email: string;
   userType?: string;
-  subscriptions: { id: string; name: string; isDefault: boolean; tenantId?: string }[];
+  subscriptions: { id: string; name: string; isDefault: boolean; tenantId?: string; tenantDisplayName?: string }[];
 };
 
 /**
  * The Azure CLI config dir can hold several signed-in accounts at once. Group the
  * flat `az account list --all` output by the owning identity (user.name) so the UI
- * can present one node per account.
+ * can present one node per account. `tenantNames` maps tenantId -> friendly display
+ * name (from `az account tenant list`), since subscriptions only carry the bare id.
  */
-function groupAccounts(subscriptions: RawSubscription[]): AzureAccountGroup[] {
+function groupAccounts(subscriptions: RawSubscription[], tenantNames: Map<string, string>): AzureAccountGroup[] {
   const byEmail = new Map<string, AzureAccountGroup>();
   for (const sub of subscriptions) {
     const email = sub.user?.name || 'Unknown account';
@@ -84,6 +86,7 @@ function groupAccounts(subscriptions: RawSubscription[]): AzureAccountGroup[] {
       name: sub.name,
       isDefault: !!sub.isDefault,
       tenantId: sub.tenantId,
+      tenantDisplayName: sub.tenantId ? tenantNames.get(sub.tenantId) : undefined,
     });
   }
   for (const group of byEmail.values()) {
@@ -181,8 +184,16 @@ azureRouter.get('/accounts', withRouteErrorLogging('azure', 'GET /accounts', asy
   res.json(
     await cache.get(
       async () => {
-        const subscriptions = (await azListSubscriptions({ env: envForSource(req, source) })) as RawSubscription[];
-        return { accounts: groupAccounts(subscriptions) };
+        const env = envForSource(req, source);
+        const [subscriptions, tenants] = await Promise.all([
+          azListSubscriptions({ env }) as Promise<RawSubscription[]>,
+          azListTenants({ env }) as Promise<RawTenant[]>,
+        ]);
+        const tenantNames = new Map(
+          tenants.filter((t): t is RawTenant & { tenantId: string; displayName: string } => !!t.tenantId && !!t.displayName)
+            .map((t) => [t.tenantId, t.displayName]),
+        );
+        return { accounts: groupAccounts(subscriptions, tenantNames) };
       },
       {
         fallback: () => ({ accounts: [] }),
@@ -199,10 +210,12 @@ azureRouter.get('/accounts', withRouteErrorLogging('azure', 'GET /accounts', asy
 azureRouter.post('/login', withRouteErrorLogging('azure', 'POST /login', async (req, res) => {
   setRequestOperation(req, 'azure.login.start');
   const source = requestedSource(req);
+  const body = z.object({ tenantId: z.string().min(1).optional() }).safeParse(req.body ?? {});
+  const tenantId = body.success ? body.data.tenantId : undefined;
   const azureConfigDir = azureConfigDirForSource(req.userSession, source);
   invalidateAzureCliLoginCache(azureConfigDir);
   invalidateAzureSessionCaches(req);
-  const info = await azureLoginManagerForSource(req.userSession, source).start();
+  const info = await azureLoginManagerForSource(req.userSession, source).start(tenantId);
   res.json(info);
 }));
 
@@ -342,7 +355,7 @@ azureRouter.post('/aks/credentials', async (req, res) => {
         (await kube.getContexts(req.userSession.cloudKubeconfigPath, req.userSession.activeContext)).map((ctx) => ctx.name),
       );
 
-      const subscriptions = (await azListSubscriptions({ env: envForSource(req, source) })) as SubscriptionSummary[];
+      const subscriptions = (await azListSubscriptions({ env: envForSource(req, source) })) as RawSubscription[];
       const selectedSubscription = body.data.subscription
         ? subscriptions.find((sub) => sub.id === body.data.subscription)
         : subscriptions.find((sub) => sub.isDefault) ?? subscriptions[0];
@@ -378,6 +391,13 @@ azureRouter.post('/aks/credentials', async (req, res) => {
             resourceGroup: body.data.resourceGroup,
             clusterName: body.data.name,
           });
+          // Pin this context to the tenant its subscription actually belongs
+          // to (ground truth from `az account list`), so kubelogin always
+          // requests that tenant for it instead of whatever tenant happens
+          // to be the shared Azure CLI session's ambient default.
+          if (selectedSubscription?.tenantId) {
+            await pinTenantId(azureConfigDirForSource(req.userSession, source), ctx.name, selectedSubscription.tenantId);
+          }
         }
       }
 

@@ -6,6 +6,7 @@ import * as k8s from '@kubernetes/client-node';
 import { kube } from '../kube/client.js';
 import { resourceWatchPath, resolveKind } from '../kube/resources.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
+import { describeK8sError } from '../util/k8sError.js';
 import { activeSessionAzureConfigDir, activeSessionKubeconfigPath } from '../auth/session.js';
 import { resolveAuthFromHeaders } from '../auth/session.js';
 import { hasCapability } from '../auth/rbac.js';
@@ -184,6 +185,7 @@ async function handleLogs(ws: WebSocket, req: any) {
       await kube.rawConfig(context, {
         kubeconfigPath,
         fallbackContext: session.activeContext,
+        azureConfigDir,
       }),
     );
   } catch (err) {
@@ -201,7 +203,7 @@ async function handleLogs(ws: WebSocket, req: any) {
       timestamps: p.timestamps,
     });
   } catch (err) {
-    ws.send(`error: ${(err as Error).message}`);
+    ws.send(`error: ${await describeK8sError(err, { azureConfigDir, context })}`);
     ws.close();
     return;
   }
@@ -240,6 +242,7 @@ async function handleExec(ws: WebSocket, req: any) {
       await kube.rawConfig(context, {
         kubeconfigPath,
         fallbackContext: session.activeContext,
+        azureConfigDir,
       }),
     );
   } catch (err) {
@@ -269,7 +272,7 @@ async function handleExec(ws: WebSocket, req: any) {
       },
     )) as unknown as WebSocket;
   } catch (err) {
-    ws.send(`error: ${(err as Error).message}`);
+    ws.send(`error: ${await describeK8sError(err, { azureConfigDir, context })}`);
     ws.close();
     return;
   }
@@ -382,6 +385,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
       execConfig = await kube.rawConfig(context, {
         kubeconfigPath: resolvedKubeconfigPath,
         fallbackContext: session.activeContext,
+        azureConfigDir: resolvedAzureConfigDir,
       });
     } catch (err) {
       send({ type: 'ERROR', message: (err as Error).message });
@@ -609,6 +613,7 @@ async function handleWatch(ws: WebSocket, req: any) {
       await kube.rawConfig(context, {
         kubeconfigPath,
         fallbackContext: session.activeContext,
+        azureConfigDir,
       }),
     );
   } catch (err) {
@@ -646,7 +651,7 @@ async function handleWatch(ws: WebSocket, req: any) {
           object: obj,
         }));
       },
-      (err: any) => {
+      async (err: any) => {
         if (closed) return;
         const statusCode = Number(err?.statusCode ?? err?.response?.statusCode ?? err?.code ?? 0);
         if (statusCode === 410 && ws.readyState === WebSocket.OPEN) {
@@ -659,7 +664,8 @@ async function handleWatch(ws: WebSocket, req: any) {
           );
         }
         if (err && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'ERROR', message: err.message ?? String(err), status: statusCode || undefined }));
+          const message = await describeK8sError(err, { azureConfigDir, context });
+          ws.send(JSON.stringify({ type: 'ERROR', message, status: statusCode || undefined }));
         }
         try {
           ws.close();
@@ -669,7 +675,7 @@ async function handleWatch(ws: WebSocket, req: any) {
       },
     );
   } catch (err) {
-    ws.send(JSON.stringify({ type: 'ERROR', message: (err as Error).message }));
+    ws.send(JSON.stringify({ type: 'ERROR', message: await describeK8sError(err, { azureConfigDir, context }) }));
     ws.close();
   }
 }
@@ -736,7 +742,7 @@ async function handleMetrics(ws: WebSocket, req: any) {
   const fetchMetrics = async () => {
     if (closed || ws.readyState !== WebSocket.OPEN) return;
     try {
-      const api = (await kube.rawConfig(context, { kubeconfigPath, fallbackContext: session.activeContext })).makeApiClient(k8s.CustomObjectsApi);
+      const api = (await kube.rawConfig(context, { kubeconfigPath, fallbackContext: session.activeContext, azureConfigDir })).makeApiClient(k8s.CustomObjectsApi);
       const metricsRes = await (async () => {
         try {
           return await api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', p.namespace, 'pods', p.pod);
@@ -768,7 +774,7 @@ async function handleMetrics(ws: WebSocket, req: any) {
       }));
     } catch (err) {
       if (!closed && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', message: (err as Error).message }));
+        ws.send(JSON.stringify({ type: 'ERROR', message: await describeK8sError(err, { azureConfigDir, context }) }));
       }
     }
   };

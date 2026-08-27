@@ -257,8 +257,11 @@ export const api = {
     request<{ account: AzureAccount | null }>(withQuery('/azure/account', { source })),
   azureAccounts: (source?: AzureScope) =>
     request<{ accounts: AzureAccountGroup[] }>(withQuery('/azure/accounts', { source })),
-  azureLogin: (source?: AzureScope) =>
-    request<DeviceCodeInfo>(withQuery('/azure/login', { source }), { method: 'POST' }),
+  azureLogin: (source?: AzureScope, tenantId?: string) =>
+    request<DeviceCodeInfo>(withQuery('/azure/login', { source }), {
+      method: 'POST',
+      body: JSON.stringify({ ...(tenantId ? { tenantId } : {}) }),
+    }),
   azureLoginStatus: (source?: AzureScope) =>
     request<AzureLoginStatus>(withQuery('/azure/login/status', { source })),
   azureLogout: (username?: string, source?: AzureScope) =>

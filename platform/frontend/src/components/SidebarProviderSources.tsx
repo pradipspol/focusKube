@@ -24,11 +24,46 @@ type LiveAksSubscriptionNode = {
   resourceGroups: LiveAksResourceGroupNode[];
 };
 
+/** Subscriptions grouped by the Azure AD tenant they actually belong to - one
+ * signed-in account can have subscriptions across several tenants. */
+type LiveAksTenantNode = {
+  id: string;
+  name?: string;
+  subscriptions: LiveAksSubscriptionNode[];
+};
+
 type LiveAksAccountNode = {
   email: string;
   userType?: string;
-  subscriptions: LiveAksSubscriptionNode[];
+  tenants: LiveAksTenantNode[];
 };
+
+const UNKNOWN_TENANT_KEY = 'unknown';
+
+function groupSubscriptionsByTenant(
+  subscriptions: { id: string; name: string; tenantId?: string; tenantDisplayName?: string }[],
+): LiveAksTenantNode[] {
+  const byTenant = new Map<string, { name?: string; subs: LiveAksSubscriptionNode[] }>();
+  for (const s of subscriptions) {
+    const tenantId = s.tenantId || UNKNOWN_TENANT_KEY;
+    const bucket = byTenant.get(tenantId) ?? { name: undefined, subs: [] };
+    bucket.name ??= s.tenantDisplayName;
+    bucket.subs.push({ id: s.id, name: s.name, resourceGroups: [] });
+    byTenant.set(tenantId, bucket);
+  }
+  return Array.from(byTenant.entries())
+    .map(([id, { name, subs }]) => ({
+      id,
+      name,
+      subscriptions: subs.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+}
+
+function tenantLabel(tenant: LiveAksTenantNode): string {
+  if (tenant.id === UNKNOWN_TENANT_KEY) return 'Unknown tenant';
+  return tenant.name ?? `Tenant ${tenant.id.slice(0, 8)}…`;
+}
 
 type LiveEksRegionNode = {
   name: string;
@@ -58,6 +93,9 @@ interface Props {
   view?: View;
   activeTabOriginContext?: string;
   activeTabOriginSource?: 'aks' | 'eks' | 'local';
+  /** True right after a Starred Contexts selection - the reveal effects below
+   * skip forcing this tree open in that case (see the useEffect above them). */
+  suppressTreeReveal?: boolean;
   orderedContexts: KubeContext[];
   localKubeconfigs: LocalKubeconfigSummary[];
   azureSignedIn: boolean;
@@ -78,7 +116,7 @@ interface Props {
     originSource?: 'aks' | 'eks' | 'local',
     originKubeconfigId?: string,
   ) => React.ReactNode;
-  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string }) => Promise<void> | void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
   onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
@@ -98,6 +136,7 @@ export function SidebarProviderSources({
   view,
   activeTabOriginContext,
   activeTabOriginSource,
+  suppressTreeReveal,
   orderedContexts,
   localKubeconfigs,
   azureSignedIn,
@@ -164,9 +203,7 @@ export function SidebarProviderSources({
       const accounts = (await api.azureAccounts('cloud')).accounts.map((account) => ({
         email: account.email,
         userType: account.userType,
-        subscriptions: account.subscriptions
-          .map((s) => ({ id: s.id, name: s.name, resourceGroups: [] as LiveAksResourceGroupNode[] }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
+        tenants: groupSubscriptionsByTenant(account.subscriptions),
       }));
       setAzureAccounts(accounts);
     } catch (err) {
@@ -201,9 +238,12 @@ export function SidebarProviderSources({
       setAzureAccounts((current) =>
         current.map((account) => ({
           ...account,
-          subscriptions: account.subscriptions.map((sub) =>
-            sub.id === subscriptionId ? { ...sub, resourceGroups } : sub,
-          ),
+          tenants: account.tenants.map((tenant) => ({
+            ...tenant,
+            subscriptions: tenant.subscriptions.map((sub) =>
+              sub.id === subscriptionId ? { ...sub, resourceGroups } : sub,
+            ),
+          })),
         })),
       );
     } catch (err) {
@@ -309,9 +349,7 @@ export function SidebarProviderSources({
         const accounts = (await api.azureAccounts('cloud')).accounts.map((account) => ({
           email: account.email,
           userType: account.userType,
-          subscriptions: account.subscriptions
-            .map((s) => ({ id: s.id, name: s.name, resourceGroups: [] as LiveAksResourceGroupNode[] }))
-            .sort((a, b) => a.name.localeCompare(b.name)),
+          tenants: groupSubscriptionsByTenant(account.subscriptions),
         }));
 
         if (accounts.length > 0) {
@@ -431,62 +469,71 @@ export function SidebarProviderSources({
   }, [activeTabOriginContext, activeTabOriginSource, orderedContexts]);
 
   useEffect(() => {
+    if (suppressTreeReveal) return;
     if (activeTabTargetContext?.source?.provider === 'aks') expandGroup('azureRoot');
     if (activeTabTargetContext?.source?.provider === 'eks') expandGroup('awsRoot');
-  }, [activeTabTargetContext, expandGroup]);
+  }, [activeTabTargetContext, expandGroup, suppressTreeReveal]);
 
   // Single reactive trigger for probing cloud accounts: fires whenever the root is
   // expanded (by click or by the effect above) and nothing's been loaded yet.
   useEffect(() => {
     if (isGroupCollapsed('azureRoot') || azureAccounts.length > 0 || loadingSubscriptions || aksError) return;
     void probeAzureCloudAccounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isGroupCollapsed, azureAccounts.length, loadingSubscriptions, aksError]);
 
   useEffect(() => {
     if (isGroupCollapsed('awsRoot') || awsAccountNode || loadingAwsTree || awsError) return;
     void probeAwsCloudAccounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isGroupCollapsed, awsAccountNode, loadingAwsTree, awsError]);
 
-  // Once the matching subscription is known, reveal it (and its owning account) too.
+  // Once the matching subscription is known, reveal it (and its owning account/tenant) too.
   useEffect(() => {
+    if (suppressTreeReveal) return;
     const ctx = activeTabTargetContext;
     if (!ctx || ctx.source?.provider !== 'aks') return;
-    for (const account of azureAccounts) {
-      const sub = account.subscriptions.find(
-        (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
-      );
-      if (sub) {
-        expandGroup(`azure-account:${account.email}`);
-        expandGroup(`azure-sub:${sub.id}`);
-        break;
+    findMatchingSubscription: for (const account of azureAccounts) {
+      for (const tenant of account.tenants) {
+        const sub = tenant.subscriptions.find(
+          (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
+        );
+        if (sub) {
+          expandGroup(`azure-account:${account.email}`);
+          expandGroup(`azure-account:${account.email}:tenant:${tenant.id}`);
+          expandGroup(`azure-sub:${sub.id}`);
+          break findMatchingSubscription;
+        }
       }
     }
-  }, [activeTabTargetContext, azureAccounts, expandGroup]);
+  }, [activeTabTargetContext, azureAccounts, expandGroup, suppressTreeReveal]);
 
   // ...and once that subscription's resource groups load, reveal the matching one.
   useEffect(() => {
+    if (suppressTreeReveal) return;
     const ctx = activeTabTargetContext;
     if (!ctx || ctx.source?.provider !== 'aks' || !ctx.source.resourceGroup) return;
-    for (const account of azureAccounts) {
-      const sub = account.subscriptions.find(
-        (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
-      );
-      const rg = sub?.resourceGroups.find((r) => r.name === ctx.source?.resourceGroup);
-      if (rg) {
-        expandGroup(`azure-sub:${sub!.id}:rg:${rg.name}`);
-        break;
+    findMatchingResourceGroup: for (const account of azureAccounts) {
+      for (const tenant of account.tenants) {
+        const sub = tenant.subscriptions.find(
+          (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
+        );
+        const rg = sub?.resourceGroups.find((r) => r.name === ctx.source?.resourceGroup);
+        if (rg) {
+          expandGroup(`azure-sub:${sub!.id}:rg:${rg.name}`);
+          break findMatchingResourceGroup;
+        }
       }
     }
-  }, [activeTabTargetContext, azureAccounts, expandGroup]);
+  }, [activeTabTargetContext, azureAccounts, expandGroup, suppressTreeReveal]);
 
   // AWS has no account/resource-group nesting in the tree — region is the only level.
   useEffect(() => {
+    if (suppressTreeReveal) return;
     const ctx = activeTabTargetContext;
     if (!ctx || ctx.source?.provider !== 'eks' || !ctx.source.region) return;
     expandGroup(`aws-region:${ctx.source.region}`);
-  }, [activeTabTargetContext, expandGroup]);
+  }, [activeTabTargetContext, expandGroup, suppressTreeReveal]);
 
   // Expand/collapse state persists across reloads, but resource groups are only ever
   // fetched from the subscription toggle's onClick. A subscription restored already
@@ -494,33 +541,37 @@ export function SidebarProviderSources({
   // read as "no resource groups found") until the user collapses and re-expands it.
   useEffect(() => {
     for (const account of azureAccounts) {
-      for (const sub of account.subscriptions) {
-        if (isGroupCollapsed(`azure-sub:${sub.id}`) || loadingResourceGroups[sub.id] || subscriptionClusterCache[sub.id]) continue;
-        fetchResourceGroupsForSubscription(sub.id).catch(() => {
-          /* handled in state */
-        });
+      for (const tenant of account.tenants) {
+        for (const sub of tenant.subscriptions) {
+          if (isGroupCollapsed(`azure-sub:${sub.id}`) || loadingResourceGroups[sub.id] || subscriptionClusterCache[sub.id]) continue;
+          fetchResourceGroupsForSubscription(sub.id).catch(() => {
+            /* handled in state */
+          });
+        }
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [azureAccounts, isGroupCollapsed]);
 
   // Same restored-expanded-with-no-data gap one level down: a resource group left
   // expanded from a previous session needs its clusters fetched too.
   useEffect(() => {
     for (const account of azureAccounts) {
-      for (const sub of account.subscriptions) {
-        for (const rg of sub.resourceGroups) {
-          const rgCacheKey = `${sub.id}:${rg.name}`;
-          if (isGroupCollapsed(`azure-sub:${sub.id}:rg:${rg.name}`) || loadingClusters[rgCacheKey] || resourceGroupClusters[rgCacheKey]) {
-            continue;
+      for (const tenant of account.tenants) {
+        for (const sub of tenant.subscriptions) {
+          for (const rg of sub.resourceGroups) {
+            const rgCacheKey = `${sub.id}:${rg.name}`;
+            if (isGroupCollapsed(`azure-sub:${sub.id}:rg:${rg.name}`) || loadingClusters[rgCacheKey] || resourceGroupClusters[rgCacheKey]) {
+              continue;
+            }
+            fetchClustersForResourceGroup({ subscriptionId: sub.id, resourceGroup: rg.name }).catch(() => {
+              /* handled in state */
+            });
           }
-          fetchClustersForResourceGroup({ subscriptionId: sub.id, resourceGroup: rg.name }).catch(() => {
-            /* handled in state */
-          });
         }
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [azureAccounts, isGroupCollapsed]);
 
   useEffect(() => {
@@ -751,152 +802,174 @@ export function SidebarProviderSources({
                     )}
                     {(collapsed || accountExpanded) && (
                       <div className="aks-tree-children">
-                        {accountNode.subscriptions.map((subscriptionNode) => {
-                          const subKey = `azure-sub:${subscriptionNode.id}`;
-                          const subExpanded = !isGroupCollapsed(subKey);
+                        {accountNode.tenants.map((tenantNode) => {
+                          const tenantKey = `azure-account:${accountNode.email}:tenant:${tenantNode.id}`;
+                          const tenantExpanded = !isGroupCollapsed(tenantKey);
                           return (
-                            <div key={subKey} className="context-root">
+                            <div key={tenantKey} className="context-root">
                               {!collapsed && (
                                 <button
                                   className="k8sexplorer-title k8sexplorer-toggle aks-tree-toggle"
-                                  onClick={() => {
-                                    const nextExpanded = isGroupCollapsed(subKey);
-                                    toggleGroup(subKey);
-                                    if (nextExpanded) {
-                                      fetchResourceGroupsForSubscription(subscriptionNode.id).catch(() => {
-                                        /* handled in state */
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => toggleGroup(tenantKey)}
+                                  title={tenantNode.id === UNKNOWN_TENANT_KEY ? undefined : tenantNode.id}
                                 >
-                                  <span>{subExpanded ? '▾' : '▸'}</span>
-                                  <span>{subscriptionNode.name}</span>
-                                  {loadingResourceGroups[subscriptionNode.id] && (
-                                    <span className="tiny-spinner" aria-label="loading resource groups" />
-                                  )}
+                                  <span>{tenantExpanded ? '▾' : '▸'}</span>
+                                  <span>{tenantLabel(tenantNode)}</span>
                                 </button>
                               )}
-                              {(collapsed || subExpanded) && (
+                              {(collapsed || tenantExpanded) && (
                                 <div className="aks-tree-children">
-                                  {!collapsed &&
-                                    !loadingResourceGroups[subscriptionNode.id] &&
-                                    subscriptionNode.resourceGroups.length === 0 && (
-                                      <div className="sidebar-hint">{uiText.sidebar.noResourceGroups}</div>
-                                    )}
-                                  {subscriptionNode.resourceGroups.map((resourceGroupNode) => {
-                                    const rgKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}`;
-                                    const rgExpanded = !isGroupCollapsed(rgKey);
-                                    const rgCacheKey = `${subscriptionNode.id}:${resourceGroupNode.name}`;
-                                    const clusters = resourceGroupClusters[rgCacheKey] ?? [];
+                                  {tenantNode.subscriptions.map((subscriptionNode) => {
+                                    const subKey = `azure-sub:${subscriptionNode.id}`;
+                                    const subExpanded = !isGroupCollapsed(subKey);
                                     return (
-                                      <div key={rgKey} className="context-root">
+                                      <div key={subKey} className="context-root">
                                         {!collapsed && (
                                           <button
                                             className="k8sexplorer-title k8sexplorer-toggle aks-tree-toggle"
                                             onClick={() => {
-                                              const nextExpanded = isGroupCollapsed(rgKey);
-                                              toggleGroup(rgKey);
+                                              const nextExpanded = isGroupCollapsed(subKey);
+                                              toggleGroup(subKey);
                                               if (nextExpanded) {
-                                                fetchClustersForResourceGroup({
-                                                  subscriptionId: subscriptionNode.id,
-                                                  resourceGroup: resourceGroupNode.name,
-                                                }).catch(() => {
+                                                fetchResourceGroupsForSubscription(subscriptionNode.id).catch(() => {
                                                   /* handled in state */
                                                 });
                                               }
                                             }}
                                           >
-                                            <span>{rgExpanded ? '▾' : '▸'}</span>
-                                            <span>{resourceGroupNode.name}</span>
-                                            {loadingClusters[rgCacheKey] && (
-                                              <span className="tiny-spinner" aria-label="loading clusters" />
+                                            <span>{subExpanded ? '▾' : '▸'}</span>
+                                            <span>{subscriptionNode.name}</span>
+                                            {loadingResourceGroups[subscriptionNode.id] && (
+                                              <span className="tiny-spinner" aria-label="loading resource groups" />
                                             )}
                                           </button>
                                         )}
-                                        {(collapsed || rgExpanded) && (
+                                        {(collapsed || subExpanded) && (
                                           <div className="aks-tree-children">
-                                            {!collapsed && !loadingClusters[rgCacheKey] && clusters.length === 0 && (
-                                              <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
-                                            )}
-                                            {clusters.map((cluster) => {
-                                              const clusterNodeKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}:cluster:${cluster.name}`;
-                                              const clusterExpanded = !isGroupCollapsed(clusterNodeKey);
-                                              const clusterLoading = !!loadingImportedContexts[clusterNodeKey];
-                                              const matchingContexts = matchContextsForCluster(
-                                                orderedContexts,
-                                                subscriptionNode.id,
-                                                subscriptionNode.name,
-                                                cluster.name,
-                                              );
+                                            {!collapsed &&
+                                              !loadingResourceGroups[subscriptionNode.id] &&
+                                              subscriptionNode.resourceGroups.length === 0 && (
+                                                <div className="sidebar-hint">{uiText.sidebar.noResourceGroups}</div>
+                                              )}
+                                            {subscriptionNode.resourceGroups.map((resourceGroupNode) => {
+                                              const rgKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}`;
+                                              const rgExpanded = !isGroupCollapsed(rgKey);
+                                              const rgCacheKey = `${subscriptionNode.id}:${resourceGroupNode.name}`;
+                                              const clusters = resourceGroupClusters[rgCacheKey] ?? [];
                                               return (
-                                                <div key={clusterNodeKey} className="context-root">
-                                                  <div
-                                                    className="nav-item context-item"
-                                                    title={cluster.name}
-                                                    onClick={() => {
-                                                      const nextExpanded = isGroupCollapsed(clusterNodeKey);
-                                                      toggleGroup(clusterNodeKey);
-                                                      if (!nextExpanded) return;
-                                                      // Guard against firing a second `az aks get-credentials` while one
-                                                      // is still in flight for this cluster (e.g. a rapid double-click) -
-                                                      // two concurrent writes to the same kubeconfig file can race and
-                                                      // leave a duplicated context entry behind.
-                                                      if (clusterLoading) return;
-
-                                                      void (async () => {
-                                                        setLoadingImportedContexts((current) => ({
-                                                          ...current,
-                                                          [clusterNodeKey]: true,
-                                                        }));
-                                                        await api.azureAksCredentials({
-                                                          resourceGroup: resourceGroupNode.name,
-                                                          name: cluster.name,
-                                                          subscription: subscriptionNode.id,
-                                                        });
-                                                        const contextsPayload = await api.getContexts();
-                                                        queryClient.setQueryData(['contexts'], contextsPayload);
-                                                        const selectedContext =
-                                                          contextsPayload.active ??
-                                                          matchContextsForCluster(
-                                                            contextsPayload.contexts,
-                                                            subscriptionNode.id,
-                                                            subscriptionNode.name,
-                                                            cluster.name,
-                                                          )[0]?.name;
-                                                        if (selectedContext) {
-                                                          onContextChange(selectedContext, { source: 'aks' });
-                                                        }
-                                                      })()
-                                                        .catch(() => {
-                                                          /* handled in state */
-                                                        })
-                                                        .finally(() => {
-                                                          setLoadingImportedContexts((current) => {
-                                                            const next = { ...current };
-                                                            delete next[clusterNodeKey];
-                                                            return next;
+                                                <div key={rgKey} className="context-root">
+                                                  {!collapsed && (
+                                                    <button
+                                                      className="k8sexplorer-title k8sexplorer-toggle aks-tree-toggle"
+                                                      onClick={() => {
+                                                        const nextExpanded = isGroupCollapsed(rgKey);
+                                                        toggleGroup(rgKey);
+                                                        if (nextExpanded) {
+                                                          fetchClustersForResourceGroup({
+                                                            subscriptionId: subscriptionNode.id,
+                                                            resourceGroup: resourceGroupNode.name,
+                                                          }).catch(() => {
+                                                            /* handled in state */
                                                           });
-                                                        });
-                                                    }}
-                                                  >
-                                                    <span className="context-label-wrap">
-                                                      {!collapsed && (
-                                                        <span className="context-caret">{clusterExpanded ? '▾' : '▸'}</span>
+                                                        }
+                                                      }}
+                                                    >
+                                                      <span>{rgExpanded ? '▾' : '▸'}</span>
+                                                      <span>{resourceGroupNode.name}</span>
+                                                      {loadingClusters[rgCacheKey] && (
+                                                        <span className="tiny-spinner" aria-label="loading clusters" />
                                                       )}
-                                                      <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
-                                                    </span>
-                                                    {!collapsed && clusterLoading && (
-                                                      <span className="tiny-spinner" aria-label="loading context" />
-                                                    )}
-                                                  </div>
-                                                  {(collapsed || clusterExpanded) && (
+                                                    </button>
+                                                  )}
+                                                  {(collapsed || rgExpanded) && (
                                                     <div className="aks-tree-children">
-                                                      {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
-                                                        <div className="sidebar-hint">{uiText.sidebar.noContextImported}</div>
+                                                      {!collapsed && !loadingClusters[rgCacheKey] && clusters.length === 0 && (
+                                                        <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
                                                       )}
-                                                      {matchingContexts.map((ctx) =>
-                                                        renderContextNode(ctx, `aks-context:${clusterNodeKey}`, undefined, undefined, 'aks'),
-                                                      )}
+                                                      {clusters.map((cluster) => {
+                                                        const clusterNodeKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}:cluster:${cluster.name}`;
+                                                        const clusterExpanded = !isGroupCollapsed(clusterNodeKey);
+                                                        const clusterLoading = !!loadingImportedContexts[clusterNodeKey];
+                                                        const matchingContexts = matchContextsForCluster(
+                                                          orderedContexts,
+                                                          subscriptionNode.id,
+                                                          subscriptionNode.name,
+                                                          cluster.name,
+                                                        );
+                                                        return (
+                                                          <div key={clusterNodeKey} className="context-root">
+                                                            <div
+                                                              className="nav-item context-item"
+                                                              title={cluster.name}
+                                                              onClick={() => {
+                                                                const nextExpanded = isGroupCollapsed(clusterNodeKey);
+                                                                toggleGroup(clusterNodeKey);
+                                                                if (!nextExpanded) return;
+                                                                // Guard against firing a second `az aks get-credentials` while one
+                                                                // is still in flight for this cluster (e.g. a rapid double-click) -
+                                                                // two concurrent writes to the same kubeconfig file can race and
+                                                                // leave a duplicated context entry behind.
+                                                                if (clusterLoading) return;
+          
+                                                                void (async () => {
+                                                                  setLoadingImportedContexts((current) => ({
+                                                                    ...current,
+                                                                    [clusterNodeKey]: true,
+                                                                  }));
+                                                                  await api.azureAksCredentials({
+                                                                    resourceGroup: resourceGroupNode.name,
+                                                                    name: cluster.name,
+                                                                    subscription: subscriptionNode.id,
+                                                                  });
+                                                                  const contextsPayload = await api.getContexts();
+                                                                  queryClient.setQueryData(['contexts'], contextsPayload);
+                                                                  const selectedContext =
+                                                                    contextsPayload.active ??
+                                                                    matchContextsForCluster(
+                                                                      contextsPayload.contexts,
+                                                                      subscriptionNode.id,
+                                                                      subscriptionNode.name,
+                                                                      cluster.name,
+                                                                    )[0]?.name;
+                                                                  if (selectedContext) {
+                                                                    onContextChange(selectedContext, { source: 'aks' });
+                                                                  }
+                                                                })()
+                                                                  .catch(() => {
+                                                                    /* handled in state */
+                                                                  })
+                                                                  .finally(() => {
+                                                                    setLoadingImportedContexts((current) => {
+                                                                      const next = { ...current };
+                                                                      delete next[clusterNodeKey];
+                                                                      return next;
+                                                                    });
+                                                                  });
+                                                              }}
+                                                            >
+                                                              <span className="context-label-wrap">
+                                                                {!collapsed && (
+                                                                  <span className="context-caret">{clusterExpanded ? '▾' : '▸'}</span>
+                                                                )}
+                                                                <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
+                                                              </span>
+                                                              {!collapsed && clusterLoading && (
+                                                                <span className="tiny-spinner" aria-label="loading context" />
+                                                              )}
+                                                            </div>
+                                                            {(collapsed || clusterExpanded) && (
+                                                              <div className="aks-tree-children">
+                                                                {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
+                                                                  <div className="sidebar-hint">{uiText.sidebar.noContextImported}</div>
+                                                                )}
+                                                                {matchingContexts.map((ctx) =>
+                                                                  renderContextNode(ctx, `aks-context:${clusterNodeKey}`, undefined, undefined, 'aks'),
+                                                                )}
+                                                              </div>
+                                                            )}
+                                                          </div>
+                                                        );
+                                                      })}
                                                     </div>
                                                   )}
                                                 </div>

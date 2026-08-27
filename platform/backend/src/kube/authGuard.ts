@@ -4,7 +4,7 @@ import { logInfo } from '../util/logger.js';
 import { HttpError } from '../util/httpError.js';
 import type { SessionScope } from '../auth/session.js';
 import { repairKubeconfig } from './kubeConfigRepair.js';
-import { fetchAndCacheKubeloginToken, getCachedKubeloginToken } from './kubeloginCache.js';
+import { fetchAndCacheKubeloginToken, getCachedKubeloginToken, resolveContextIdentity } from './kubeloginCache.js';
 
 interface EnsureContextAuthOptions {
   context?: string;
@@ -46,7 +46,11 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
   // kubeconfig file) that can never succeed.
   if (options.kubeconfigPath && options.azureConfigDir && options.userId) {
     try {
-      const cachedToken = await getCachedKubeloginToken(options.azureConfigDir, context);
+      const identity = await resolveContextIdentity(options.azureConfigDir, context, options.kubeconfigPath);
+      const cachedToken =
+        identity.tenantId && identity.serverId
+          ? await getCachedKubeloginToken(options.azureConfigDir, identity.tenantId, identity.serverId)
+          : null;
       if (!cachedToken && (await hasAzureCliLogin(options.azureConfigDir))) {
         await fetchAndCacheKubeloginToken(
           options.azureConfigDir,
@@ -68,11 +72,64 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
   const kc = await kube.rawConfig(options.context, {
     kubeconfigPath: options.kubeconfigPath,
     fallbackContext: options.fallbackContext,
+    azureConfigDir: options.azureConfigDir,
   });
   logInfo('kube.auth.rawconfig.complete', { context, elapsed: Date.now() - startTime });
 
   const user = kc.getCurrentUser();
   const userAny = user as any;
+  const exec = userAny?.exec ?? userAny?.authProvider?.config?.exec ?? userAny?.authProvider?.exec;
+  const command = String(exec?.command ?? '').toLowerCase();
+
+  if (exec && (command.includes('kubelogin') || command.includes('az'))) {
+    const azureConfigDir = options.azureConfigDir?.trim();
+    if (!azureConfigDir) {
+      throw new HttpError(
+        401,
+        'Azure authentication is required for this context. Please sign in from the Azure panel.',
+        { code: 'AZURE_AUTH_REQUIRED', source: options.source ?? 'cloud' },
+      );
+    }
+
+    const identity = await resolveContextIdentity(azureConfigDir, context, options.kubeconfigPath);
+    const cachedToken =
+      identity.tenantId && identity.serverId
+        ? await getCachedKubeloginToken(azureConfigDir, identity.tenantId, identity.serverId)
+        : null;
+    if (cachedToken) {
+      logInfo('kube.auth.cached_token_available', {
+        context,
+        elapsed: Date.now() - startTime,
+      });
+      return;
+    }
+
+    const isLoggedIn = await hasAzureCliLogin(azureConfigDir);
+    if (!isLoggedIn) {
+      throw new HttpError(
+        401,
+        'Azure authentication is required for this context. Please sign in from the Azure panel.',
+        { code: 'AZURE_AUTH_REQUIRED', source: options.source ?? 'cloud' },
+      );
+    }
+
+    const token = options.kubeconfigPath
+      ? await fetchAndCacheKubeloginToken(azureConfigDir, options.kubeconfigPath, context)
+      : null;
+    if (!token) {
+      throw new HttpError(
+        401,
+        'Azure authentication token could not be refreshed for this context. Please sign in from the Azure panel and retry.',
+        { code: 'AZURE_AUTH_REQUIRED', source: options.source ?? 'cloud' },
+      );
+    }
+
+    logInfo('kube.auth.kubelogin_token_refreshed', {
+      context,
+      elapsed: Date.now() - startTime,
+    });
+    return;
+  }
 
   // Check if user has local credentials (token, tokenFile, certificate, username, password)
   // These don't require external auth like Azure CLI or kubelogin
@@ -96,7 +153,6 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
     return;
   }
 
-  const exec = userAny?.exec ?? userAny?.authProvider?.config?.exec ?? userAny?.authProvider?.exec;
   if (!exec) {
     logInfo('kube.auth.no_exec_required', { context, elapsed: Date.now() - startTime });
     return;
@@ -104,33 +160,6 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
 
   // For kubelogin and other exec auth, let it pass through
   // The Kubernetes client will handle executing the auth command as needed
-  const command = String(exec.command ?? '').toLowerCase();
-
-  // If the context relies on Azure exec auth, require an Azure CLI login in the
-  // currently selected config directory (cloud vs local isolation).
-  if (command.includes('kubelogin') || command.includes('az')) {
-    const azureConfigDir = options.azureConfigDir?.trim();
-    if (azureConfigDir) {
-      const cachedToken = await getCachedKubeloginToken(azureConfigDir, context);
-      if (cachedToken) {
-        logInfo('kube.auth.cached_token_available', {
-          context,
-          elapsed: Date.now() - startTime,
-        });
-        return;
-      }
-
-      const isLoggedIn = await hasAzureCliLogin(azureConfigDir);
-      if (!isLoggedIn) {
-        throw new HttpError(
-          401,
-          'Azure authentication is required for this context. Please sign in from the Azure panel.',
-          { code: 'AZURE_AUTH_REQUIRED', source: options.source ?? 'cloud' },
-        );
-      }
-    }
-  }
-
   logInfo('kube.auth.exec_auth_passthrough', {
     context,
     command,

@@ -102,6 +102,7 @@ export interface AzureSubscription {
   name: string;
   isDefault: boolean;
   tenantId?: string;
+  tenantDisplayName?: string;
 }
 
 /** A signed-in Azure identity grouped with the subscriptions it owns. */

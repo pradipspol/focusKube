@@ -253,8 +253,14 @@ export class AzureLoginManager {
     };
   }
 
-  /** Start device-code login and resolve once the code is available. */
-  start(): Promise<DeviceCodeInfo> {
+  /**
+   * Start device-code login and resolve once the code is available.
+   * Without a tenantId, `az login` resolves whatever tenant is currently
+   * the account's default - which may not be the tenant a given cluster
+   * actually trusts (e.g. a guest/customer tenant). Passing one pins the
+   * sign-in to that specific tenant instead.
+   */
+  start(tenantId?: string): Promise<DeviceCodeInfo> {
     if (this.state === 'pending') {
       return Promise.resolve(this.deviceInfo ?? { message: this.lastMessage });
     }
@@ -264,7 +270,9 @@ export class AzureLoginManager {
     this.diagnostics = {};
 
     return new Promise((resolve) => {
-      const azLoginArgs = ['login', '--use-device-code'];
+      const azLoginArgs = tenantId
+        ? ['login', '--use-device-code', '--tenant', tenantId]
+        : ['login', '--use-device-code'];
       const azCandidates = buildAzCandidates();
 
       let candidateIndex = 0;
@@ -575,6 +583,41 @@ export async function azListSubscriptions(options: AzureExecOptions = {}): Promi
     return [];
   }
   return JSON.parse(res.stdout || '[]');
+}
+
+/**
+ * `az account list` only carries each subscription's tenantId, not a
+ * friendly tenant name. `az account tenant list` would give us that, but it
+ * lives in the optional `account` CLI extension - a non-interactive `az`
+ * invocation hits that command's "install extension? (Y/n)" prompt and fails
+ * immediately with EOF, and auto-installing an extension mid-request is its
+ * own source of latency/failure (network access, proxies). `az rest` is a
+ * built-in core command, so hit the ARM Tenants API directly instead.
+ */
+export async function azListTenants(options: AzureExecOptions = {}): Promise<unknown[]> {
+  const candidates = buildAzCandidates();
+  const res = await run(
+    'az',
+    ['rest', '--method', 'get', '--url', 'https://management.azure.com/tenants?api-version=2022-12-01', '--output', 'json'],
+    { ...options, candidates },
+  );
+  if (res.code !== 0) {
+    logWarn('azure.tenant_list.failed', {
+      code: res.code,
+      stderr: res.stderr,
+      stdout: res.stdout,
+    });
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(res.stdout || '{}');
+    return Array.isArray(parsed?.value) ? parsed.value : [];
+  } catch (err) {
+    logWarn('azure.tenant_list.parse_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
 }
 
 export async function azLogout(

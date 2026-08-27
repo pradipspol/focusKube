@@ -278,6 +278,12 @@ export default function App() {
   const [namespaceSelections, setNamespaceSelections] = useState<NamespaceSelections>(() => loadStoredNamespaceSelections());
   const [tabs, setTabs] = useState<ViewTab[]>(() => loadStoredTabs());
   const [activeTabId, setActiveTabId] = useState<string>(() => loadStoredActiveTabId(loadStoredTabs()));
+  // Starred Contexts is a shortcut meant to bypass the full Azure/AWS tree, so
+  // selecting from it shouldn't force that tree open - see handleContextChange's
+  // `reveal` origin flag below. Stays false for every other way of changing the
+  // active context, which is what lets the sidebar's location-reveal effects
+  // keep working as before for a direct tree click or a reopened tab.
+  const [suppressTreeReveal, setSuppressTreeReveal] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('k8sExplorer.sidebarCollapsed') === 'true';
   });
@@ -458,11 +464,12 @@ export default function App() {
   const [awsTreeRefresh, setAwsTreeRefresh] = useState(0);
   // Bumped after successful Azure sign-in so already-open resource tabs refetch.
   const [azureAuthRecoveryRefresh, setAzureAuthRecoveryRefresh] = useState(0);
+  const contextReady = !!context && !!activeContextSource && contextInitialized && !contextsQuery.isFetching;
 
   const namespacesQuery = useQuery({
     queryKey: ['namespaces', context, activeContextSource],
     queryFn: () => api.listResource('namespaces', { context, source: activeContextSource ?? undefined, attributes: 'name' }),
-    enabled: !!context,
+    enabled: contextReady,
   });
 
   useEffect(() => {
@@ -611,8 +618,8 @@ export default function App() {
       ? contextsQuery.data?.contexts.find((entry) => entry.name === context)
       : undefined;
   const requestScope = useMemo(
-    () => ({ context, source: activeContextSource ?? undefined }),
-    [context, activeContextSource],
+    () => ({ context: contextReady ? context : undefined, source: activeContextSource ?? undefined }),
+    [context, activeContextSource, contextReady],
   );
   const scope = requestScope;
   const namespaceSelectionKey = useMemo(
@@ -632,8 +639,9 @@ export default function App() {
       ? contextsQuery.data?.contexts.find((entry) => entry.name === tabContext)
       : undefined;
     const tabSelectionKey = namespaceSelectionKeyForContext(tab, tabContextEntry, tabContext);
+    const tabReady = !!tabContext && !!tabSource && contextInitialized && !contextsQuery.isFetching;
     return {
-      context: tabContext,
+      context: tabReady ? tabContext : undefined,
       namespace: namespaceSelections[tabSelectionKey]?.length === 1 ? namespaceSelections[tabSelectionKey][0] : undefined,
       source: tabSource ?? undefined,
     };
@@ -875,8 +883,9 @@ export default function App() {
 
   const handleContextChange = async (
     name?: string,
-    origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string },
+    origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean },
   ) => {
+    setSuppressTreeReveal(origin?.reveal === false);
     if (!name) {
       setContext(undefined);
       setActiveContextOrigin(null);
@@ -1044,6 +1053,7 @@ export default function App() {
           activeTabOriginKubeconfigId={activeTab?.originKubeconfigId}
           activeContextOriginSource={activeContextOrigin?.source}
           activeContextOriginKubeconfigId={activeContextOrigin?.kubeconfigId}
+          suppressTreeReveal={suppressTreeReveal}
           onSelect={openView}
           onPin={pinView}
           onOpenExplorer={activateExplorerRoute}

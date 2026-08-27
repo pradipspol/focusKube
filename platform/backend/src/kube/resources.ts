@@ -16,6 +16,7 @@ export interface ResourceKind {
 interface KubeAccessOptions {
   kubeconfigPath?: string;
   fallbackContext?: string | null;
+  azureConfigDir?: string;
 }
 
 export interface PagedResourceList {
@@ -159,7 +160,7 @@ export async function listResourcePage(
     return isNamespaced
       ? api.listNamespacedSecret(namespace!, undefined, undefined, _continue, undefined, undefined, limit)
       : api.listSecretForAllNamespaces(undefined, _continue, undefined, undefined, limit);
-  }, { action: 'list', plural: rk.plural, context, namespace: isNamespaced ? namespace : undefined }, {
+  }, { action: 'list', plural: rk.plural, context, namespace: isNamespaced ? namespace : undefined, azureConfigDir: options.azureConfigDir }, {
     timeoutMs: config.k8sListTimeoutMs,
   });
 
@@ -250,19 +251,19 @@ export async function listResource(
       if (rk.namespaced && ns) {
         res = await callK8s(
           () => (api as any)[`listNamespaced${rk.kind}`](ns),
-          { action: 'list', plural: rk.plural, context, namespace: ns },
+          { action: 'list', plural: rk.plural, context, namespace: ns, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else if (rk.namespaced) {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}ForAllNamespaces`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       }
@@ -271,13 +272,13 @@ export async function listResource(
       if (rk.namespaced && ns) {
         res = await callK8s(
           () => (api as any)[`listNamespaced${rk.kind}`](ns),
-          { action: 'list', plural: rk.plural, context, namespace: ns },
+          { action: 'list', plural: rk.plural, context, namespace: ns, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}ForAllNamespaces`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       }
@@ -286,13 +287,13 @@ export async function listResource(
       if (rk.namespaced && ns) {
         res = await callK8s(
           () => (api as any)[`listNamespaced${rk.kind}`](ns),
-          { action: 'list', plural: rk.plural, context, namespace: ns },
+          { action: 'list', plural: rk.plural, context, namespace: ns, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}ForAllNamespaces`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       }
@@ -301,19 +302,19 @@ export async function listResource(
       if (rk.namespaced && ns) {
         res = await callK8s(
           () => (api as any)[`listNamespaced${rk.kind}`](ns),
-          { action: 'list', plural: rk.plural, context, namespace: ns },
+          { action: 'list', plural: rk.plural, context, namespace: ns, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else if (rk.namespaced) {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}ForAllNamespaces`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       } else {
         res = await callK8s(
           () => (api as any)[`list${rk.kind}`](),
-          { action: 'list', plural: rk.plural, context },
+          { action: 'list', plural: rk.plural, context, azureConfigDir: options.azureConfigDir },
           { timeoutMs: config.k8sListTimeoutMs },
         );
       }
@@ -321,7 +322,7 @@ export async function listResource(
       const api = k8s.KubernetesObjectApi.makeApiClient(kubeConfig);
       res = await callK8s(
         () => api.list(rk.apiVersion, rk.kind, ns),
-        { action: 'list', plural: rk.plural, context, namespace: ns },
+        { action: 'list', plural: rk.plural, context, namespace: ns, azureConfigDir: options.azureConfigDir },
         { timeoutMs: config.k8sListTimeoutMs },
       );
     }
@@ -414,7 +415,7 @@ export async function getResource(
       kind: rk.kind,
       metadata: { name, namespace: rk.namespaced ? namespace : undefined },
     }),
-    { action: 'read', plural: rk.plural, context, namespace, name },
+    { action: 'read', plural: rk.plural, context, namespace, name, azureConfigDir: options.azureConfigDir },
   );
   return unwrapBody(res);
 }
@@ -431,6 +432,7 @@ export async function replaceResource(
     context,
     namespace: manifest.metadata?.namespace,
     name: manifest.metadata?.name,
+    azureConfigDir: options.azureConfigDir,
   });
   return unwrapBody(res);
 }
@@ -453,6 +455,7 @@ export async function applyManifest(
       context,
       namespace: manifest.metadata?.namespace,
       name: manifest.metadata?.name,
+      azureConfigDir: options.azureConfigDir,
     });
     return { object: unwrapBody(res), created: true };
   } catch (err) {
@@ -465,6 +468,7 @@ export async function applyManifest(
         context,
         namespace: manifest.metadata?.namespace,
         name: manifest.metadata?.name,
+        azureConfigDir: options.azureConfigDir,
       }),
     );
     const merged: any = {
@@ -480,6 +484,7 @@ export async function applyManifest(
       context,
       namespace: merged.metadata?.namespace,
       name: merged.metadata?.name,
+      azureConfigDir: options.azureConfigDir,
     });
     return { object: unwrapBody(res), created: false };
   }
@@ -501,7 +506,7 @@ export async function deleteResource(
       kind: rk.kind,
       metadata: { name, namespace: rk.namespaced ? namespace : undefined },
     } as k8s.KubernetesObject),
-    { action: 'delete', plural: rk.plural, context, namespace, name },
+    { action: 'delete', plural: rk.plural, context, namespace, name, azureConfigDir: options.azureConfigDir },
   );
   return unwrapBody(res);
 }
