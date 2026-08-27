@@ -4,8 +4,7 @@ import path from 'node:path';
 import type { LoggerBackend, LogLevel, LogPayload } from './logger.types.js';
 
 const logLevels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-//const fileLogEnabled = (process.env.LOG_TO_FILE ?? (process.env.NODE_ENV === 'production' ? 'false' : 'true')).toLowerCase() !== 'false';
-const fileLogEnabled = process.env.LOG_TO_FILE || 'false';
+const fileLogEnabled = parseBooleanEnv(process.env.LOG_TO_FILE, false);
 const fileLogPath = resolveFileLogPath();
 
 const fileQueue: string[] = [];
@@ -15,6 +14,14 @@ let currentFileSize: number | null = null;
 
 function normalizeLevel(level: LogLevel): LogLevel {
   return logLevels.includes(level) ? level : 'info';
+}
+
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+  return fallback;
 }
 
 function resolveFileLogPath(): string {

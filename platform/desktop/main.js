@@ -63,6 +63,19 @@ ipcMain.handle('set-native-theme', (event, theme) => {
 let backendProc = null;
 let server = null;
 
+function recoverableMainError(scope, err) {
+  const message = err && err.stack ? err.stack : err && err.message ? err.message : String(err);
+  console.error(`[main] Recoverable error in ${scope}:`, message);
+}
+
+process.on('uncaughtException', (err) => {
+  recoverableMainError('uncaughtException', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  recoverableMainError('unhandledRejection', reason);
+});
+
 // Outside the backend's dynamic port range (11111-48999) so it never collides
 // with whatever port `startBackend` happens to pick.
 const PREFERRED_FRONTEND_PORT = 49500;
@@ -328,6 +341,7 @@ async function startBackend(backendPort) {
       /* file doesn't exist yet */
     }
     let outStream = fs.createWriteStream(logFile, { flags: 'a' });
+    outStream.on('error', (err) => recoverableMainError('backend log stream', err));
     console.log('Backend log:', logFile);
 
     function rotateLogIfNeeded(nextChunkSize) {
@@ -352,6 +366,7 @@ async function startBackend(backendPort) {
         /* ignore rotation failures; worst case we keep appending to the same file */
       }
       outStream = fs.createWriteStream(logFile, { flags: 'a' });
+      outStream.on('error', (err) => recoverableMainError('backend rotated log stream', err));
       writtenBytes = 0;
     }
 
@@ -386,21 +401,33 @@ async function startBackend(backendPort) {
     if (backendProc.stdout) backendProc.stdout.on('data', writeToLog);
     if (backendProc.stderr) backendProc.stderr.on('data', writeToLog);
   } catch (err) {
-    throw new Error(`Failed to spawn backend: ${err.message}`);
+    recoverableMainError('backend startup', err);
   }
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+  return new Promise((resolve) => {
+    let settled = false;
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
       resolve(Number(env.PORT) || 4000);
+    };
+    const timeout = setTimeout(() => {
+      resolveOnce();
     }, 3000);
+    if (!backendProc) {
+      clearTimeout(timeout);
+      resolveOnce();
+      return;
+    }
     backendProc.on('error', (err) => {
       clearTimeout(timeout);
-      console.error('Backend spawn error:', err);
-      reject(err);
+      recoverableMainError('backend process', err);
+      resolveOnce();
     });
     backendProc.on('exit', (code, signal) => {
       clearTimeout(timeout);
       console.log('Backend exited with code:', code, 'signal:', signal);
+      resolveOnce();
     });
   });
 }
@@ -494,6 +521,45 @@ async function createWindow(url) {
   }
 }
 
+async function createStartupErrorWindow(err) {
+  const win = new BrowserWindow({
+    width: 900,
+    height: 620,
+    icon: path.join(__dirname, 'assets/icons/app_150.png'),
+    frame: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+  win.setBackgroundColor('#0c1117');
+  const message = err && err.message ? err.message : String(err);
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FocusKube</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0c1117; color: #e8edf2; font: 16px/1.5 sans-serif; }
+    main { width: min(680px, calc(100vw - 48px)); }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    pre { white-space: pre-wrap; padding: 16px; background: #151d27; border-radius: 8px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body><main><h1>FocusKube could not finish startup</h1><pre>${escapeHtml(message)}</pre></main></body>
+</html>`;
+  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 app.whenReady().then(async () => {
   try {
     // First ensure CLI tools (az, helm, kubectl, kubelogin) are available
@@ -523,8 +589,8 @@ app.whenReady().then(async () => {
     console.log('Loading URL:', url);
     await createWindow(url);
   } catch (err) {
-    console.error('Failed to start desktop app:', err);
-    app.quit();
+    recoverableMainError('desktop startup', err);
+    await createStartupErrorWindow(err);
   }
 });
 
