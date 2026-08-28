@@ -10,6 +10,7 @@ import { NamespaceSelector } from './NamespaceSelector';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { HelmInstallModal } from './HelmInstallModal';
 import { HelmUpgradeModal } from './HelmUpgradeModal';
+import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
 
 type DetailsState = { title: string; rows: Array<[string, string | number | undefined]> } | null;
@@ -37,6 +38,7 @@ export function HelmPanel({
 }: Props) {
   const qc = useQueryClient();
   const { canWrite, canDelete } = usePermissions();
+  const confirm = useConfirm();
   const [historyFor, setHistoryFor] = useState<HelmRelease | null>(null);
   const [valuesFor, setValuesFor] = useState<HelmRelease | null>(null);
   const [upgradeFor, setUpgradeFor] = useState<HelmRelease | null>(null);
@@ -218,8 +220,13 @@ export function HelmPanel({
                   {
                     label: uiText.helm.uninstall,
                     danger: true,
-                    onClick: (r: HelmRelease) => {
-                      if (confirm(`Uninstall release "${r.name}"?`)) uninstall.mutate(r);
+                    onClick: async (r: HelmRelease) => {
+                      const ok = await confirm({
+                        title: uiText.confirmDialog.uninstallTitle,
+                        message: uiText.confirmDialog.uninstallQuestion(r.name),
+                        confirmLabel: uiText.confirmDialog.uninstall,
+                      });
+                      if (ok) uninstall.mutate(r);
                     },
                   },
                 ]

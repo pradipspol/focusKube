@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
 import type { View } from '../App';
 import type { Scope } from '../api/client';
@@ -188,6 +189,7 @@ export function SidebarProviderSources({
   const [awsError, setAwsError] = useState<string | null>(null);
   const [azureBusyEmail, setAzureBusyEmail] = useState<string | undefined>();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const confirm = useConfirm();
   const localAzureAuthInProgress = !localAzureAuthenticated && localAzureAuthStatus === 'checking';
   const localAzureAuthFailed = !localAzureAuthenticated && localAzureAuthStatus === 'failed';
   const hasAzureCloudAccount = azureSignedIn || azureAccounts.length > 0;
@@ -608,13 +610,12 @@ export function SidebarProviderSources({
   };
 
   const handleDisconnectAzureAccount = async (email: string) => {
-    if (
-      !window.confirm(
-        `Disconnect imported AKS clusters for ${email}? The account stays signed in, but its imported cluster contexts will be removed.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: uiText.confirmDialog.removeTitle,
+      message: `Disconnect imported AKS clusters for ${email}?`,
+      details: 'The account stays signed in, but its imported cluster contexts will be removed.',
+    });
+    if (!ok) return;
     setAzureAccountMenuEmail(undefined);
     setAzureBusyEmail(email);
     setAksError(null);
@@ -1270,16 +1271,16 @@ export function SidebarProviderSources({
                             <div className="action-menu sidebar-action-menu">
                               <button
                                 className="action-menu-item danger"
-                                onClick={(event) => {
+                                onClick={async (event) => {
                                   event.stopPropagation();
                                   setMenuLocalKubeconfigId(undefined);
-                                  if (
-                                    !confirm(
-                                      `Remove local kubeconfig "${item.name}" and all its contexts?\n\nThis cannot be undone.`,
-                                    )
-                                  ) {
-                                    return;
-                                  }
+                                  const ok = await confirm({
+                                    title: uiText.confirmDialog.removeTitle,
+                                    message: `Remove local kubeconfig "${item.name}" and all its contexts?`,
+                                    details: 'This cannot be undone.',
+                                    confirmLabel: uiText.confirmDialog.remove,
+                                  });
+                                  if (!ok) return;
                                   onDeleteLocalKubeconfig(item.id).catch((err) => {
                                     console.error('Failed to remove local kubeconfig:', err);
                                   });
@@ -1310,16 +1311,17 @@ export function SidebarProviderSources({
                       )}
                       {localAzureAuthenticated &&
                         item.contexts.map((ctxName) => {
-                          const removeContext = () => {
-                            if (
-                              confirm(
-                                `Remove context "${ctxName}" from "${item.name}"?\n\nThis edits the stored kubeconfig and cannot be undone.`,
-                              )
-                            ) {
-                              onDeleteLocalKubeconfigContext(item.id, ctxName).catch((err) => {
-                                console.error('Failed to remove context:', err);
-                              });
-                            }
+                          const removeContext = async () => {
+                            const ok = await confirm({
+                              title: uiText.confirmDialog.removeTitle,
+                              message: `Remove context "${ctxName}" from "${item.name}"?`,
+                              details: 'This edits the stored kubeconfig and cannot be undone.',
+                              confirmLabel: uiText.confirmDialog.remove,
+                            });
+                            if (!ok) return;
+                            onDeleteLocalKubeconfigContext(item.id, ctxName).catch((err) => {
+                              console.error('Failed to remove context:', err);
+                            });
                           };
 
                           const matched =

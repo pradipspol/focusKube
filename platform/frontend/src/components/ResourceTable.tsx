@@ -10,6 +10,7 @@ import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
 import { ResourceDetail } from './ResourceDetail';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
+import { useConfirm, type ConfirmFn } from './ConfirmDialog';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
 
@@ -82,6 +83,7 @@ type ActionContext = {
   setSelected: (value: { obj: K8sObject; tab?: string }) => void;
   restartDeployment: ReturnType<typeof useMutation<K8sObject, Error, K8sObject>>;
   del: ReturnType<typeof useMutation<{ ok: boolean }, Error, K8sObject>>;
+  confirm: ConfirmFn;
 };
 
 /**
@@ -342,15 +344,13 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
         label: `${uiText.resourceDetail.deletePrefix} ${ctx.plural.slice(0, -1) || ctx.plural}`,
         title: `${uiText.resourceDetail.deletePrefix} ${name}`,
         danger: true,
-        onClick: () => {
-          const podWarning = [
-            `${uiText.resourceDetail.warningPrefix} "${name}".`,
-            uiText.resourceDetail.destructiveActionNotice,
-            '',
-            uiText.resourceDetail.continuePrompt,
-          ].join('\n');
-          const genericWarning = `${uiText.resourceDetail.deletePrefix} ${ctx.plural} "${name}"?`;
-          if (confirm(ctx.plural === 'pods' ? podWarning : genericWarning)) ctx.del.mutate(o);
+        onClick: async () => {
+          const ok = await ctx.confirm({
+            title: uiText.confirmDialog.deleteTitle,
+            message: uiText.confirmDialog.deleteQuestion(`${ctx.plural.slice(0, -1) || ctx.plural} "${name}"`),
+            details: ctx.plural === 'pods' ? uiText.resourceDetail.destructiveActionNotice : undefined,
+          });
+          if (ok) ctx.del.mutate(o);
         },
       };
     }
@@ -431,6 +431,7 @@ export function ResourceTable({
 }: Props) {
   const qc = useQueryClient();
   const { canWrite, canDelete } = usePermissions();
+  const confirm = useConfirm();
   const [selected, setSelected] = useState<{ obj: K8sObject; tab?: string } | null>(null);
   const [filter, setFilter] = useState('');
   const [eventTimeRange, setEventTimeRange] = useState<EventTimeRange>('all');
@@ -619,14 +620,14 @@ export function ResourceTable({
         namespace: o.metadata?.namespace,
       }),
     onMutate: (deployment) => {
-      onToast('info', uiText.resource.restartingDeployment(deployment.metadata?.name ?? ''), 1800);
+      onToast('info', uiText.resource.restartingDeployment(deployment.metadata?.name ?? ''));
     },
     onSuccess: (deployment) => {
       setWatchedRollout(deployment.metadata?.name ?? null);
-      onToast('info', uiText.resource.restartRequested(deployment.metadata?.name ?? ''), 2400);
+      onToast('info', uiText.resource.restartRequested(deployment.metadata?.name ?? ''));
       qc.invalidateQueries({ queryKey });
     },
-    onError: (error) => onToast('error', (error as Error).message, 4200),
+    onError: (error) => onToast('error', (error as Error).message),
   });
 
   const namespaceFilterSet = useMemo(
@@ -1004,7 +1005,7 @@ export function ResourceTable({
       : undefined;
 
     if (progressingCondition?.status === 'False') {
-      onToast('error', progressingCondition.message || uiText.resource.rolloutFailed(watchedRollout), 5200);
+      onToast('error', progressingCondition.message || uiText.resource.rolloutFailed(watchedRollout));
       setWatchedRollout(null);
       return;
     }
@@ -1368,6 +1369,7 @@ export function ResourceTable({
                 setSelected,
                 restartDeployment,
                 del,
+                confirm,
               };
               const quickActions = buildQuickActions(actionCtx);
               const actions = buildMenuActions(actionCtx);

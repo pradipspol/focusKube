@@ -9,7 +9,7 @@ import { HelmPanel } from './components/HelmPanel';
 import { AzurePanel } from './components/AzurePanel';
 import { AwsPanel } from './components/AwsPanel';
 import { ObservabilityPanel } from './components/observability/ObservabilityPanel';
-import { ToastViewport, type ToastMessage } from './components/ToastViewport';
+import { useToast } from './components/ToastViewport';
 import { ApplicationsPanel } from './components/ApplicationsPanel';
 import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
@@ -302,7 +302,6 @@ export default function App() {
 
     return SIDEBAR_DEFAULT_WIDTH_VW;
   });
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [createResourceOpen, setCreateResourceOpen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const [terminalHeightPx, setTerminalHeightPx] = useState<number>(() => {
@@ -873,13 +872,7 @@ export default function App() {
     );
   };
 
-  const pushToast = (tone: ToastMessage['tone'], text: string, durationMs = 3200) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((current) => [...current, { id, tone, text }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-    }, durationMs);
-  };
+  const pushToast = useToast();
 
   const handleContextChange = async (
     name?: string,
@@ -1233,7 +1226,7 @@ export default function App() {
                         }
                         setAzureTreeRefresh((n) => n + 1);
                         setAzureAuthRecoveryRefresh((n) => n + 1);
-                        pushToast('success', 'Sign in successful. Load context now.', 4000);
+                        pushToast('success', 'Sign in successful. Load context now.');
                         void queryClient.invalidateQueries({ queryKey: ['contexts'] });
                       }}
                     />
@@ -1257,7 +1250,7 @@ export default function App() {
                         }
                         setAwsTreeRefresh((n) => n + 1);
                         setAzureAuthRecoveryRefresh((n) => n + 1);
-                        pushToast('success', 'Sign in successful. Load context now.', 4000);
+                        pushToast('success', 'Sign in successful. Load context now.');
                         void queryClient.invalidateQueries({ queryKey: ['contexts'] });
                       }}
                     />
@@ -1356,7 +1349,6 @@ export default function App() {
           </button>
         </div>
       )}
-      <ToastViewport toasts={toasts} />
     </div>
     </PermissionsProvider>
   );

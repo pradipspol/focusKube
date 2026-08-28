@@ -3149,6 +3149,7 @@ tbody tr:hover .row-actions {
   background: var(--surface-overlay);
   color: var(--text-bright);
   box-shadow: 0 14px 34px var(--shadow-color-strong);
+  cursor: pointer;
 }
 .toast.info {
   border-color: var(--accent-border);
@@ -3327,6 +3328,30 @@ code.inline {
 }
 .settings-modal {
   width: min(92vw, 30rem);
+}
+.confirm-modal {
+  width: min(92vw, 28rem);
+}
+.confirm-body {
+  display: grid;
+  gap: var(--space-sm);
+}
+.confirm-message {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.confirm-details {
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+button.confirm-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+button.confirm-danger:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
 }
 .settings-modal-body {
   display: grid;

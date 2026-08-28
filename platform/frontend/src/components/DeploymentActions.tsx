@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
+import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 export function DeploymentActions({ deployment, scope, onChanged }: Props) {
   const qc = useQueryClient();
   const { canWrite } = usePermissions();
+  const confirm = useConfirm();
   const name = deployment.metadata!.name!;
   const ns = deployment.metadata?.namespace;
   const opScope: Scope = { ...scope, namespace: ns };
@@ -122,8 +124,13 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
                   {canWrite && (
                     <button
                       disabled={revision.revision === currentRevision || rollback.isPending}
-                      onClick={() => {
-                        if (confirm(`Roll back ${name} to revision ${revision.revision}?`)) rollback.mutate(revision.revision);
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: uiText.confirmDialog.rollbackTitle,
+                          message: uiText.confirmDialog.rollbackQuestion(name, revision.revision),
+                          confirmLabel: uiText.confirmDialog.rollback,
+                        });
+                        if (ok) rollback.mutate(revision.revision);
                       }}
                     >
                       {uiText.deployment.rollback}

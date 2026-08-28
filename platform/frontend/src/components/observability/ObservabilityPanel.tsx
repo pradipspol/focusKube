@@ -70,9 +70,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
       });
       await queryClient.invalidateQueries({ queryKey: ['observability', 'events', scope.context] });
       await queryClient.invalidateQueries({ queryKey: ['observability', 'correlation', scope.context] });
-      onToast('success', 'Recording started', 3000);
+      onToast('success', 'Recording started');
     } catch (err) {
-      onToast('error', `Failed to start recording: ${err instanceof Error ? err.message : String(err)}`, 5000);
+      onToast('error', `Failed to start recording: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsStarting(false);
     }
@@ -89,9 +89,9 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
           status: 'stopped'
         }
       });
-      onToast('success', 'Recording stopped', 3000);
+      onToast('success', 'Recording stopped');
     } catch (err) {
-      onToast('error', `Failed to stop recording: ${err instanceof Error ? err.message : String(err)}`, 5000);
+      onToast('error', `Failed to stop recording: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsStopping(false);
     }

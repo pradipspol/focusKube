@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Editor from '@monaco-editor/react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getDesktopEmail, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
@@ -9,6 +9,8 @@ import { getMetricsWorker } from '../utils/workerRuntime';
 import { LogsViewer } from './LogsViewer';
 import { ExecTerminal } from './ExecTerminal';
 import { DeploymentActions } from './DeploymentActions';
+import { useConfirm } from './ConfirmDialog';
+import { useToast } from './ToastViewport';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
 
@@ -54,6 +56,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
   const ns = object.metadata?.namespace;
   const opScope: Scope = { ...scope, namespace: ns };
   const { canWrite, canDelete } = usePermissions();
+  const confirm = useConfirm();
   const needsHydration = plural === 'configmaps' || plural === 'secrets';
 
   const fullObjectQuery = useQuery({
@@ -147,15 +150,13 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
               <button
                 className="drawer-action-icon danger"
                 title={`${uiText.resourceDetail.deletePrefix} ${plural.slice(0, -1) || plural}`}
-                onClick={() => {
-                  const podWarning = [
-                    `${uiText.resourceDetail.warningPrefix} "${name}".`,
-                    uiText.resourceDetail.destructiveActionNotice,
-                    '',
-                    uiText.resourceDetail.continuePrompt,
-                  ].join('\n');
-                  const genericWarning = `${uiText.resourceDetail.deletePrefix} ${plural} "${name}"?`;
-                  if (!confirm(plural === 'pods' ? podWarning : genericWarning)) return;
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: uiText.confirmDialog.deleteTitle,
+                    message: uiText.confirmDialog.deleteQuestion(`${plural.slice(0, -1) || plural} "${name}"`),
+                    details: plural === 'pods' ? uiText.resourceDetail.destructiveActionNotice : undefined,
+                  });
+                  if (!ok) return;
                   del.mutate();
                 }}
                 disabled={del.isPending}
@@ -200,6 +201,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
             kind={plural}
             object={currentObject}
             scope={opScope}
+            isLoadingData={!fullObjectQuery.data && fullObjectQuery.isLoading}
             onChanged={onChanged}
           />
         )}
@@ -1394,8 +1396,8 @@ function YamlTab({
   onSaved: () => void;
 }) {
   const [draft, setDraft] = useState<string>('');
-  const [message, setMessage] = useState<string>('');
   const { canWrite } = usePermissions();
+  const pushToast = useToast();
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', plural, name, scope.namespace],
@@ -1407,10 +1409,10 @@ function YamlTab({
   const save = useMutation({
     mutationFn: () => api.putResourceYaml(plural, name, value, scope),
     onSuccess: () => {
-      setMessage(uiText.resourceDetail.savedSuccessfully);
+      pushToast('success', uiText.resourceDetail.savedSuccessfully);
       onSaved();
     },
-    onError: (e) => setMessage((e as Error).message),
+    onError: (e) => pushToast('error', (e as Error).message),
   });
 
   return (
@@ -1421,12 +1423,11 @@ function YamlTab({
             <button className="primary" onClick={() => save.mutate()} disabled={save.isPending || yamlQuery.isLoading}>
               {`💾 ${uiText.common.save}`}
             </button>
-            <button onClick={() => { setDraft(''); yamlQuery.refetch(); setMessage(''); }}>{uiText.resourceDetail.revert}</button>
+            <button onClick={() => { setDraft(''); yamlQuery.refetch(); }}>{uiText.resourceDetail.revert}</button>
           </>
         ) : (
           <span className="dim">{uiText.resourceDetail.readOnlyNotice}</span>
         )}
-        {message && <span className={save.isError ? 'badge danger' : 'badge ok'}>{message}</span>}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <Editor
@@ -1476,25 +1477,37 @@ function SecretTab({ name, scope }: { name: string; scope: Scope }) {
   );
 }
 
+type DataRow = { id: string; key: string; value: string };
+
+let dataRowSeq = 0;
+const nextRowId = () => `kv-${++dataRowSeq}`;
+
 function ConfigLikeDetailsTab({
   kind,
   object,
   scope,
+  isLoadingData,
   onChanged,
 }: {
   kind: 'configmaps' | 'secrets';
   object: K8sObject;
   scope: Scope;
+  isLoadingData: boolean;
   onChanged: () => void;
 }) {
   const name = object.metadata?.name ?? '';
   const labels = object.metadata?.labels ?? {};
   const annotations = object.metadata?.annotations ?? {};
   const { canWrite } = usePermissions();
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const confirm = useConfirm();
+  const qc = useQueryClient();
+  const pushToast = useToast();
+  // Rows carry a stable id so editing a key does not remount its input and drop focus.
+  const [draft, setDraft] = useState<DataRow[]>([]);
   const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({});
   const [originalKeys, setOriginalKeys] = useState<string[]>([]);
-  const [message, setMessage] = useState('');
+  // Watch events hand us a new object identity constantly; never clobber unsaved edits.
+  const dirtyRef = useRef(false);
 
   const eventsQuery = useQuery({
     queryKey: ['resource-events', kind, scope.context, scope.namespace, name],
@@ -1502,81 +1515,77 @@ function ConfigLikeDetailsTab({
     queryFn: () => api.listResource('events', scope),
   });
 
+  const remoteData: Record<string, string> = (object as any).data ?? {};
+  const remoteSignature = JSON.stringify(remoteData);
+
   useEffect(() => {
-    const source = (object as any).data ?? {};
-    const next = Object.fromEntries(
-      Object.entries(source).map(([key, value]) => {
-        if (kind !== 'secrets') return [key, String(value ?? '')];
-        const raw = String(value ?? '');
-        try {
-          return [key, atob(raw)];
-        } catch {
-          return [key, raw];
-        }
-      }),
-    );
+    if (dirtyRef.current) return;
+    const next: DataRow[] = Object.entries(remoteData).map(([key, value]) => {
+      const raw = String(value ?? '');
+      if (kind !== 'secrets') return { id: nextRowId(), key, value: raw };
+      try {
+        return { id: nextRowId(), key, value: atob(raw) };
+      } catch {
+        return { id: nextRowId(), key, value: raw };
+      }
+    });
     setDraft(next);
-    setOriginalKeys(Object.keys(next));
+    setOriginalKeys(next.map((row) => row.key));
     setVisibleSecrets({});
-  }, [kind, object]);
+    // remoteData is derived from remoteSignature; depending on it would refire on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, name, remoteSignature]);
+
+  const toRecord = (rows: DataRow[]): Record<string, string> => {
+    const record: Record<string, string> = {};
+    for (const row of rows) {
+      const key = row.key.trim();
+      if (key) record[key] = row.value;
+    }
+    return record;
+  };
 
   const save = useMutation({
     mutationFn: () =>
       kind === 'secrets'
-        ? api.putSecretData(name, draft, scope)
-        : api.putConfigMapData(name, draft, scope),
+        ? api.putSecretData(name, toRecord(draft), scope)
+        : api.putConfigMapData(name, toRecord(draft), scope),
     onSuccess: () => {
-      setMessage(uiText.resourceDetail.savedSuccessfully);
+      dirtyRef.current = false;
+      pushToast('success', uiText.resourceDetail.savedSuccessfully);
+      void qc.invalidateQueries({ queryKey: ['resource-full', kind, name] });
       onChanged();
     },
-    onError: (error) => setMessage((error as Error).message),
+    onError: (error) => pushToast('error', (error as Error).message),
   });
 
   const relatedEvents = (eventsQuery.data?.items ?? []).filter(
     (event) => ((event as any).involvedObject?.name as string | undefined) === name,
   );
 
-  const setKey = (fromKey: string, toKey: string) => {
-    const trimmed = toKey.trim();
-    if (!trimmed || fromKey === trimmed) return;
-    setDraft((current) => {
-      const next: Record<string, string> = {};
-      for (const [k, v] of Object.entries(current)) {
-        if (k === fromKey) next[trimmed] = v;
-        else next[k] = v;
-      }
-      return next;
-    });
-    setVisibleSecrets((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, fromKey)) return current;
-      const next = { ...current };
-      const visibility = next[fromKey];
-      delete next[fromKey];
-      next[trimmed] = visibility;
-      return next;
-    });
+  const setKey = (id: string, toKey: string) => {
+    dirtyRef.current = true;
+    setDraft((current) => current.map((row) => (row.id === id ? { ...row, key: toKey } : row)));
   };
 
-  const setValue = (key: string, value: string) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+  const setValue = (id: string, value: string) => {
+    dirtyRef.current = true;
+    setDraft((current) => current.map((row) => (row.id === id ? { ...row, value } : row)));
   };
 
-  const removeKey = (key: string) => {
-    const warning = [
-      uiText.resourceDetail.deleteKeyConfirm(key, kind === 'secrets' ? uiText.resourceDetail.secretKindLabel : uiText.resourceDetail.configMapKindLabel),
-      '',
-      uiText.resourceDetail.localChangeUntilSave,
-    ].join('\n');
-    if (!confirm(warning)) return;
-
-    setDraft((current) => {
-      const next = { ...current };
-      delete next[key];
-      return next;
+  const removeKey = async (id: string, key: string) => {
+    const ok = await confirm({
+      title: uiText.confirmDialog.deleteTitle,
+      message: uiText.resourceDetail.deleteKeyConfirm(key, kind === 'secrets' ? uiText.resourceDetail.secretKindLabel : uiText.resourceDetail.configMapKindLabel),
+      details: uiText.resourceDetail.localChangeUntilSave,
     });
+    if (!ok) return;
+
+    dirtyRef.current = true;
+    setDraft((current) => current.filter((row) => row.id !== id));
     setVisibleSecrets((current) => {
       const next = { ...current };
-      delete next[key];
+      delete next[id];
       return next;
     });
   };
@@ -1585,17 +1594,19 @@ function ConfigLikeDetailsTab({
     const base = 'new_key';
     let nextKey = base;
     let n = 1;
-    while (Object.prototype.hasOwnProperty.call(draft, nextKey)) {
+    while (draft.some((row) => row.key === nextKey)) {
       nextKey = `${base}_${n++}`;
     }
-    setDraft((current) => ({ ...current, [nextKey]: '' }));
+    const id = nextRowId();
+    dirtyRef.current = true;
+    setDraft((current) => [...current, { id, key: nextKey, value: '' }]);
     if (kind === 'secrets') {
-      setVisibleSecrets((current) => ({ ...current, [nextKey]: false }));
+      setVisibleSecrets((current) => ({ ...current, [id]: false }));
     }
   };
 
-  const toggleSecretVisibility = (key: string) => {
-    setVisibleSecrets((current) => ({ ...current, [key]: !current[key] }));
+  const toggleSecretVisibility = (id: string) => {
+    setVisibleSecrets((current) => ({ ...current, [id]: !current[id] }));
   };
 
   const encodedDisplay = (value: string) => {
@@ -1606,18 +1617,19 @@ function ConfigLikeDetailsTab({
     }
   };
 
-  const handleSave = () => {
-    const removedKeys = originalKeys.filter((key) => !Object.prototype.hasOwnProperty.call(draft, key));
+  const handleSave = async () => {
+    const currentKeys = new Set(draft.map((row) => row.key.trim()).filter(Boolean));
+    const removedKeys = originalKeys.filter((key) => !currentKeys.has(key));
     if (removedKeys.length > 0) {
       const preview = removedKeys.slice(0, 5).join(', ');
       const more = removedKeys.length > 5 ? uiText.resourceDetail.andMoreSuffix(removedKeys.length - 5) : '';
-      const warning = [
-        uiText.resourceDetail.removedKeysWarning(removedKeys.length, preview, more),
-        '',
-        uiText.resourceDetail.savingWillRemove,
-        uiText.resourceDetail.continuePrompt,
-      ].join('\n');
-      if (!confirm(warning)) return;
+      const ok = await confirm({
+        title: uiText.confirmDialog.saveTitle,
+        message: uiText.resourceDetail.removedKeysWarning(removedKeys.length, preview, more),
+        details: uiText.resourceDetail.savingWillRemove,
+        confirmLabel: uiText.confirmDialog.yesContinue,
+      });
+      if (!ok) return;
     }
     save.mutate();
   };
@@ -1659,37 +1671,41 @@ function ConfigLikeDetailsTab({
       <div className="pod-section">
         <div className="pod-section-header">
           <h4>{uiText.resourceDetail.data}</h4>
-          {canWrite && (
+          {canWrite && !isLoadingData && (
             <div className="metrics-toolbar">
               <button onClick={addRow}>{uiText.resourceDetail.addButton}</button>
               <button className="primary" onClick={handleSave} disabled={save.isPending}>{uiText.common.save}</button>
             </div>
           )}
         </div>
-        {message && <div className={`notice ${save.isError ? 'error' : ''}`}>{message}</div>}
+        {isLoadingData ? (
+          <div className="dim">
+            <span className="tiny-spinner" aria-label={uiText.resourceDetail.loadingData} /> {uiText.resourceDetail.loadingData}
+          </div>
+        ) : (
         <div className="kv-editor">
-          {Object.keys(draft).length === 0 && <div className="dim">{uiText.resourceDetail.noDataEntries}</div>}
-          {Object.entries(draft).map(([key, value]) => (
-            <div key={key} className="kv-editor-row">
+          {draft.length === 0 && <div className="dim">{uiText.resourceDetail.noDataEntries}</div>}
+          {draft.map(({ id, key, value }) => (
+            <div key={id} className="kv-editor-row">
               <input
                 className="kv-key"
                 value={key}
-                onChange={(event) => setKey(key, event.target.value)}
+                onChange={(event) => setKey(id, event.target.value)}
                 readOnly={!canWrite}
               />
               <textarea
                 className="kv-value mono"
-                value={kind === 'secrets' && !visibleSecrets[key] ? encodedDisplay(value) : value}
-                onChange={(event) => setValue(key, event.target.value)}
+                value={kind === 'secrets' && !visibleSecrets[id] ? encodedDisplay(value) : value}
+                onChange={(event) => setValue(id, event.target.value)}
                 rows={2}
-                readOnly={!canWrite || (kind === 'secrets' && !visibleSecrets[key])}
+                readOnly={!canWrite || (kind === 'secrets' && !visibleSecrets[id])}
               />
               {kind === 'secrets' && (
                 <button
-                  className={`icon-action eye-toggle ${visibleSecrets[key] ? 'is-visible' : 'is-hidden'}`}
-                  title={visibleSecrets[key] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
-                  aria-label={visibleSecrets[key] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
-                  onClick={() => toggleSecretVisibility(key)}
+                  className={`icon-action eye-toggle ${visibleSecrets[id] ? 'is-visible' : 'is-hidden'}`}
+                  title={visibleSecrets[id] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
+                  aria-label={visibleSecrets[id] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
+                  onClick={() => toggleSecretVisibility(id)}
                 >
                   👁
                 </button>
@@ -1699,7 +1715,7 @@ function ConfigLikeDetailsTab({
                   className={`icon-action ${kind === 'secrets' ? 'danger' : ''}`}
                   title={uiText.resourceDetail.deleteKey}
                   aria-label={uiText.resourceDetail.deleteKey}
-                  onClick={() => removeKey(key)}
+                  onClick={() => void removeKey(id, key)}
                 >
                   🗑
                 </button>
@@ -1707,6 +1723,7 @@ function ConfigLikeDetailsTab({
             </div>
           ))}
         </div>
+        )}
       </div>
     </div>
   );
