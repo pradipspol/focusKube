@@ -44,8 +44,9 @@ export class ObservabilityService {
     userId: string,
     kubeconfigPath?: string,
     fallbackContext?: string,
+    azureConfigDir?: string,
   ) {
-    return this.lifecycle().startRecording(context, userId, kubeconfigPath, fallbackContext);
+    return this.lifecycle().startRecording(context, userId, kubeconfigPath, fallbackContext, azureConfigDir);
   }
 
   async stopRecording(context: string, userId: string, serverUrl?: string) {

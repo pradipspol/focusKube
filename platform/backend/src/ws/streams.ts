@@ -14,6 +14,7 @@ import { commandLine, commandReason, logCommandOutcome } from '../util/commandLo
 import { logError, logInfo, logWarn } from '../util/logger.js';
 import { handleTerminal } from './terminal.js';
 import { observabilityWss, handleObservabilityUpgrade } from './observability.js';
+import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
 const execWss = new WebSocketServer({ noServer: true });
@@ -314,6 +315,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
   const context = p.context || session.activeContext || undefined;
   let child: ChildProcess | undefined;
   let kubectlExecutablePath: string | undefined;
+  let cliKubeconfig: PreparedCliKubeconfig | undefined;
   const resolvedAzureConfigDir = activeSessionAzureConfigDir(session);
   const resolvedKubeconfigPath = activeSessionKubeconfigPath(session);
   const azureConfigDir = resolvedAzureConfigDir ?? undefined;
@@ -331,6 +333,8 @@ async function handlePortForward(ws: WebSocket, req: any) {
     } catch {
       /* ignore */
     }
+    void cliKubeconfig?.cleanup();
+    cliKubeconfig = undefined;
   };
 
   ws.on('close', cleanup);
@@ -407,10 +411,20 @@ async function handlePortForward(ws: WebSocket, req: any) {
     send({ type: 'STARTING', namespace, targetKind, targetName, targetPort, localPort: localPort || undefined });
 
     try {
-      const result = await spawnKubectl(kubectlArgs, session);
+      cliKubeconfig = await prepareCliKubeconfig({
+        session,
+        context,
+        env: {
+          KUBECONFIG: resolvedKubeconfigPath ?? process.env.KUBECONFIG ?? '',
+          ...(azureConfigDir ? { AZURE_CONFIG_DIR: azureConfigDir } : {}),
+        },
+      });
+      const result = await spawnKubectl(kubectlArgs, cliKubeconfig.env);
       child = result.child;
       kubectlExecutablePath = result.executablePath;
     } catch (err) {
+      await cliKubeconfig?.cleanup();
+      cliKubeconfig = undefined;
       send({ type: 'ERROR', message: (err as Error).message });
       ws.close();
       return;
@@ -497,6 +511,8 @@ async function handlePortForward(ws: WebSocket, req: any) {
       if (stdoutBuffer.trim()) send({ type: 'OUTPUT', stream: 'stdout', text: stdoutBuffer.trimEnd() });
       if (stderrBuffer.trim()) send({ type: 'OUTPUT', stream: 'stderr', text: stderrBuffer.trimEnd() });
       send({ type: 'STOPPED', code: exitCode });
+      void cliKubeconfig?.cleanup();
+      cliKubeconfig = undefined;
       try {
         ws.close();
       } catch {
@@ -506,10 +522,10 @@ async function handlePortForward(ws: WebSocket, req: any) {
   });
 }
 
-async function spawnKubectl(args: string[], session: any): Promise<{ child: ChildProcess; executablePath: string }> {
+async function spawnKubectl(args: string[], env: Record<string, string>): Promise<{ child: ChildProcess; executablePath: string }> {
   const candidates = process.platform === 'win32' ? ['kubectl.exe', 'kubectl'] : ['kubectl'];
-  const azureConfigDir = activeSessionAzureConfigDir(session) ?? undefined;
-  const kubeconfigPath = activeSessionKubeconfigPath(session) ?? null;
+  const azureConfigDir = env.AZURE_CONFIG_DIR ?? undefined;
+  const kubeconfigPath = env.KUBECONFIG ?? null;
 
   for (const cmd of candidates) {
     logInfo('kubectl.port_forward.exec.start', {
@@ -527,8 +543,7 @@ async function spawnKubectl(args: string[], session: any): Promise<{ child: Chil
     const child = spawn(cmd, args, {
       env: {
         ...process.env,
-        KUBECONFIG: activeSessionKubeconfigPath(session) ?? process.env.KUBECONFIG,
-        ...(azureConfigDir ? { AZURE_CONFIG_DIR: azureConfigDir } : {}),
+        ...env,
       },
       shell: false,
       windowsHide: true,

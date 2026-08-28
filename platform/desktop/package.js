@@ -21,6 +21,24 @@ function ensureMsiIconFile() {
   return iconPath;
 }
 
+// Recursively sums file sizes so we can populate the MSI's EstimatedSize
+// registry value, which is what Windows uses to show "Size" in Add/Remove Programs.
+function getDirectorySizeBytes(dir) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    total += entry.isDirectory() ? getDirectorySizeBytes(entryPath) : fs.statSync(entryPath).size;
+  }
+  return total;
+}
+
+// Must stay constant across releases: Windows Installer only recognizes a new
+// build as an upgrade of a previous one (rather than an unrelated product) when
+// the UpgradeCode matches. electron-wix-msi generates a random one per build
+// unless we pin it, which is why reinstalling created a duplicate Add/Remove
+// Programs entry instead of replacing the existing one.
+const FOCUSKUBE_MSI_UPGRADE_CODE = '22b82725-437c-4f94-91b3-29821ebc680d';
+
 function buildBundles(rootDir) {
   console.log('Building backend and frontend bundles for desktop packaging...');
   execSync('npm run build:bundle:prod', {
@@ -80,7 +98,11 @@ async function packageWindows(desktopDir) {
     manufacturer: escapeXml('TechAvise'),
     version: msiVersion,
     description: escapeXml('Kubernetes Cluster Explorer & Operations Console'),
-    appIconPath: ensureMsiIconFile(),
+    // NOTE: the option is `icon`, not `appIconPath` - the previous key was a
+    // no-op, so the MSI's stub exe/shortcuts fell back to an icon extracted
+    // from the packaged exe instead of our app icon.
+    icon: ensureMsiIconFile(),
+    upgradeCode: FOCUSKUBE_MSI_UPGRADE_CODE,
     ui: {
       chooseDirectory: true
     }
@@ -89,7 +111,27 @@ async function packageWindows(desktopDir) {
   // Keep the MSI limited to installing the application files. Microsoft
   // silent validation runs MSI actions in a noninteractive service context;
   // prerequisite provisioning belongs in the NSIS/bootstrapper installer.
-  await creator.create();
+  const { wxsFile, wxsContent } = await creator.create();
+
+  // electron-wix-msi doesn't set an EstimatedSize, so Add/Remove Programs
+  // shows no size for the app. Inject it into the existing DisplayIcon
+  // registry component (a component may have several RegistryValues as long
+  // as only one carries KeyPath="yes").
+  const estimatedSizeKb = Math.round(getDirectorySizeBytes(winUnpacked) / 1024);
+  let patchedWxs = wxsContent.replace(
+    /(<RegistryValue Name="DisplayIcon"[^>]*\/>)/,
+    `$1\n              <RegistryValue Name="EstimatedSize" Type="integer" Value="${estimatedSizeKb}"/>`,
+  );
+
+  // electron-wix-msi's template appends "(Machine)"/"(User)" to the product
+  // name to distinguish per-machine vs per-user installs in Add/Remove
+  // Programs. We don't rely on that distinction, and it just confuses users,
+  // so show a plain "FocusKube" regardless of install scope.
+  patchedWxs = patchedWxs
+    .replace(/FocusKube \(Machine\)/g, 'FocusKube')
+    .replace(/FocusKube \(User\)/g, 'FocusKube');
+
+  fs.writeFileSync(wxsFile, patchedWxs);
   // Compile the template to a .msi
   // Ensure WiX toolset is installed (candle.exe and light.exe) before compiling
   function exeExistsInPath(exeName) {

@@ -2,6 +2,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import 'express-async-errors';
+import fs from 'node:fs';
 import { buildTestApp, makeTestAuthUser } from '../testUtils/testApp.js';
 
 const scoped = {
@@ -26,17 +27,25 @@ mock.module('../kube/client.js', {
     ...(await import('../kube/client.js')),
     kube: {
       resolveContextName: async () => 'ctx-active',
+      rawConfig: async () => ({
+        exportConfig: () => 'apiVersion: v1\nkind: Config\ncurrent-context: ctx-active\n',
+      }),
     },
   },
 });
 
 let runResult: { stdout: string; stderr: string; code: number } = { stdout: '[]', stderr: '', code: 0 };
+let lastRunOptions: any;
 const realRun = await import('../util/run.js');
 mock.module('../util/run.js', {
   namedExports: {
     ...realRun,
-    run: async () => runResult,
-    runOrThrow: async () => {
+    run: async (_cmd: string, _args: string[], options: any = {}) => {
+      lastRunOptions = options;
+      return runResult;
+    },
+    runOrThrow: async (_cmd: string, _args: string[], options: any = {}) => {
+      lastRunOptions = options;
       if (runResult.code !== 0) throw new Error(runResult.stderr || 'command failed');
       return runResult;
     },
@@ -51,10 +60,13 @@ function app() {
 
 test('GET /api/helm/releases lists releases', async () => {
   runResult = { stdout: JSON.stringify([{ name: 'demo' }]), stderr: '', code: 0 };
+  lastRunOptions = undefined;
 
   const res = await request(app()).get('/api/helm/releases');
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { releases: [{ name: 'demo' }] });
+  assert.notEqual(lastRunOptions.env.KUBECONFIG, scoped.selectedKubeconfigPath);
+  assert.equal(fs.existsSync(lastRunOptions.env.KUBECONFIG), false);
 });
 
 test('POST /api/helm/repos requires name and a valid url', async () => {

@@ -99,6 +99,7 @@ observabilityRouter.post('/recordings/start', withRouteErrorLogging('observabili
       userId,
       scoped.selectedKubeconfigPath,
       session.activeContext ?? undefined,
+      scoped.selectedAzureConfigDir,
     );
     logInfo('observability.recording.start_complete', { context, userId, recordingId: result.recordingId });
 

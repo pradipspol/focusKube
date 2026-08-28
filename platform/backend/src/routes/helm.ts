@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { run, runOrThrow } from '../util/run.js';
+import { run, runOrThrow, type RunOptions, type RunResult } from '../util/run.js';
 import { kube } from '../kube/client.js';
+import { withCliKubeconfig } from '../kube/cliKubeconfig.js';
 import { badRequest } from '../util/httpError.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
 import { setRequestOperation } from '../util/requestOp.js';
@@ -16,9 +17,8 @@ import {
 export const helmRouter = Router();
 
 /** Build the common helm flags (kube context + namespace). */
-async function helmFlags(req: any, namespaceRequired = false): Promise<string[]> {
+async function helmFlags(req: any, scoped: Awaited<ReturnType<typeof resolveScopedRequestContext>>, namespaceRequired = false): Promise<string[]> {
   const flags: string[] = [];
-  const scoped = await resolveScopedRequestContext(req);
   const context = await kube.resolveContextName(scoped.requestedContext, {
     kubeconfigPath: scoped.selectedKubeconfigPath,
     fallbackContext: req.userSession.activeContext,
@@ -31,6 +31,40 @@ async function helmFlags(req: any, namespaceRequired = false): Promise<string[]>
   return flags;
 }
 
+async function withHelmKubeconfig<T>(
+  req: any,
+  scoped: Awaited<ReturnType<typeof resolveScopedRequestContext>>,
+  action: (env: Record<string, string>) => Promise<T>,
+): Promise<T> {
+  return withCliKubeconfig(
+    {
+      session: req.userSession,
+      context: scoped.requestedContext,
+      source: scoped.selectedScope,
+      env: sessionEnvForSource(req, scoped.selectedScope),
+    },
+    (env) => action(env),
+  );
+}
+
+async function runHelm(
+  req: any,
+  scoped: Awaited<ReturnType<typeof resolveScopedRequestContext>>,
+  args: string[],
+  options: Omit<RunOptions, 'env'> = {},
+): Promise<RunResult> {
+  return withHelmKubeconfig(req, scoped, (env) => run('helm', args, { ...options, env }));
+}
+
+async function runHelmOrThrow(
+  req: any,
+  scoped: Awaited<ReturnType<typeof resolveScopedRequestContext>>,
+  args: string[],
+  options: Omit<RunOptions, 'env'> = {},
+): Promise<RunResult> {
+  return withHelmKubeconfig(req, scoped, (env) => runOrThrow('helm', args, { ...options, env }));
+}
+
 /** List releases. Without a namespace, lists across all namespaces. */
 helmRouter.get('/releases', withRouteErrorLogging('helm', 'GET /releases', async (req, res) => {
   setRequestOperation(req, 'helm.releases.list');
@@ -38,10 +72,8 @@ helmRouter.get('/releases', withRouteErrorLogging('helm', 'GET /releases', async
   await ensureScopedContextAuth(req, scoped);
   const args = ['list', '--output', 'json'];
   if (!req.query.namespace) args.push('--all-namespaces');
-  args.push(...await helmFlags(req));
-  const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  args.push(...await helmFlags(req, scoped));
+  const { stdout } = await runHelmOrThrow(req, scoped, args);
   res.json({ releases: JSON.parse(stdout || '[]') });
 }));
 
@@ -57,9 +89,7 @@ helmRouter.post('/repos', withRouteErrorLogging('helm', 'POST /repos', async (re
   await ensureScopedContextAuth(req, scoped);
 
   const args = ['repo', 'add', body.data.name, body.data.url];
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const result = await runHelm(req, scoped, args);
   if (result.code !== 0) throw badRequest('Failed to add Helm repository', (result.stderr || result.stdout).trim());
   res.json({ ok: true, name: body.data.name, url: body.data.url });
 }));
@@ -70,9 +100,7 @@ helmRouter.get('/repos', withRouteErrorLogging('helm', 'GET /repos', async (req,
   await ensureScopedContextAuth(req, scoped);
 
   const args = ['repo', 'list', '--output', 'json'];
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const result = await runHelm(req, scoped, args);
   if (result.code !== 0) {
     res.json({ repos: [] });
     return;
@@ -85,9 +113,7 @@ helmRouter.get('/charts', withRouteErrorLogging('helm', 'GET /charts', async (re
   const scoped = await resolveScopedRequestContext(req);
   await ensureScopedContextAuth(req, scoped);
   const args = ['search', 'repo', '--output', 'json'];
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const result = await runHelm(req, scoped, args);
 
   // "no repositories to show" should not be a hard error for the UI.
   if (result.code !== 0) {
@@ -106,10 +132,8 @@ helmRouter.get('/releases/:name/history', withRouteErrorLogging('helm', 'GET /re
   setRequestOperation(req, 'helm.release.history');
   const scoped = await resolveScopedRequestContext(req);
   await ensureScopedContextAuth(req, scoped);
-  const args = ['history', req.params.name, '--output', 'json', ...(await helmFlags(req, true))];
-  const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const args = ['history', req.params.name, '--output', 'json', ...(await helmFlags(req, scoped, true))];
+  const { stdout } = await runHelmOrThrow(req, scoped, args);
   res.json({ history: JSON.parse(stdout || '[]') });
 }));
 
@@ -117,10 +141,8 @@ helmRouter.get('/releases/:name/values', withRouteErrorLogging('helm', 'GET /rel
   setRequestOperation(req, 'helm.release.values');
   const scoped = await resolveScopedRequestContext(req);
   await ensureScopedContextAuth(req, scoped);
-  const args = ['get', 'values', req.params.name, '--output', 'yaml', ...(await helmFlags(req, true))];
-  const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const args = ['get', 'values', req.params.name, '--output', 'yaml', ...(await helmFlags(req, scoped, true))];
+  const { stdout } = await runHelmOrThrow(req, scoped, args);
   res.json({ values: stdout });
 }));
 
@@ -128,10 +150,8 @@ helmRouter.get('/releases/:name/manifest', withRouteErrorLogging('helm', 'GET /r
   setRequestOperation(req, 'helm.release.manifest');
   const scoped = await resolveScopedRequestContext(req);
   await ensureScopedContextAuth(req, scoped);
-  const args = ['get', 'manifest', req.params.name, ...(await helmFlags(req, true))];
-  const { stdout } = await runOrThrow('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const args = ['get', 'manifest', req.params.name, ...(await helmFlags(req, scoped, true))];
+  const { stdout } = await runHelmOrThrow(req, scoped, args);
   res.json({ manifest: stdout });
 }));
 
@@ -146,11 +166,9 @@ helmRouter.post('/releases/:name/rollback', withRouteErrorLogging('helm', 'POST 
     req.params.name,
     String(body.data.revision),
     '--wait',
-    ...(await helmFlags(req, true)),
+    ...(await helmFlags(req, scoped, true)),
   ];
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const result = await runHelm(req, scoped, args);
   if (result.code !== 0) throw badRequest('Helm rollback failed', (result.stderr || result.stdout).trim());
   res.json({ ok: true, output: (result.stdout || result.stderr).trim() });
 }));
@@ -172,10 +190,9 @@ helmRouter.post('/releases', withRouteErrorLogging('helm', 'POST /releases', asy
   const args = ['install', body.data.releaseName, body.data.chart, '--namespace', body.data.namespace];
   if (body.data.version) args.push('--version', body.data.version);
   if (body.data.values) args.push('--values', '/dev/stdin');
-  args.push(...(await helmFlags(req)));
+  args.push(...(await helmFlags(req, scoped)));
 
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
+  const result = await runHelm(req, scoped, args, {
     input: body.data.values || undefined,
   });
   if (result.code !== 0) throw badRequest('Helm install failed', (result.stderr || result.stdout).trim());
@@ -197,9 +214,7 @@ helmRouter.post('/releases/:name', async (req, res) => {
   await ensureScopedContextAuth(req, scoped);
 
   // Get current release info to find the chart name
-  const releaseHistory = await runOrThrow('helm', ['history', req.params.name, '--max', '1', '--output', 'json', ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const releaseHistory = await runHelmOrThrow(req, scoped, ['history', req.params.name, '--max', '1', '--output', 'json', ...(await helmFlags(req, scoped, true))]);
   const history = JSON.parse(releaseHistory.stdout || '[]');
   if (history.length === 0) throw badRequest('Release not found');
 
@@ -213,10 +228,9 @@ helmRouter.post('/releases/:name', async (req, res) => {
     args.splice(args.indexOf('--reuse-values'), 1); // remove --reuse-values if we're providing new values
     args.push('--values', '/dev/stdin');
   }
-  args.push(...(await helmFlags(req, true)));
+  args.push(...(await helmFlags(req, scoped, true)));
 
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
+  const result = await runHelm(req, scoped, args, {
     input: body.data.values || undefined,
   });
   if (result.code !== 0) throw badRequest('Helm upgrade failed', (result.stderr || result.stdout).trim());
@@ -231,9 +245,7 @@ helmRouter.get('/releases/:name/diff', async (req, res) => {
   });
   await ensureScopedContextAuth(req, scoped);
 
-  const currentManifest = await runOrThrow('helm', ['get', 'manifest', req.params.name, ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const currentManifest = await runHelmOrThrow(req, scoped, ['get', 'manifest', req.params.name, ...(await helmFlags(req, scoped, true))]);
 
   const comparisonRevision = req.query.revision ? String(req.query.revision) : undefined;
   if (!comparisonRevision) {
@@ -241,9 +253,7 @@ helmRouter.get('/releases/:name/diff', async (req, res) => {
     return;
   }
 
-  const comparisonManifest = await runOrThrow('helm', ['get', 'manifest', req.params.name, '--revision', comparisonRevision, ...(await helmFlags(req, true))], {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const comparisonManifest = await runHelmOrThrow(req, scoped, ['get', 'manifest', req.params.name, '--revision', comparisonRevision, ...(await helmFlags(req, scoped, true))]);
 
   res.json({ currentManifest: currentManifest.stdout, comparisonManifest: comparisonManifest.stdout });
 });
@@ -265,10 +275,8 @@ helmRouter.delete('/releases/:name', async (req, res) => {
     source: requestedSourceFromQuery(req),
   });
   await ensureScopedContextAuth(req, scoped);
-  const args = ['uninstall', req.params.name, ...(await helmFlags(req, true))];
-  const result = await run('helm', args, {
-    env: sessionEnvForSource(req, scoped.selectedScope),
-  });
+  const args = ['uninstall', req.params.name, ...(await helmFlags(req, scoped, true))];
+  const result = await runHelm(req, scoped, args);
   if (result.code !== 0) throw badRequest('Helm uninstall failed', (result.stderr || result.stdout).trim());
   res.json({ ok: true, output: (result.stdout || result.stderr).trim() });
 });

@@ -8,6 +8,7 @@ import { commandLine, commandReason, logCommandOutcome } from '../util/commandLo
 import { logError, logInfo, logWarn } from '../util/logger.js';
 import { resolveExecutablePath } from '../util/run.js';
 import { setRequestOperation } from '../util/requestOp.js';
+import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
 
 type TerminalRequest = {
   context?: string;
@@ -38,6 +39,7 @@ export async function handleTerminal(ws: WebSocket, req: any) {
 
   let currentChild: IPty | undefined;
   let currentExecutable: string | undefined;
+  let currentCliKubeconfig: PreparedCliKubeconfig | undefined;
   let busy = false;
   let stopping = false;
   let terminalCols = 80;
@@ -55,8 +57,10 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     } catch {
       /* ignore */
     }
+    void currentCliKubeconfig?.cleanup();
     currentChild = undefined;
     currentExecutable = undefined;
+    currentCliKubeconfig = undefined;
     busy = false;
   };
 
@@ -146,10 +150,17 @@ export async function handleTerminal(ws: WebSocket, req: any) {
     busy = true;
 
     try {
-      const spawned = await spawnWithCandidates(candidates, args, env, terminalCols, terminalRows);
+      currentCliKubeconfig = await prepareCliKubeconfig({
+        session,
+        context,
+        env,
+      });
+      const spawned = await spawnWithCandidates(candidates, args, currentCliKubeconfig.env, terminalCols, terminalRows);
       currentChild = spawned.child;
       currentExecutable = spawned.executablePath;
     } catch (err) {
+      await currentCliKubeconfig?.cleanup();
+      currentCliKubeconfig = undefined;
       busy = false;
       send({ type: 'ERROR', message: (err as Error).message });
       return;
@@ -206,6 +217,8 @@ export async function handleTerminal(ws: WebSocket, req: any) {
       busy = false;
       currentChild = undefined;
       currentExecutable = undefined;
+      void currentCliKubeconfig?.cleanup();
+      currentCliKubeconfig = undefined;
       send({ type: 'DONE', code });
     });
 

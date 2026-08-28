@@ -31,9 +31,9 @@ export class RecordingLifecycle {
   constructor(private store: ChangeEventStore) {}
 
   /** Extract server URL from kubeConfig context */
-  private async getServerUrl(context: string, kubeconfigPath?: string, fallbackContext?: string): Promise<string | undefined> {
+  private async getServerUrl(context: string, kubeconfigPath?: string, fallbackContext?: string, azureConfigDir?: string): Promise<string | undefined> {
     try {
-      const kubeConfig = await kube.rawConfig(context, { kubeconfigPath, fallbackContext });
+      const kubeConfig = await kube.rawConfig(context, { kubeconfigPath, fallbackContext, azureConfigDir });
       const cluster = kubeConfig.getCurrentCluster();
       return cluster?.server;
     } catch (err) {
@@ -50,6 +50,7 @@ export class RecordingLifecycle {
     userId: string,
     kubeconfigPath?: string,
     fallbackContext?: string,
+    azureConfigDir?: string,
     retentionMs = 72 * 60 * 60 * 1000,
   ): Promise<{ recordingId: string; status: string }> {
     let recordingId: string | undefined;
@@ -58,7 +59,7 @@ export class RecordingLifecycle {
 
       // Get server URL to ensure unique recording per cluster
       logInfo('observability.recording.server_url_lookup_start', { context, userId });
-      const serverUrl = await this.getServerUrl(context, kubeconfigPath, fallbackContext);
+      const serverUrl = await this.getServerUrl(context, kubeconfigPath, fallbackContext, azureConfigDir);
       logInfo('observability.recording.server_url_lookup_complete', { context, userId, serverUrl: serverUrl ?? null });
       const recordingKey = computeRecordingKey(userId, context, serverUrl);
 
@@ -110,7 +111,7 @@ export class RecordingLifecycle {
       });
 
       // Create and start informers
-      const recording = new Recording(recordingId, context, userId, this.store, kubeconfigPath, fallbackContext, retentionMs, serverUrl);
+  const recording = new Recording(recordingId, context, userId, this.store, kubeconfigPath, fallbackContext, azureConfigDir, retentionMs, serverUrl);
       logInfo('observability.recording.informers_start', { recordingId, context, userId });
       await recording.start();
       logInfo('observability.recording.informers_start_complete', { recordingId, context, userId });
@@ -202,6 +203,7 @@ export class RecordingLifecycle {
             doc.userId,
             this.store,
             doc.kubeconfigPath,
+            undefined,
             undefined,
             retentionMs,
             doc.serverUrl,

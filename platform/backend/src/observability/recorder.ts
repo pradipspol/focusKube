@@ -47,6 +47,7 @@ export class Recording {
     private store: ChangeEventStore,
     kubeconfigPath?: string,
     fallbackContext?: string,
+    private readonly azureConfigDir?: string,
     retentionMs = 72 * 60 * 60 * 1000,
     serverUrl?: string,
   ) {
@@ -64,6 +65,7 @@ export class Recording {
       const kubeConfig = await kube.rawConfig(this.context, {
         kubeconfigPath: this.kubeconfigPath,
         fallbackContext: this.fallbackContext,
+        azureConfigDir: this.azureConfigDir,
       });
 
       this.namespaceForScope = await this.resolveNamespace(kubeConfig);
