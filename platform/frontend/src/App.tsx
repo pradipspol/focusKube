@@ -61,6 +61,7 @@ interface ViewTab {
   pinned?: boolean;
   originContext?: string;
   originSource?: 'aks' | 'eks' | 'local';
+  azureSource?: AzureScope;
   originKubeconfigId?: string;
 }
 
@@ -79,7 +80,7 @@ function resolveScopeFromContext(ctx?: KubeContext): ContextScope | null {
   return null;
 }
 
-function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string): string {
+function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string, azureSource?: AzureScope): string {
   const sourceKey = originSource ?? 'unknown';
   const contextKey = originContext ?? 'global';
   const kubeconfigKey = originKubeconfigId ?? '';
@@ -90,12 +91,12 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   if (view.type === 'portForwarding') return `portForwarding:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'observability') return `observability:${view.tab ?? 'timeline'}:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'topology') return `topology:${sourceKey}:${contextKey}${suffix}`;
-  if (view.type === 'azure') return 'azure';
+  if (view.type === 'azure') return `azure:${azureSource ?? 'cloud'}`;
   if (view.type === 'aws') return 'aws';
   return view.type;
 }
 
-function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 'local'): string {
+function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 'local' | 'cloud'): string {
   const base =
     view.type === 'resource'
       ? view.plural.charAt(0).toUpperCase() + view.plural.slice(1)
@@ -119,6 +120,10 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
   // Azure and logs views aren't context-scoped, so don't append the context name.
   if (view.type === 'azure' || view.type === 'logs' ) return base;
   return context ? `${base} - ${context}` : base;
+}
+
+function azureTabSource(tab?: ViewTab, fallback?: AzureScope): AzureScope {
+  return tab?.azureSource ?? fallback ?? 'cloud';
 }
 
 const TABS_STORAGE_KEY = 'k8sExplorer.openTabs';
@@ -168,9 +173,14 @@ function loadStoredTabs(): ViewTab[] {
       const tab = item && typeof item === 'object' && 'view' in item ? (item as ViewTab) : undefined;
       const view = tab?.view ?? (isView(item) ? (item as View) : undefined);
       if (!view) continue;
-      const id = typeof tab?.id === 'string' && tab.id.length > 0
-        ? tab.id
-        : viewId(view, tab?.originContext, tab?.originSource);
+      const azureSource = view.type === 'azure'
+        ? tab?.azureSource ?? (tab?.originSource === 'local' ? 'local' : 'cloud')
+        : undefined;
+      const id = view.type === 'azure'
+        ? viewId(view, tab?.originContext, tab?.originSource, tab?.originKubeconfigId, azureSource)
+        : typeof tab?.id === 'string' && tab.id.length > 0
+          ? tab.id
+          : viewId(view, tab?.originContext, tab?.originSource, tab?.originKubeconfigId);
       if (seen.has(id)) continue;
       seen.add(id);
       tabs.push({
@@ -180,6 +190,7 @@ function loadStoredTabs(): ViewTab[] {
         pinned: tab?.pinned === true,
         originContext: tab?.originContext,
         originSource: tab?.originSource,
+        azureSource,
         originKubeconfigId: tab?.originKubeconfigId,
       });
     }
@@ -720,11 +731,13 @@ export default function App() {
     originContext?: string,
     originSource?: 'aks' | 'eks' | 'local',
     originKubeconfigId?: string,
+    azureSource?: AzureScope,
   ) => {
     const resolvedOriginSource = originSource ?? (originContext
       ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | undefined)
       : undefined);
-    const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId);
+    const resolvedAzureSource = view.type === 'azure' ? (azureSource ?? 'cloud') : undefined;
+    const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId, resolvedAzureSource);
     setTabs((current) => {
       const activeTab = current.find((tab) => tab.id === activeTabId);
       const withoutTemporaryActiveTab = activeTab && activeTab.id !== id && !activeTab.pinned
@@ -736,11 +749,13 @@ export default function App() {
           const nextOriginContext = originContext ?? tab.originContext;
           const nextOriginSource = resolvedOriginSource ?? tab.originSource;
           const nextOriginKubeconfigId = originKubeconfigId ?? tab.originKubeconfigId;
+          const nextAzureSource = view.type === 'azure' ? (resolvedAzureSource ?? tab.azureSource ?? 'cloud') : tab.azureSource;
           return {
             ...tab,
             label: viewLabel(view, nextOriginContext, nextOriginSource),
             originContext: nextOriginContext,
             originSource: nextOriginSource,
+            azureSource: nextAzureSource,
             originKubeconfigId: nextOriginKubeconfigId,
           };
         });
@@ -753,6 +768,7 @@ export default function App() {
           view,
           originContext,
           originSource: resolvedOriginSource,
+          azureSource: resolvedAzureSource,
           originKubeconfigId,
         },
       ];
@@ -839,13 +855,13 @@ export default function App() {
         void handleContextChange(localContext, { source: 'local' });
       }
     }
-    openView({ type: 'azure' });
+    openView({ type: 'azure' }, undefined, undefined, undefined, source ?? 'cloud');
   };
 
   const openCloudAzureView = () => {
     setTabMenu(null);
     setAzureAuthSource('cloud');
-    openView({ type: 'azure' });
+    openView({ type: 'azure' }, undefined, undefined, undefined, 'cloud');
   };
 
   const openCloudAwsView = () => {
@@ -1207,7 +1223,7 @@ export default function App() {
                       onPickContext={(name) => {
                         void handleContextChange(name, { source: 'aks' });
                       }}
-                      azureSource={activeTab.originSource === 'local' ? 'local' : azureAuthSource ?? (activeContextSource === 'local' ? 'local' : 'cloud')}
+                      azureSource={azureTabSource(activeTab, azureAuthSource ?? (activeContextSource === 'local' ? 'local' : undefined))}
                       onAccountsChanged={(account, scope) => {
                         setAzureAuthSource(null);
                         queryClient.setQueryData(['azure', 'account'], account);

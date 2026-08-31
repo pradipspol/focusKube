@@ -446,6 +446,12 @@ export function SidebarProviderSources({
   }, [azureRefreshToken, azureProbeRequested, expandGroup]);
 
   useEffect(() => {
+    if (!azureSignedIn) return;
+    if (azureAccounts.length > 0 || loadingSubscriptions) return;
+    void probeAzureCloudAccounts();
+  }, [azureSignedIn, azureAccounts.length, loadingSubscriptions]);
+
+  useEffect(() => {
     if (hasAwsCloudAccount) return;
     setAwsAccountNode(null);
     if (!awsProbeRequested) {

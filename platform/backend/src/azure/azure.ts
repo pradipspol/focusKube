@@ -148,6 +148,15 @@ export function invalidateAzureCliLoginCache(azureConfigDir?: string): void {
   azureCliLoginProbeCache.delete(azureCliLoginCacheKey(azureConfigDir));
 }
 
+function isAzureDeviceCodeNoise(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    normalized.includes('interactive authentication is needed') ||
+    normalized.includes('please run: az login') ||
+    normalized.includes('please run az login')
+  );
+}
+
 export async function hasAzureCliLogin(azureConfigDir: string): Promise<boolean> {
   const state = azureCliLoginProbeStateFor(azureConfigDir);
   const now = Date.now();
@@ -306,7 +315,7 @@ export class AzureLoginManager {
       const handle = (chunk: Buffer) => {
         const text = chunk.toString();
         const trimmed = text.trim();
-        if (trimmed) {
+        if (trimmed && !isAzureDeviceCodeNoise(trimmed)) {
           this.lastMessage = trimmed;
         }
         outputBuffer = `${outputBuffer}${text}`;
@@ -529,7 +538,7 @@ export class AzureLoginManager {
             } else {
               if (watchdog) clearTimeout(watchdog);
               this.state = 'failed';
-              if (!this.lastMessage || this.lastMessage === 'Starting Azure login…') {
+              if (!this.lastMessage || this.lastMessage === 'Starting Azure login…' || isAzureDeviceCodeNoise(this.lastMessage)) {
                 this.lastMessage = `az login exited with code ${code}`;
               }
               logCommandOutcome('error', 'azure.login.exec.finish', 'failed', cmd, azLoginArgs, {

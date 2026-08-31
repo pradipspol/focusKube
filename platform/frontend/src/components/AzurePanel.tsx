@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AzureScope } from '../api/client';
-import type { AksCluster, AzureAccount } from '../api/types';
+import type { AksCluster, AzureAccount, AzureAccountGroup } from '../api/types';
 import { uiText } from '../text';
 
 interface Props {
@@ -21,6 +21,7 @@ export function AzurePanel({
 }: Props) {
   const qc = useQueryClient();
   const [subscription, setSubscription] = useState<string>('');
+  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string>('');
   const [polling, setPolling] = useState(false);
   const [watchLoginStatus, setWatchLoginStatus] = useState(true);
   const [awaitingAzureAccount, setAwaitingAzureAccount] = useState(false);
@@ -30,6 +31,12 @@ export function AzurePanel({
   const account = useQuery({
     queryKey: ['azure', 'account', azureSource],
     queryFn: () => api.azureAccount(azureSource),
+    enabled: true,
+    refetchInterval: awaitingAzureAccount ? 1500 : false,
+  });
+  const accounts = useQuery({
+    queryKey: ['azure', 'accounts', azureSource],
+    queryFn: () => api.azureAccounts(azureSource),
     enabled: true,
     refetchInterval: awaitingAzureAccount ? 1500 : false,
   });
@@ -45,6 +52,7 @@ export function AzurePanel({
       setPolling(true);
       qc.removeQueries({ queryKey: ['azure-login-status'] });
       qc.invalidateQueries({ queryKey: ['azure', 'account'] });
+      qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
     },
     onSuccess: () => setPolling(true),
     onError: (e) => {
@@ -64,6 +72,7 @@ export function AzurePanel({
       setAwaitingAzureAccount(false);
       qc.removeQueries({ queryKey: ['azure-login-status'] });
       qc.invalidateQueries({ queryKey: ['azure', 'account'] });
+      qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
       qc.invalidateQueries({ queryKey: ['azure', 'subscriptions'] });
       qc.invalidateQueries({ queryKey: ['azure', 'aks'] });
       onAccountsChanged?.(null, azureSource);
@@ -96,6 +105,7 @@ export function AzurePanel({
       setMessage('Azure sign-in complete. Loading account...');
       setMessageIsError(false);
       void qc.refetchQueries({ queryKey: ['azure', 'account'] });
+      void qc.refetchQueries({ queryKey: ['azure', 'accounts'] });
     } else if (state === 'failed') {
       setPolling(false);
       setWatchLoginStatus(false);
@@ -121,12 +131,33 @@ export function AzurePanel({
     setMessageIsError(false);
     void qc.refetchQueries({ queryKey: ['azure', 'subscriptions'] });
     void qc.refetchQueries({ queryKey: ['azure', 'aks'] });
+    void qc.refetchQueries({ queryKey: ['azure', 'accounts'] });
   }, [account.data?.account, account.isFetching, awaitingAzureAccount, loggedIn, onAccountsChanged, qc, subs.isFetching, azureSource]);
 
+  const accountGroups = accounts.data?.accounts ?? [];
+  const selectedAccount = useMemo<AzureAccountGroup | undefined>(() => {
+    if (accountGroups.length === 0) return undefined;
+    return accountGroups.find((group) => group.email === selectedAccountEmail) ?? accountGroups[0];
+  }, [accountGroups, selectedAccountEmail]);
+
   useEffect(() => {
-    const def = subs.data?.subscriptions.find((s) => s.isDefault) ?? subs.data?.subscriptions[0];
-    if (def && !subscription) setSubscription(def.id);
-  }, [subs.data]);
+    if (accountGroups.length === 0) {
+      if (selectedAccountEmail) setSelectedAccountEmail('');
+      return;
+    }
+    const nextEmail = selectedAccount?.email ?? accountGroups[0].email;
+    if (nextEmail !== selectedAccountEmail) setSelectedAccountEmail(nextEmail);
+  }, [accountGroups, selectedAccount, selectedAccountEmail]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    const selectedSubscriptionIds = new Set(selectedAccount?.subscriptions.map((sub) => sub.id) ?? []);
+    const visibleSubscriptions = selectedAccount
+      ? (subs.data?.subscriptions ?? []).filter((sub) => selectedSubscriptionIds.has(sub.id))
+      : subs.data?.subscriptions ?? [];
+    const def = visibleSubscriptions.find((s) => s.isDefault) ?? visibleSubscriptions[0];
+    if (def && def.id !== subscription) setSubscription(def.id);
+  }, [loggedIn, selectedAccount, subs.data, subscription]);
 
   const setSub = useMutation({
     mutationFn: (id: string) => api.azureSetSubscription(id, azureSource),
@@ -164,10 +195,22 @@ export function AzurePanel({
   const accountLabel =
     userName && userType ? `${userName} (${userType})` : userName || account.data?.account?.name || '';
   const azureScopeLabel = azureSource === 'local' ? 'Local' : 'Cloud';
+  const currentSubscription = subs.data?.subscriptions.find((sub) => sub.id === subscription);
+  const visibleSubscriptions = selectedAccount
+    ? (subs.data?.subscriptions ?? []).filter((sub) => selectedAccount.subscriptions.some((accountSub) => accountSub.id === sub.id))
+    : subs.data?.subscriptions ?? [];
+  const fallbackAccountLabel = account.data?.account?.user?.name || account.data?.account?.name || 'Azure user';
+  const totalSubscriptionCount = subs.data?.subscriptions.length ?? 0;
+  const signInButtonLabel = loggedIn ? 'Add Azure account' : uiText.azure.signIn;
 
   return (
     <div style={{ padding: 16, maxWidth: 900 }}>
-      <h2>{uiText.azure.connectionsTitle}</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <h2 style={{ margin: 0 }}>{uiText.azure.connectionsTitle}</h2>
+        <button className="primary" onClick={() => login.mutate()} disabled={login.isPending || polling}>
+          {signInButtonLabel}
+        </button>
+      </div>
       {message && (
         <div className={`notice ${messageIsError ? 'error' : ''}`}>
           <div>{message}</div>
@@ -179,6 +222,27 @@ export function AzurePanel({
         </div>
       )}
 
+      {loginPending && (
+        <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
+          <span className="azure-login-spinner" aria-label="Azure sign-in in progress" />
+          <div>
+            <div>{uiText.azure.signInProgress}</div>
+            {device ? (
+              <div style={{ marginTop: 6 }}>
+                Open{' '}
+                <a href={device.verificationUrl} target="_blank" rel="noreferrer">
+                  {device.verificationUrl ?? 'the device login page'}
+                </a>{' '}
+                and enter code <code className="inline">{device.userCode}</code>
+              </div>
+            ) : (
+              <div className="dim" style={{ marginTop: 6 }}>{pendingMessage}</div>
+            )}
+            <div className="dim" style={{ marginTop: 6 }}>{uiText.azure.waitingForSignIn}</div>
+          </div>
+        </div>
+      )}
+
       <section style={{ marginBottom: 24 }}>
         <h3>{uiText.azure.accountTitle}</h3>
         {/* <div className="dim" style={{ marginBottom: 8 }}>
@@ -187,44 +251,75 @@ export function AzurePanel({
         {(account.isLoading || awaitingAzureAccount) && <div className="dim">{uiText.azure.checking}</div>}
         {loggedIn ? (
           <div className="notice">
-            <div>
-              Signed in as <b>{accountLabel}</b>
-            </div>
-            <div className="dim" style={{ marginTop: 6 }}>
-              Active subscription: {account.data?.account?.name}
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <button className="danger" onClick={() => logout.mutate()} disabled={logout.isPending}>
-                {uiText.azure.signOut}
-              </button>
+            <div style={{ marginTop: 14 }}>
+              {(accounts.isLoading || accounts.isFetching) && <div className="dim">Loading Azure accounts...</div>}
+              {accounts.isError && <div className="notice error">{(accounts.error as Error).message}</div>}
+              {!accounts.isLoading && !accounts.isError && accountGroups.length === 0 && totalSubscriptionCount === 0 ? (
+                <div className="notice" style={{ padding: '10px 12px' }}>
+                  <div>
+                    <b>{fallbackAccountLabel}</b>
+                    {userType ? <span className="dim"> ({userType})</span> : null}
+                  </div>
+                  <div className="dim" style={{ marginTop: 4 }}>
+                    0 subscriptions
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {accountGroups.length === 0 && totalSubscriptionCount > 0 && (
+                    <div className="notice" style={{ padding: '10px 12px' }}>
+                      <div>
+                        <b>{fallbackAccountLabel}</b>
+                        {userType ? <span className="dim"> ({userType})</span> : null}
+                      </div>
+                      <div className="dim" style={{ marginTop: 4 }}>
+                        {totalSubscriptionCount} subscription{totalSubscriptionCount === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                  )}
+                  {accountGroups.map((group) => {
+                    const selected = group.email === selectedAccount?.email;
+                    return (
+                      <div
+                        key={group.email}
+                        className="notice"
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px' }}
+                      >
+                        <div>
+                          <div>
+                            <b>{group.email}</b>
+                            {group.userType ? <span className="dim"> ({group.userType})</span> : null}
+                          </div>
+                          <div className="dim" style={{ marginTop: 4 }}>
+                            {group.subscriptions.length} subscription{group.subscriptions.length === 1 ? '' : 's'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                          <button
+                            className={selected ? 'primary' : ''}
+                            onClick={() => {
+                              setSelectedAccountEmail(group.email);
+                              const firstSubscription = group.subscriptions[0];
+                              if (firstSubscription) setSubscription(firstSubscription.id);
+                            }}
+                          >
+                            {selected ? 'Selected' : 'Load'}
+                          </button>
+                          {selected && (
+                            <button className="danger" onClick={() => logout.mutate()} disabled={logout.isPending}>
+                              {uiText.azure.signOut}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         ) : (
-          <>
-            <button className="primary" onClick={() => login.mutate()} disabled={login.isPending || polling}>
-              {uiText.azure.signIn}
-            </button>
-            {loginPending && (
-              <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
-                <span className="azure-login-spinner" aria-label="Azure sign-in in progress" />
-                <div>
-                  <div>{uiText.azure.signInProgress}</div>
-                  {device ? (
-                    <div style={{ marginTop: 6 }}>
-                      Open{' '}
-                      <a href={device.verificationUrl} target="_blank" rel="noreferrer">
-                        {device.verificationUrl ?? 'the device login page'}
-                      </a>{' '}
-                      and enter code <code className="inline">{device.userCode}</code>
-                    </div>
-                  ) : (
-                    <div className="dim" style={{ marginTop: 6 }}>{pendingMessage}</div>
-                  )}
-                  <div className="dim" style={{ marginTop: 6 }}>{uiText.azure.waitingForSignIn}</div>
-                </div>
-              </div>
-            )}
-          </>
+          <></>
         )}
       </section>
 
