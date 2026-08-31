@@ -107,8 +107,16 @@ The desktop app installs both of these automatically on first run if they're mis
 
 Download the latest installer for your platform from the [Releases page](https://github.com/pradipspol/focusKube/releases), then:
 
+Direct download links for the current tagged release assets:
+
+- Windows `.exe`: [FocusKube-Setup-0.1.1-1.exe](https://github.com/pradipspol/focusKube/releases/download/v0.1.1-1/FocusKube-Setup-0.1.1-1.exe)
+- Windows `.msi`: [FocusKube-Setup-0.1.1-1.msi](https://github.com/pradipspol/focusKube/releases/download/v0.1.1-1/FocusKube-Setup-0.1.1-1.msi)
+- macOS `.dmg`: [FocusKube-Setup-0.1.1-1.dmg](https://github.com/pradipspol/focusKube/releases/download/v0.1.1-1/FocusKube-Setup-0.1.1-1.dmg)
+- Linux `.deb`: [FocusKube-Setup-0.1.1-1.deb](https://github.com/pradipspol/focusKube/releases/download/v0.1.1-1/FocusKube-Setup-0.1.1-1.deb)
+- Linux `.AppImage`: [FocusKube-Setup-0.1.1-1.AppImage](https://github.com/pradipspol/focusKube/releases/download/v0.1.1-1/FocusKube-Setup-0.1.1-1.AppImage)
+
 ### Windows
-1. Run `focusKube-Setup-<version>.exe` or the `.msi`.
+1. Run `focusKube-Setup-0.1.1-1.exe` or `focusKube-Setup-0.1.1-1.msi`.
 2. Launch FocusKube from the Start Menu.
 
 ### macOS
@@ -121,8 +129,8 @@ Download the latest installer for your platform from the [Releases page](https:/
    Then launch the app normally.
 
 ### Linux
-- **AppImage**: `chmod +x focusKube-Setup-<version>.AppImage && ./focusKube-Setup-<version>.AppImage`
-- **Debian/Ubuntu**: `sudo dpkg -i focusKube-Setup-<version>.deb` (or `sudo apt install ./focusKube-Setup-<version>.deb` to also resolve missing dependencies)
+- **AppImage**: `chmod +x focusKube-Setup-0.1.1-1.AppImage && ./focusKube-Setup-0.1.1-1.AppImage`
+- **Debian/Ubuntu**: `sudo dpkg -i focusKube-Setup-0.1.1-1.deb` (or `sudo apt install ./focusKube-Setup-0.1.1-1.deb` to also resolve missing dependencies)
 
 ### After installing (any platform)
 Sign in to Azure or AWS to connect to your AKS or EKS environments.

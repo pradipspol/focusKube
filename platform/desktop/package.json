@@ -1,6 +1,6 @@
 {
   "name": "focusKube",
-  "author": "TechAvise", 
+  "author": "MorrowSys", 
   "description": "Kubernetes Cluster Explorer & Operations Console",
   "version": "0.1.1-1",
   "private": true,
@@ -40,7 +40,7 @@
       "icon": "assets/icons/app512.ico",
       "target": ["nsis", "msi"],
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "publisherName": "TechAvise"
+      "publisherName": "MorrowSys"
     },
     "nsis": {
       "oneClick": false,
@@ -67,7 +67,7 @@
       "category": "Development",
       "target": ["AppImage", "deb"],
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "maintainer": "TechAvise"
+      "maintainer": "MorrowSys"
     }
   },
   "devDependencies": {

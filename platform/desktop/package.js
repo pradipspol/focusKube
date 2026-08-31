@@ -95,7 +95,7 @@ async function packageWindows(desktopDir) {
     outputDirectory: msiOutputDir,
     exe: exeName,
     name: escapeXml('FocusKube'),
-    manufacturer: escapeXml('TechAvise'),
+    manufacturer: escapeXml('MorrowSys'),
     version: msiVersion,
     description: escapeXml('Kubernetes Cluster Explorer & Operations Console'),
     // NOTE: the option is `icon`, not `appIconPath` - the previous key was a
