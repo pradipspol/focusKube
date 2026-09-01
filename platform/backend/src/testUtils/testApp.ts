@@ -10,6 +10,7 @@ export function makeTestSession(overrides: Partial<UserSessionState> = {}): User
     activeContext: 'ctx-active',
     activeContextSource: 'azure',
     localKubeconfigPath: '/tmp/local-kubeconfig',
+    minikubeKubeconfigPath: '/tmp/minikube-kubeconfig',
     localAzureConfigDir: '/tmp/local-azure',
     cloudKubeconfigPath: '/tmp/cloud-kubeconfig',
     cloudAzureConfigDir: '/tmp/cloud-azure',

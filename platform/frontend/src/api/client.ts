@@ -24,7 +24,7 @@ import type {
 } from './types';
 
 /** Which kubeconfig a context/resource call resolves against: local file, Azure cloud, or AWS. */
-export type ContextScope = 'local' | 'azure' | 'aws';
+export type ContextScope = 'local' | 'minikube' | 'azure' | 'aws';
 
 export interface Scope {
   context?: string;
@@ -135,6 +135,7 @@ export const api = {
       `/contexts/local-kubeconfigs/${id}/contexts/${encodeURIComponent(contextName)}`,
       { method: 'DELETE' },
     ),
+  connectMinikube: () => request<{ contextName: string }>('/minikube/connect', { method: 'POST' }),
 
   // Resources
   getKinds: () => request<ResourceKindMeta[]>('/resources/_kinds'),

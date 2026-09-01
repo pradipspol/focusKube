@@ -25,7 +25,7 @@ export type ContextsPayload = {
     active: boolean;
     connected?: boolean;
     source?: {
-      provider: 'aks' | 'eks' | 'local';
+      provider: 'aks' | 'eks' | 'local' | 'minikube';
       subscriptionId?: string;
       subscriptionName?: string;
       resourceGroup?: string;
@@ -96,6 +96,9 @@ export class ContextsService {
 
     if (scope === 'local') {
       return { provider: 'local' };
+    }
+    if (scope === 'minikube') {
+      return { provider: 'minikube', clusterName: contextName };
     }
     if (scope === 'aws') {
       return {

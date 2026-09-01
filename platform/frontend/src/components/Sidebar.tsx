@@ -10,19 +10,19 @@ import starredIcon from '../../assets/starred.svg';
 interface Props {
   view?: View;
   activeTabOriginContext?: string;
-  activeTabOriginSource?: 'aks' | 'eks' | 'local';
+  activeTabOriginSource?: 'aks' | 'eks' | 'local' | 'minikube';
   activeTabOriginKubeconfigId?: string;
   /** Origin of whichever context was actually, explicitly connected on the backend —
    * set only by a deliberate connect action (never by a passive default-context
    * initialization), so it's the right signal for "should anything be highlighted"
    * when no tab is open to supply activeTabOrigin* directly. */
-  activeContextOriginSource?: 'aks' | 'eks' | 'local';
+  activeContextOriginSource?: 'aks' | 'eks' | 'local' | 'minikube';
   activeContextOriginKubeconfigId?: string;
   /** Mirrors App.tsx's suppressTreeReveal - true right after a Starred Contexts
    * selection, so the cloud tree's location-reveal effects know to stay put. */
   suppressTreeReveal?: boolean;
-  onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
-  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
+  onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => void;
+  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => void;
   onOpenExplorer: () => void;
   scope: Scope;
   contexts: KubeContext[];
@@ -33,7 +33,7 @@ interface Props {
   awsRefreshToken?: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local' | 'minikube'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
@@ -58,7 +58,7 @@ const LOCAL_AZURE_AUTH_RETRY_DELAY_MS = 1200;
 
 // Keeps starred contexts scoped to their original source so a locally-uploaded
 // kubeconfig context can't collide with an identically-named AKS/EKS context.
-const getStarKey = (provider: 'aks' | 'eks' | 'local', name: string) => `${provider}:${name}`;
+const getStarKey = (provider: 'aks' | 'eks' | 'local' | 'minikube', name: string) => `${provider}:${name}`;
 
 // Azure/AWS cloud-tree node keys (accounts, subscriptions, resource groups, regions,
 // clusters) — these should default to collapsed on every load, not remember a stale
@@ -254,7 +254,7 @@ export function Sidebar({
   const openExplorerView = (
     nextView: View,
     originContext = scope.context,
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
   ) => {
     onOpenExplorer();
@@ -436,7 +436,7 @@ export function Sidebar({
     [],
   );
 
-  const toggleStar = (provider: 'aks' | 'eks' | 'local', contextName: string) => {
+  const toggleStar = (provider: 'aks' | 'eks' | 'local' | 'minikube', contextName: string) => {
     const key = getStarKey(provider, contextName);
     setStarredContexts((current) => ({
       ...current,
@@ -444,7 +444,7 @@ export function Sidebar({
     }));
   };
 
-  const renderSectionGroups = (contextName: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => (
+  const renderSectionGroups = (contextName: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => (
     <div className="context-sections">
       {GROUPS.map((group) => {
         const consumedActivePlurals = new Set<string>();
@@ -518,7 +518,7 @@ export function Sidebar({
     nodeKeyPrefix: string,
     labelOverride?: string,
     options?: { onRemove?: () => void },
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
   ) => {
     const resolvedSource = originSource ?? ctx.source?.provider;
@@ -539,7 +539,7 @@ export function Sidebar({
     const contextExpanded = !isGroupCollapsed(`${nodeKeyPrefix}:${ctx.name}`);
     const isStarred = !!resolvedSource && !!starredContexts[getStarKey(resolvedSource, ctx.name)];
     const isLocalContextNode = resolvedSource === 'local';
-    const canExpandLocalContextNode = !isLocalContextNode || localAzureAuthenticated;
+    const canExpandLocalContextNode = !isLocalContextNode || ctx.name === 'minikube' || localAzureAuthenticated;
     // Distinguishes this rendered node from any other node that happens to share
     // the same context name (e.g. a starred entry vs. its local-kubeconfig source).
     const nodeIdentityKey = `${nodeKeyPrefix}:${resolvedSource ?? 'unknown'}:${ctx.name}`;
@@ -554,7 +554,7 @@ export function Sidebar({
           className={`nav-item context-item ${isSelectedContext ? 'active' : ''}`}
           onClick={async () => {
             onOpenExplorer();
-            if (isLocalContextNode) {
+            if (isLocalContextNode && ctx.name !== 'minikube') {
               const ok = await ensureLocalAzureConnected(ctx.name);
               if (!ok) return;
             }
@@ -581,7 +581,7 @@ export function Sidebar({
                   event.stopPropagation();
                   const key = `${nodeKeyPrefix}:${ctx.name}`;
                   const willExpand = isGroupCollapsed(key);
-                  if (willExpand && isLocalContextNode) {
+                  if (willExpand && isLocalContextNode && ctx.name !== 'minikube') {
                     const ok = await ensureLocalAzureConnected(ctx.name);
                     if (!ok) return;
                   }
@@ -747,6 +747,8 @@ export function Sidebar({
                 expandGroup={expandGroup}
                 ensureLocalAzureConnected={ensureLocalAzureConnected}
                 renderContextNode={renderContextNode}
+                renderSectionGroups={renderSectionGroups}
+                onSelect={onSelect}
                 onPin={onPin}
                 onContextChange={onContextChange}
                 onUploadLocalKubeconfig={onUploadLocalKubeconfig}

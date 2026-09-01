@@ -142,3 +142,30 @@ For development, refer to [DEVELOPMENT.md](DEVELOPMENT.md).
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+
+
+winget install Kubernetes.minikube
+
+winget install Docker.DockerDesktop
+
+minikube version
+minikube start --driver=docker
+minikube status
+
+Windows Pro/Enterprise: use built-in Hyper-V:
+
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+winget install Kubernetes.minikube
+minikube start --driver=hyperv
+
+minikube status
+
+Restart Windows after enabling Hyper-V.
+
+Windows Home: use VirtualBox:
+
+winget install Oracle.VirtualBox
+winget install Kubernetes.minikube
+minikube start --driver=virtualbox
+
+minikube status

@@ -27,6 +27,7 @@ export interface UserSessionState {
   activeContext: string | null;
   activeContextSource: SessionScope | null;
   localKubeconfigPath: string;
+  minikubeKubeconfigPath: string;
   localAzureConfigDir: string;
   cloudKubeconfigPath: string;
   cloudAzureConfigDir: string;
@@ -42,7 +43,7 @@ export interface UserSessionState {
 }
 
 /** 'cloud' means "Azure cloud kubeconfig" specifically — AWS EKS has its own 'aws' bucket. */
-export type SessionScope = 'local' | 'azure' | 'aws';
+export type SessionScope = 'local' | 'minikube' | 'azure' | 'aws';
 
 function setSessionLogContext(operation: string, fields: Record<string, unknown> = {}): void {
   setLogContext({ operation, ...fields });
@@ -59,6 +60,10 @@ async function ensureDirAsync(dir: string): Promise<void> {
 function defaultLocalKubeconfigPathFor(userId: string): string {
   const base = path.join(config.sessionStorageDir, userId, 'local');
   return path.join(base, 'config');
+}
+
+function defaultMinikubeKubeconfigPathFor(userId: string): string {
+  return path.join(config.sessionStorageDir, userId, 'minikube', 'config');
 }
 
 function defaultAzureCloudKubeconfigPathFor(userId: string): string {
@@ -272,9 +277,11 @@ function desktopUserIdForEmail(email: string): string {
 async function createSessionStateAsync(userId: string): Promise<UserSessionState> {
   const cloudKubeconfigPath = defaultAzureCloudKubeconfigPathFor(userId);
   const localKubeconfigPath = defaultLocalKubeconfigPathFor(userId);
+  const minikubeKubeconfigPath = defaultMinikubeKubeconfigPathFor(userId);
   const awsKubeconfigPath = defaultAwsCloudKubeconfigPathFor(userId);
   await ensureSessionKubeconfigAsync(cloudKubeconfigPath);
   await ensureSessionKubeconfigAsync(localKubeconfigPath);
+  await ensureSessionKubeconfigAsync(minikubeKubeconfigPath);
   await ensureSessionKubeconfigAsync(awsKubeconfigPath);
   const localAzureConfigDir = defaultLocalAzureConfigDirFor(userId);
   const cloudAzureConfigDir = defaultCloudAzureConfigDirFor(userId);
@@ -293,6 +300,7 @@ async function createSessionStateAsync(userId: string): Promise<UserSessionState
     activeContext: null,
     activeContextSource: null,
     localKubeconfigPath,
+    minikubeKubeconfigPath,
     localAzureConfigDir,
     cloudKubeconfigPath,
     cloudAzureConfigDir,
@@ -329,6 +337,7 @@ async function createSessionStateAsync(userId: string): Promise<UserSessionState
     activeContext: null,
     activeContextSource: null,
     localKubeconfigPath,
+    minikubeKubeconfigPath,
     localAzureConfigDir,
     cloudKubeconfigPath,
     cloudAzureConfigDir,
@@ -342,6 +351,7 @@ async function createSessionStateAsync(userId: string): Promise<UserSessionState
     activeContext: null,
     activeContextSource: null,
     localKubeconfigPath,
+    minikubeKubeconfigPath,
     localAzureConfigDir,
     cloudKubeconfigPath,
     cloudAzureConfigDir,
@@ -517,7 +527,7 @@ export function sessionEnv(req: Request): Record<string, string> {
 }
 
 export function normalizeSessionScope(scope: string | null | undefined): SessionScope {
-  if (scope === 'local' || scope === 'aws') return scope;
+  if (scope === 'local' || scope === 'minikube' || scope === 'aws') return scope;
   return 'azure';
 }
 
@@ -576,7 +586,7 @@ export async function resolveSessionScopeForContext(
     }
 
     // Strict contract: each scope is read only from its own kubeconfig. Never auto-switch sources.
-    const otherScopes: SessionScope[] = (['local', 'cloud', 'aws'] as SessionScope[]).filter((s) => s !== forced);
+    const otherScopes: SessionScope[] = (['local', 'minikube', 'cloud', 'aws'] as SessionScope[]).filter((s) => s !== forced);
     const foundIn = (await Promise.all(otherScopes.map((s) => hasContextInSource(s))))
       .map((found, i) => (found ? otherScopes[i] : null))
       .filter((s): s is SessionScope => s !== null);
@@ -621,6 +631,16 @@ export async function resolveSessionScopeForContext(
   }
 
   try {
+    const minikubeContexts = await kube.getContexts(state.minikubeKubeconfigPath, state.activeContext);
+    if (minikubeContexts.some((ctx) => ctx.name === requested)) {
+      setSessionContextSourceHint(state, requested, 'minikube');
+      return 'minikube';
+    }
+  } catch {
+    // Best effort probe only.
+  }
+
+  try {
     const localContexts = await kube.getContexts(state.localKubeconfigPath, state.activeContext);
     if (localContexts.some((ctx) => ctx.name === requested)) {
       setSessionContextSourceHint(state, requested, 'local');
@@ -655,6 +675,7 @@ export async function resolveSessionScopeForContext(
 
 export function kubeconfigPathForSource(state: UserSessionState, source: SessionScope): string {
   if (source === 'local') return state.localKubeconfigPath;
+  if (source === 'minikube') return state.minikubeKubeconfigPath;
   if (source === 'aws') return state.awsKubeconfigPath;
   return state.cloudKubeconfigPath;
 }

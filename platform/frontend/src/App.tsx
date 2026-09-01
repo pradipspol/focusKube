@@ -13,6 +13,7 @@ import { useToast } from './components/ToastViewport';
 import { ApplicationsPanel } from './components/ApplicationsPanel';
 import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
+import { MinikubePanel } from './components/MinikubePanel';
 import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
@@ -35,6 +36,7 @@ export type View =
   | { type: 'logs' }
   | { type: 'observability'; tab?: 'timeline' | 'logs' | 'correlation' }
   | { type: 'topology' }
+  | { type: 'minikube' }
   | { type: 'azure' }
   | { type: 'aws' };
 
@@ -60,13 +62,14 @@ interface ViewTab {
   view: View;
   pinned?: boolean;
   originContext?: string;
-  originSource?: 'aks' | 'eks' | 'local';
+  originSource?: 'aks' | 'eks' | 'local' | 'minikube';
   azureSource?: AzureScope;
   originKubeconfigId?: string;
 }
 
-function contextScopeFromOriginSource(source?: 'aks' | 'eks' | 'local'): ContextScope | undefined {
+function contextScopeFromOriginSource(source?: 'aks' | 'eks' | 'local' | 'minikube'): ContextScope | undefined {
   if (source === 'local') return 'local';
+  if (source === 'minikube') return 'minikube';
   if (source === 'aks') return 'azure';
   if (source === 'eks') return 'aws';
   return undefined;
@@ -75,12 +78,13 @@ function contextScopeFromOriginSource(source?: 'aks' | 'eks' | 'local'): Context
 function resolveScopeFromContext(ctx?: KubeContext): ContextScope | null {
   if (!ctx?.source?.provider) return null;
   if (ctx.source.provider === 'local') return 'local';
+  if (ctx.source.provider === 'minikube') return 'minikube';
   if (ctx.source.provider === 'aks') return 'azure';
   if (ctx.source.provider === 'eks') return 'aws';
   return null;
 }
 
-function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string, azureSource?: AzureScope): string {
+function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string, azureSource?: AzureScope): string {
   const sourceKey = originSource ?? 'unknown';
   const contextKey = originContext ?? 'global';
   const kubeconfigKey = originKubeconfigId ?? '';
@@ -91,12 +95,13 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   if (view.type === 'portForwarding') return `portForwarding:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'observability') return `observability:${view.tab ?? 'timeline'}:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'topology') return `topology:${sourceKey}:${contextKey}${suffix}`;
+  if (view.type === 'minikube') return 'minikube';
   if (view.type === 'azure') return `azure:${azureSource ?? 'cloud'}`;
   if (view.type === 'aws') return 'aws';
   return view.type;
 }
 
-function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 'local' | 'cloud'): string {
+function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube' | 'cloud'): string {
   const base =
     view.type === 'resource'
       ? view.plural.charAt(0).toUpperCase() + view.plural.slice(1)
@@ -112,6 +117,8 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
         ? 'Observability'
       : view.type === 'topology'
         ? 'Topology'
+      : view.type === 'minikube'
+        ? 'Local Minikube'
       : view.type === 'azure'
         ? 'Azure / AKS Connections'
       : view.type === 'aws'
@@ -156,6 +163,7 @@ function isView(value: unknown): value is View {
     candidate.type === 'portForwarding' ||
     candidate.type === 'logs' ||
     candidate.type === 'topology' ||
+    candidate.type === 'minikube' ||
     candidate.type === 'azure' ||
     candidate.type === 'aws'
   );
@@ -259,6 +267,8 @@ function namespaceSelectionKeyForContext(
   if (sourceProvider === 'local') {
     return `LOCAL/${tab?.originKubeconfigId ?? 'unknown'}/${contextName}`;
   }
+
+  if (sourceProvider === 'minikube') return `MINIKUBE/${contextName}`;
 
   if (sourceProvider === 'eks') {
     return `AWS/${contextEntry?.source?.region ?? 'unknown'}/${contextEntry?.source?.clusterName ?? contextName}`;
@@ -419,7 +429,7 @@ export default function App() {
   // recently activated. Distinct contexts can share a name (e.g. an AKS-imported context
   // and a locally-uploaded one both named "prod") — without this, anything that resolved
   // the active context's source by name alone would be ambiguous between the two.
-  const [activeContextOrigin, setActiveContextOrigin] = useState<{ source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string } | null>(null);
+  const [activeContextOrigin, setActiveContextOrigin] = useState<{ source?: 'aks' | 'eks' | 'local' | 'minikube'; kubeconfigId?: string } | null>(null);
 
   const resolveScopeSource = async (contextName?: string): Promise<ContextScope | null> => {
     if (!contextName) return null;
@@ -729,12 +739,12 @@ export default function App() {
   const openView = (
     view: View,
     originContext?: string,
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
     azureSource?: AzureScope,
   ) => {
     const resolvedOriginSource = originSource ?? (originContext
-      ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | undefined)
+      ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | 'minikube' | undefined)
       : undefined);
     const resolvedAzureSource = view.type === 'azure' ? (azureSource ?? 'cloud') : undefined;
     const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId, resolvedAzureSource);
@@ -779,7 +789,7 @@ export default function App() {
   const pinView = (
     view: View,
     originContext?: string,
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
   ) => {
     const resolvedOriginSource = originSource ?? (originContext
@@ -872,7 +882,7 @@ export default function App() {
   const openResourceView = (
     plural: string,
     originContext?: string,
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
   ) => {
     openView(
@@ -892,7 +902,7 @@ export default function App() {
 
   const handleContextChange = async (
     name?: string,
-    origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean },
+    origin?: { source?: 'aks' | 'eks' | 'local' | 'minikube'; kubeconfigId?: string; reveal?: boolean },
   ) => {
     setSuppressTreeReveal(origin?.reveal === false);
     if (!name) {
@@ -930,6 +940,14 @@ export default function App() {
           }
         : current,
     );
+  };
+
+  const openMinikubeResourceExplorer = async () => {
+    const { contextName } = await api.connectMinikube();
+    const refreshed = await api.getContexts();
+    queryClient.setQueryData(['contexts'], refreshed);
+    await handleContextChange(contextName, { source: 'minikube' });
+    openView({ type: 'resource', plural: 'pods', focusContext: contextName }, contextName, 'minikube');
   };
 
   const handleSelectedNamespacesChange = (next: string[]) => {
@@ -1281,6 +1299,9 @@ export default function App() {
                   )}
                   {activeTab?.view.type === 'topology' && (
                     <TopologyPanel scope={activeTabScope} namespaces={namespaces} />
+                  )}
+                  {activeTab?.view.type === 'minikube' && (
+                    <MinikubePanel onOpenExplorer={openMinikubeResourceExplorer} />
                   )}
                 </div>
               </div>

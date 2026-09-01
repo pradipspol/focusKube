@@ -16,6 +16,7 @@ function makeSession(overrides: Partial<UserSessionState> = {}): UserSessionStat
     activeContext: 'ctx-active',
     activeContextSource: 'azure',
     localKubeconfigPath: '/tmp/local-kubeconfig',
+    minikubeKubeconfigPath: '/tmp/minikube-kubeconfig',
     localAzureConfigDir: '/tmp/local-azure',
     cloudKubeconfigPath: '/tmp/cloud-kubeconfig',
     cloudAzureConfigDir: '/tmp/cloud-azure',

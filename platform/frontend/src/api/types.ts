@@ -6,7 +6,7 @@ export interface KubeContext {
   active: boolean;
   connected?: boolean;
   source?: {
-    provider: 'aks' | 'eks' | 'local';
+    provider: 'aks' | 'eks' | 'local' | 'minikube';
     subscriptionId?: string;
     subscriptionName?: string;
     resourceGroup?: string;

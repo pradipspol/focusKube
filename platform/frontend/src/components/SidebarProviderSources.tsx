@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useMinikubeStatus } from '../api/minikubeApi';
 import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
 import type { View } from '../App';
@@ -93,7 +94,7 @@ interface Props {
   scope: Scope;
   view?: View;
   activeTabOriginContext?: string;
-  activeTabOriginSource?: 'aks' | 'eks' | 'local';
+  activeTabOriginSource?: 'aks' | 'eks' | 'local' | 'minikube';
   /** True right after a Starred Contexts selection - the reveal effects below
    * skip forcing this tree open in that case (see the useEffect above them). */
   suppressTreeReveal?: boolean;
@@ -114,11 +115,13 @@ interface Props {
     nodeKeyPrefix: string,
     labelOverride?: string,
     options?: RenderContextNodeOptions,
-    originSource?: 'aks' | 'eks' | 'local',
+    originSource?: 'aks' | 'eks' | 'local' | 'minikube',
     originKubeconfigId?: string,
   ) => React.ReactNode;
-  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
-  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local', originKubeconfigId?: string) => void;
+  renderSectionGroups: (contextName: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => React.ReactNode;
+  onSelect: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => void;
+  onContextChange: (name?: string, origin?: { source?: 'aks' | 'eks' | 'local' | 'minikube'; kubeconfigId?: string; reveal?: boolean }) => Promise<void> | void;
+  onPin: (view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => void;
   onUploadLocalKubeconfig: (name: string, content: string) => Promise<void>;
   onConnectLocalKubeconfig: (id: string, preferredContext?: string) => Promise<void>;
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
@@ -151,6 +154,8 @@ export function SidebarProviderSources({
   expandGroup,
   ensureLocalAzureConnected,
   renderContextNode,
+  renderSectionGroups,
+  onSelect,
   onContextChange,
   onPin,
   onUploadLocalKubeconfig,
@@ -194,6 +199,17 @@ export function SidebarProviderSources({
   const localAzureAuthFailed = !localAzureAuthenticated && localAzureAuthStatus === 'failed';
   const hasAzureCloudAccount = azureSignedIn || azureAccounts.length > 0;
   const hasAwsCloudAccount = awsSignedIn || !!awsAccountNode;
+  const { data: minikubeStatus } = useMinikubeStatus('minikube');
+  const isMinikubeRunning = minikubeStatus?.status === 'running';
+  const minikubeExpanded = !isGroupCollapsed('minikubeRoot');
+  const minikubeResourcesExpanded = !isGroupCollapsed('minikubeResourcesRoot');
+
+  useEffect(() => {
+    if (isMinikubeRunning) return;
+    if (!isGroupCollapsed('minikubeResourcesRoot')) {
+      toggleGroup('minikubeResourcesRoot');
+    }
+  }, [isMinikubeRunning, isGroupCollapsed, toggleGroup]);
 
   const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
@@ -1223,6 +1239,7 @@ export function SidebarProviderSources({
               const isMenuOpen = menuLocalKubeconfigId === item.id;
               const nodeKey = `localkube:${item.id}`;
               const expanded = !isGroupCollapsed(nodeKey);
+              const isMinikubeConfig = item.contexts.includes('minikube');
               return (
                 <div key={item.id} className="context-root">
                   <div
@@ -1232,8 +1249,10 @@ export function SidebarProviderSources({
                       const willExpand = isGroupCollapsed(nodeKey);
                       if (willExpand) {
                         const preferredContext = item.contexts[0];
-                        const ok = await ensureLocalAzureConnected(preferredContext);
-                        if (!ok) return;
+                        if (!isMinikubeConfig) {
+                          const ok = await ensureLocalAzureConnected(preferredContext);
+                          if (!ok) return;
+                        }
                       }
                       toggleGroup(nodeKey);
                     }}
@@ -1248,8 +1267,10 @@ export function SidebarProviderSources({
                             const willExpand = isGroupCollapsed(nodeKey);
                             if (willExpand) {
                               const preferredContext = item.contexts[0];
-                              const ok = await ensureLocalAzureConnected(preferredContext);
-                              if (!ok) return;
+                              if (!isMinikubeConfig) {
+                                const ok = await ensureLocalAzureConnected(preferredContext);
+                                if (!ok) return;
+                              }
                             }
                             toggleGroup(nodeKey);
                           }}
@@ -1312,10 +1333,10 @@ export function SidebarProviderSources({
                         <div className="sidebar-hint">Authenticate Azure (local scope) to view contexts.</div>
                       )}
                       {!localAzureAuthenticated && collapsed && null}
-                      {localAzureAuthenticated && item.contexts.length === 0 && !collapsed && (
+                      {(localAzureAuthenticated || isMinikubeConfig) && item.contexts.length === 0 && !collapsed && (
                         <div className="sidebar-hint">No contexts found in this file.</div>
                       )}
-                      {localAzureAuthenticated &&
+                      {(localAzureAuthenticated || isMinikubeConfig) &&
                         item.contexts.map((ctxName) => {
                           const removeContext = async () => {
                             const ok = await confirm({
@@ -1354,8 +1375,10 @@ export function SidebarProviderSources({
                                 className="nav-item context-item"
                                 title={`Connect ${ctxName}`}
                                 onClick={async () => {
-                                  const ok = await ensureLocalAzureConnected(ctxName);
-                                  if (!ok) return;
+                                  if (!isMinikubeConfig) {
+                                    const ok = await ensureLocalAzureConnected(ctxName);
+                                    if (!ok) return;
+                                  }
                                   onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
                                     console.error('Failed to connect local kubeconfig context:', err);
                                   });
@@ -1388,8 +1411,10 @@ export function SidebarProviderSources({
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               setMenuLocalContextKey(undefined);
-                                              const ok = await ensureLocalAzureConnected(ctxName);
-                                              if (!ok) return;
+                                              if (!isMinikubeConfig) {
+                                                const ok = await ensureLocalAzureConnected(ctxName);
+                                                if (!ok) return;
+                                              }
                                               onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
                                                 console.error('Failed to connect local kubeconfig context:', err);
                                               });
@@ -1421,6 +1446,84 @@ export function SidebarProviderSources({
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      <div className="k8sexplorer-group">
+        <div className="local-kubeconfigs-header-row">
+          <button
+            className="k8sexplorer-title k8sexplorer-toggle"
+            title="Local Minikube"
+            onClick={() => toggleGroup('minikubeRoot')}
+          >
+            <span>{minikubeExpanded ? '▾' : '▸'}</span>
+            <img src={kubeIcon} className="svg-inject" alt="" />
+            <span>{collapsed ? 'M' : 'Local Minikube'}</span>
+          </button>
+        </div>
+        {(collapsed || minikubeExpanded) && (
+          <div className="k8sexplorer-items">
+            <div className="context-root">
+            <div
+              className={`nav-item context-item ${view?.type === 'minikube' ? 'active' : ''}`}
+              title="Cluster Configuration"
+              onClick={() => onSelect({ type: 'minikube' })}
+              onDoubleClick={() => onPin({ type: 'minikube' })}
+            >
+              <span className="context-label-wrap">
+                <span className="context-caret">*</span>
+                <span className="local-kubeconfig-bullet">◍</span>
+                <span>{collapsed ? 'C' : 'Cluster Configuration'}</span>
+              </span>
+            </div>
+            </div>
+            <div className="context-root">
+              <div
+                className={`nav-item context-item ${activeTabOriginSource === 'minikube' ? 'active' : ''} ${!isMinikubeRunning ? 'disabled' : ''}`}
+                title={isMinikubeRunning ? 'Open Minikube resource explorer' : 'Start Minikube to expand resources'}
+                onClick={async () => {
+                  if (!isMinikubeRunning) {
+                    if (!isGroupCollapsed('minikubeResourcesRoot')) {
+                      toggleGroup('minikubeResourcesRoot');
+                    }
+                    return;
+                  }
+                  try {
+                    const { contextName } = await api.connectMinikube();
+                    await queryClient.invalidateQueries({ queryKey: ['contexts'] });
+                    await Promise.resolve(onContextChange(contextName, { source: 'minikube' }));
+                    if (!minikubeResourcesExpanded) toggleGroup('minikubeResourcesRoot');
+                  } catch (err) {
+                    console.error('Minikube must be running before its resources can be opened:', err);
+                  }
+                }}
+              >
+                <span className="context-label-wrap">
+                  {!collapsed && (
+                    <button
+                        disabled={!isMinikubeRunning}
+                      className="context-caret-button"
+                        title={
+                          isMinikubeRunning
+                            ? (minikubeResourcesExpanded ? 'Collapse minikube resources' : 'Expand minikube resources')
+                            : 'Minikube is not running'
+                        }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                          if (!isMinikubeRunning) return;
+                        toggleGroup('minikubeResourcesRoot');
+                      }}
+                    >
+                      <span className="context-caret">{minikubeResourcesExpanded ? '▾' : '▸'}</span>
+                    </button>
+                  )}
+                  <span className="local-kubeconfig-bullet">◍</span>
+                  <span>{collapsed ? 'M' : 'minikube'}</span>
+                </span>
+              </div>
+              {(collapsed || minikubeResourcesExpanded) && renderSectionGroups('minikube', 'minikube')}
+            </div>
           </div>
         )}
       </div>

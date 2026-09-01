@@ -56,6 +56,38 @@ async function removeContextSourcesForNames(
   await deleteDesktopContextSourcesForNames(userKey, scope, contextNames);
 }
 
+function mergeKubeconfigContent(existingContent: string, incomingContent: string): string {
+  let existing: any = {};
+  try {
+    existing = yaml.load(existingContent) ?? {};
+  } catch {
+    existing = {};
+  }
+
+  const incoming = yaml.load(incomingContent) as any;
+  if (!incoming || typeof incoming !== 'object') throw badRequest('Stored kubeconfig is invalid');
+
+  const mergeNamedEntries = (current: unknown, additions: unknown) => {
+    const byName = new Map<string, any>();
+    for (const entry of Array.isArray(current) ? current : []) {
+      if (entry?.name) byName.set(entry.name, entry);
+    }
+    for (const entry of Array.isArray(additions) ? additions : []) {
+      if (entry?.name) byName.set(entry.name, entry);
+    }
+    return Array.from(byName.values());
+  };
+
+  return yaml.dump({
+    ...existing,
+    apiVersion: existing.apiVersion ?? incoming.apiVersion ?? 'v1',
+    kind: existing.kind ?? incoming.kind ?? 'Config',
+    clusters: mergeNamedEntries(existing.clusters, incoming.clusters),
+    users: mergeNamedEntries(existing.users, incoming.users),
+    contexts: mergeNamedEntries(existing.contexts, incoming.contexts),
+  });
+}
+
 async function contextsPayload(req: any, options: { skipConnectivity?: boolean } = {}) {
   const startedHr = process.hrtime.bigint();
   const userKey = requireUserKey(req);
@@ -66,6 +98,7 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
   // not just the ones from whichever scope happens to be active right now.
   const sources: Array<{ path: string; scope: SessionScope }> = [
     { path: req.userSession.localKubeconfigPath, scope: 'local' },
+    { path: req.userSession.minikubeKubeconfigPath, scope: 'minikube' },
     { path: req.userSession.cloudKubeconfigPath, scope: 'azure' },
     { path: req.userSession.awsKubeconfigPath, scope: 'aws' },
   ];
@@ -230,7 +263,7 @@ contextsRouter.post('/active', withRouteErrorLogging('contexts', 'POST /active',
   const body = z
     .object({
       name: z.string().min(1),
-      source: z.enum(['local', 'cloud', 'aws']).optional(),
+      source: z.enum(['local', 'minikube', 'cloud', 'aws']).optional(),
     })
     .safeParse(req.body);
   if (!body.success) throw badRequest('name is required');
@@ -344,7 +377,10 @@ contextsRouter.post('/local-kubeconfigs/:id/connect', withRouteErrorLogging('con
     contextCount: local.contexts.length,
   });
 
-  await fsp.writeFile(req.userSession.localKubeconfigPath, local.content, { encoding: 'utf8' });
+  const existingContent = await fsp.readFile(req.userSession.localKubeconfigPath, 'utf8').catch(() => '');
+  const mergedContent = mergeKubeconfigContent(existingContent, local.content);
+  await fsp.writeFile(req.userSession.localKubeconfigPath, mergedContent, { encoding: 'utf8' });
+  kube.invalidateLoadConfigCache(req.userSession.localKubeconfigPath);
 
   logInfo('contexts.connect.step', {
     reqId: req.logRequestId ?? null,
