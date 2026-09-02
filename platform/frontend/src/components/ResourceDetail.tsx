@@ -90,8 +90,8 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
 
   const tabs = useMemo(() => {
     const t: string[] = ['yaml'];
-    if (plural === 'deployments') t.unshift('overview');
     if (plural === 'deployments') t.unshift('actions');
+    if (plural === 'deployments') t.unshift('overview');
     if (plural === 'pods') t.unshift('overview');
     if (['daemonsets', 'statefulsets', 'replicasets', 'jobs', 'cronjobs'].includes(plural)) t.unshift('overview');
     if (plural === 'configmaps' || plural === 'secrets') t.unshift('details');
@@ -189,7 +189,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
         </div>
 
         {tab === 'overview' && plural === 'pods' && <PodOverviewTab pod={currentObject} scope={scope} />}
-        {tab === 'overview' && plural === 'deployments' && <DeploymentOverviewTab deployment={currentObject} />}
+        {tab === 'overview' && plural === 'deployments' && <DeploymentOverviewTab deployment={currentObject} scope={scope} />}
         {tab === 'overview' && ['daemonsets', 'statefulsets', 'replicasets', 'jobs', 'cronjobs'].includes(plural) && (
           <WorkloadOverviewTab resource={currentObject} plural={plural} />
         )}
@@ -231,7 +231,8 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
 
 function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
   const [metricsWindow, setMetricsWindow] = useState<'1h' | '6h' | '24h'>('1h');
-  const [cpuHistory, setCpuHistory] = useState<Array<{ at: number; value: number }>>([]);
+  const [activeMetric, setActiveMetric] = useState<'cpu' | 'memory'>('cpu');
+  const [metricsHistory, setMetricsHistory] = useState<Array<{ at: number; cpuMillicores: number; memoryBytes: number }>>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [metricsData, setMetricsData] = useState<any>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
@@ -329,17 +330,25 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
   useEffect(() => {
     if (!metricsData) return;
     const at = metricsData.timestamp ? new Date(metricsData.timestamp).getTime() : Date.now();
-    setCpuHistory((current) => {
-      const cutoff = Date.now() - windowMs(metricsWindow);
-      const next = [...current.filter((entry) => entry.at >= cutoff), { at, value: totalCpuMillicores }];
-      return next.slice(-240);
+    setMetricsHistory((current) => {
+      const cutoff = Date.now() - windowMs('24h');
+      const withoutDuplicate = current.filter((entry) => entry.at >= cutoff && entry.at !== at);
+      return [...withoutDuplicate, { at, cpuMillicores: totalCpuMillicores, memoryBytes: totalMemoryBytes }].slice(-5760);
     });
-  }, [metricsData, metricsWindow, totalCpuMillicores]);
+  }, [metricsData, totalCpuMillicores, totalMemoryBytes]);
 
-  const cpuSeries = useMemo(() => buildMetricPath(cpuHistory, 'usage'), [cpuHistory]);
-  const maxCpu = Math.max(totalCpuMillicores, requestTotals.cpuMillicores, limitTotals.cpuMillicores, ...cpuHistory.map((p) => p.value), 1);
-  const requestY = 220 - (requestTotals.cpuMillicores / maxCpu) * 180;
-  const limitY = 220 - (limitTotals.cpuMillicores / maxCpu) * 180;
+  const chartEnd = Date.now();
+  const chartStart = chartEnd - windowMs(metricsWindow);
+  const activeHistory = metricsHistory
+    .filter((sample) => sample.at >= chartStart && sample.at <= chartEnd)
+    .map((sample) => ({ at: sample.at, value: activeMetric === 'memory' ? sample.memoryBytes : sample.cpuMillicores }));
+  const activeRequest = activeMetric === 'memory' ? requestTotals.memoryBytes : requestTotals.cpuMillicores;
+  const activeLimit = activeMetric === 'memory' ? limitTotals.memoryBytes : limitTotals.cpuMillicores;
+  const activeChartMax = Math.max(activeRequest, activeLimit, ...activeHistory.map((sample) => sample.value), 1);
+  const barWidth = Math.max(1, Math.min(10, (15_000 / windowMs(metricsWindow)) * 680 * 0.75));
+  const requestY = 220 - (activeRequest / activeChartMax) * 180;
+  const limitY = 220 - (activeLimit / activeChartMax) * 180;
+  const activeMetricValue = activeMetric === 'cpu' ? `${totalCpuMillicores.toFixed(0)}m` : formatBytes(totalMemoryBytes);
 
   const toggle = (key: string) => setExpanded((current) => ({ ...current, [key]: !current[key] }));
 
@@ -364,7 +373,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
     <div className="drawer-body pod-overview">
       <div className="pod-section">
         <div className="pod-section-header">
-          <h4>{uiText.resourceDetail.metrics}</h4>
+          <h4>{uiText.resourceDetail.resourceUsage}</h4>
           <div className="metrics-toolbar">
             <select value={metricsWindow} onChange={(e) => setMetricsWindow(e.target.value as '1h' | '6h' | '24h')}>
               <option value="1h">1h</option>
@@ -374,25 +383,44 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
           </div>
         </div>
         <div className="metrics-note">{uiText.resourceDetail.metricsDescription}</div>
-        <div className="metrics-chart-placeholder">
-          <div className="metrics-grid" />
-          <svg className="metrics-svg" viewBox="0 0 720 240" preserveAspectRatio="none">
-            <line x1="0" y1={requestY} x2="720" y2={requestY} className="metrics-line request" />
-            <line x1="0" y1={limitY} x2="720" y2={limitY} className="metrics-line limit" />
-            <path d={cpuSeries} className="metrics-line usage" />
-          </svg>
-          <div className="metrics-stats">
-            <span>{uiText.resourceDetail.cpuPrefix} {totalCpuMillicores.toFixed(0)}m</span>
-            <span>{uiText.resourceDetail.memoryPrefix} {formatBytes(totalMemoryBytes)}</span>
-            {metricsData?.timestamp && <span>{uiText.resourceDetail.updatedPrefix} {new Date(metricsData.timestamp).toLocaleTimeString()}</span>}
-            {metricsState !== 'live' && <span className="metrics-status">{metricsState}</span>}
-            {metricsError && <span className="metrics-error">{uiText.resourceDetail.errorPrefix} {metricsError}</span>}
+        <div className="deployment-metric-selector" role="group" aria-label={uiText.resourceDetail.metricSelection}>
+          <button className={activeMetric === 'cpu' ? 'active' : ''} onClick={() => setActiveMetric('cpu')}>{uiText.resourceDetail.cpuUsage}</button>
+          <button className={activeMetric === 'memory' ? 'active' : ''} onClick={() => setActiveMetric('memory')}>{uiText.resourceDetail.memoryUsage}</button>
+        </div>
+        <div className="deployment-metric-chart">
+          <div className="deployment-metric-heading">
+            <span>{activeMetric === 'cpu' ? uiText.resourceDetail.cpuUsage : uiText.resourceDetail.memoryUsage}</span>
+            <div className="deployment-metric-heading-values">
+              <span><span className={`metrics-swatch ${activeMetric === 'memory' ? 'memory' : 'usage'}`} /><b>{uiText.resourceDetail.current}</b> <strong>{activeMetricValue}</strong></span>
+              <span><span className="metrics-swatch request" /><b>{uiText.resourceDetail.requests}</b> <strong>{formatMetricValue(activeRequest, activeMetric)}</strong></span>
+              <span><span className="metrics-swatch limit" /><b>{uiText.resourceDetail.limits}</b> <strong>{formatMetricValue(activeLimit, activeMetric)}</strong></span>
+            </div>
           </div>
-          <div className="metrics-legend">
-            <span><span className="metrics-swatch usage" />{uiText.applications.cpuUsage}</span>
-            <span><span className="metrics-swatch request" />{uiText.resourceDetail.cpuRequestsLegend}</span>
-            <span><span className="metrics-swatch limit" />{uiText.resourceDetail.cpuLimitsLegend}</span>
+          <div className="deployment-metric-plot">
+            <div className="metrics-grid" />
+            <svg className="metrics-svg" viewBox="0 0 720 240" preserveAspectRatio="none">
+              {activeRequest > 0 && <line x1="0" y1={requestY} x2="720" y2={requestY} className="metrics-line request" />}
+              {activeLimit > 0 && <line x1="0" y1={limitY} x2="720" y2={limitY} className="metrics-line limit" />}
+              {activeHistory.map((sample) => {
+                const height = Math.max(1, (sample.value / activeChartMax) * 180);
+                const x = 20 + ((sample.at - chartStart) / Math.max(chartEnd - chartStart, 1)) * 680 - barWidth / 2;
+                return (
+                  <rect key={sample.at} x={x} y={220 - height} width={barWidth} height={height} className={`metrics-bar ${activeMetric}`}>
+                    <title>{`${new Date(sample.at).toLocaleTimeString()}: ${formatMetricValue(sample.value, activeMetric)}`}</title>
+                  </rect>
+                );
+              })}
+            </svg>
+            <div className="deployment-metric-axis" aria-hidden="true">
+              <span>{formatChartTime(chartStart, metricsWindow)}</span>
+              <span>{formatChartTime(chartStart + (chartEnd - chartStart) / 2, metricsWindow)}</span>
+              <span>{uiText.resourceDetail.now}</span>
+            </div>
           </div>
+        </div>
+        <div className="metrics-note pod-metrics-state">
+          {metricsState !== 'live' && <span className="metrics-status">{metricsState}</span>}
+          {metricsError && <span className="metrics-error">{uiText.resourceDetail.errorPrefix} {metricsError}</span>}
         </div>
       </div>
 
@@ -526,30 +554,247 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
   );
 }
 
-function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
+function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; scope: Scope }) {
+  const [metricsWindow, setMetricsWindow] = useState<'1h' | '6h' | '24h'>('1h');
+  const [activeMetric, setActiveMetric] = useState<'cpu' | 'memory'>('cpu');
+  const [metricsHistory, setMetricsHistory] = useState<Array<{ at: number; cpuMillicores: number; memoryBytes: number }>>([]);
   const labels = deployment.metadata?.labels ?? {};
   const annotations = deployment.metadata?.annotations ?? {};
   const conditions = Array.isArray(deployment.status?.conditions)
-    ? (deployment.status.conditions as Array<{ type?: string; status?: string }>).filter((c) => c.status === 'True')
+    ? (deployment.status.conditions as Array<{ type?: string; status?: string; reason?: string; message?: string; lastUpdateTime?: string }>)
     : [];
   const containers = Array.isArray(deployment.spec?.template?.spec?.containers)
     ? deployment.spec.template.spec.containers
     : [];
+  const podSpec = deployment.spec?.template?.spec ?? {};
+  const strategy = deployment.spec?.strategy ?? {};
+  const rollingUpdate = strategy.rollingUpdate ?? {};
+  const selector = deployment.spec?.selector?.matchLabels ?? {};
+  const ownerReferences = Array.isArray((deployment.metadata as any)?.ownerReferences)
+    ? (deployment.metadata as any).ownerReferences
+    : [];
+  const deploymentDataQuery = useQuery({
+    queryKey: ['deployment-overview-data', scope.context, deployment.metadata?.namespace, deployment.metadata?.name],
+    enabled: !!scope.context && !!deployment.metadata?.namespace && Object.keys(selector).length > 0,
+    refetchInterval: 15_000,
+    queryFn: async () => {
+      const deploymentScope = { ...scope, namespace: deployment.metadata?.namespace };
+      const podsResponse = await api.listResource('pods', deploymentScope);
+      const pods = (podsResponse.items ?? []).filter((pod) => {
+        const podLabels = pod.metadata?.labels ?? {};
+        return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
+      });
+      const podTargets = pods.flatMap((pod) => pod.metadata?.name
+        ? [{ name: pod.metadata.name, namespace: pod.metadata.namespace }]
+        : []);
+      const metricsResponse = podTargets.length
+        ? await api.getPodMetricsBatch(podTargets, deploymentScope)
+        : { items: [] };
+      const memoryByPod = metricsResponse.items.map((item) => ({
+        name: item.name,
+        cpuMillicores: item.snapshot?.containers.reduce((sum, container) => sum + container.cpuMillicores, 0),
+        memoryBytes: item.snapshot?.containers.reduce((sum, container) => sum + container.memoryBytes, 0),
+        error: item.error,
+      }));
+      const sampledAt = metricsResponse.items
+        .map((item) => item.snapshot?.timestamp ? new Date(item.snapshot.timestamp).getTime() : 0)
+        .reduce((latest, timestamp) => Math.max(latest, timestamp), 0) || Date.now();
+      return { memoryByPod, sampledAt };
+    },
+  });
+  const deploymentEventsQuery = useQuery({
+    queryKey: ['deployment-events', scope.context, deployment.metadata?.namespace, deployment.metadata?.name, deployment.metadata?.uid],
+    enabled: !!scope.context && !!deployment.metadata?.namespace,
+    refetchInterval: 15_000,
+    queryFn: async () => {
+      const deploymentScope = { ...scope, namespace: deployment.metadata?.namespace };
+      const [podsResponse, eventsResponse] = await Promise.all([
+        api.listResource('pods', deploymentScope),
+        api.listResource('events', deploymentScope),
+      ]);
+      const relatedPods = (podsResponse.items ?? []).filter((pod) => {
+        if (Object.keys(selector).length === 0) return false;
+        const podLabels = pod.metadata?.labels ?? {};
+        return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
+      });
+      const podNames = new Set(relatedPods.map((pod) => pod.metadata?.name).filter(Boolean));
+      const podUids = new Set(relatedPods.map((pod) => pod.metadata?.uid).filter(Boolean));
+      return (eventsResponse.items ?? [])
+        .filter((event) => {
+          const involved = (event as any).involvedObject ?? (event as any).regarding;
+          const isDeployment = involved?.uid === deployment.metadata?.uid
+            || (involved?.kind === 'Deployment' && involved?.name === deployment.metadata?.name);
+          const isPod = podUids.has(involved?.uid) || (involved?.kind === 'Pod' && podNames.has(involved?.name));
+          return isDeployment || isPod;
+        })
+        .sort((a, b) => {
+          const aTime = new Date((a.lastTimestamp ?? a.eventTime ?? a.metadata?.creationTimestamp ?? '') as string).getTime();
+          const bTime = new Date((b.lastTimestamp ?? b.eventTime ?? b.metadata?.creationTimestamp ?? '') as string).getTime();
+          return bTime - aTime;
+        });
+    },
+  });
+  const memoryByPod = deploymentDataQuery.data?.memoryByPod ?? [];
+  const deploymentEvents = deploymentEventsQuery.data ?? [];
+  const totalCpuMillicores = memoryByPod.reduce((sum, pod) => sum + (pod.cpuMillicores ?? 0), 0);
+  const totalMemoryBytes = memoryByPod.reduce((sum, pod) => sum + (pod.memoryBytes ?? 0), 0);
+  const reportingPods = memoryByPod.filter((pod) => pod.memoryBytes !== undefined).length;
+  const podRequests = sumContainerResources(containers, 'requests');
+  const podLimits = sumContainerResources(containers, 'limits');
+  const matchedPodCount = memoryByPod.length;
+
+  useEffect(() => {
+    const sampledAt = deploymentDataQuery.data?.sampledAt;
+    if (!sampledAt) return;
+    setMetricsHistory((current) => {
+      const cutoff = Date.now() - windowMs('24h');
+      const withoutDuplicate = current.filter((sample) => sample.at >= cutoff && sample.at !== sampledAt);
+      return [...withoutDuplicate, { at: sampledAt, cpuMillicores: totalCpuMillicores, memoryBytes: totalMemoryBytes }].slice(-5760);
+    });
+  }, [deploymentDataQuery.data?.sampledAt, totalCpuMillicores, totalMemoryBytes]);
+
+  const chartEnd = Date.now();
+  const chartStart = chartEnd - windowMs(metricsWindow);
+  const visibleMetricHistory = metricsHistory.filter((sample) => sample.at >= chartStart && sample.at <= chartEnd);
+  const activeHistory = visibleMetricHistory.map((sample) => ({
+    at: sample.at,
+    value: activeMetric === 'memory' ? sample.memoryBytes : sample.cpuMillicores,
+  }));
+  const activeRequest = activeMetric === 'memory'
+    ? podRequests.memoryBytes * matchedPodCount
+    : podRequests.cpuMillicores * matchedPodCount;
+  const activeLimit = activeMetric === 'memory'
+    ? podLimits.memoryBytes * matchedPodCount
+    : podLimits.cpuMillicores * matchedPodCount;
+  const activeChartMax = Math.max(activeRequest, activeLimit, ...activeHistory.map((sample) => sample.value), 1);
+  const chartBars = activeHistory;
+  const barWidth = Math.max(1, Math.min(10, (15_000 / windowMs(metricsWindow)) * 680 * 0.75));
+  const requestY = 220 - (activeRequest / activeChartMax) * 180;
+  const limitY = 220 - (activeLimit / activeChartMax) * 180;
+  const activeMetricValue = activeMetric === 'cpu'
+    ? `${totalCpuMillicores.toFixed(0)}m`
+    : formatBytes(totalMemoryBytes);
 
   const properties: Array<[string, string]> = [
     [uiText.resourceDetail.created, formatCreated(deployment.metadata?.creationTimestamp)],
     [uiText.resourceDetail.name, deployment.metadata?.name ?? uiText.resourceDetail.dash],
     [uiText.applications.namespace, deployment.metadata?.namespace ?? uiText.resourceDetail.dash],
-    [uiText.resourceDetail.labels, uiText.resourceDetail.labelsCount(Object.keys(labels).length)],
-    [uiText.resourceDetail.replicas, `${deployment.status?.readyReplicas ?? 0}/${deployment.spec?.replicas ?? 0}`],
+    [uiText.resourceDetail.uid, String(deployment.metadata?.uid ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.controlled, ownerReferences.map((owner: any) => `${owner.kind ?? ''}/${owner.name ?? ''}`).join(', ') || uiText.resourceDetail.dash],
+    [uiText.resourceDetail.labels, formatKeyValues(labels)],
+    [uiText.resourceDetail.annotations, formatKeyValues(annotations)],
+    [uiText.resourceDetail.selector, formatKeyValues(selector)],
+  ];
+
+  const rolloutProperties: Array<[string, string]> = [
+    [uiText.resourceDetail.desired, `${deployment.spec?.replicas ?? 0}`],
+    [uiText.resourceDetail.current, `${deployment.status?.replicas ?? 0}`],
+    [uiText.resourceDetail.ready, `${deployment.status?.readyReplicas ?? 0}`],
     [uiText.resourceDetail.updatedReplicas, `${deployment.status?.updatedReplicas ?? 0}`],
     [uiText.resourceDetail.availableReplicas, `${deployment.status?.availableReplicas ?? 0}`],
-    [uiText.resourceDetail.conditions, conditions.map((c) => c.type).join(', ') || uiText.resourceDetail.dash],
-    [uiText.resourceDetail.strategy, deployment.spec?.strategy?.type ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.unavailableReplicas, `${deployment.status?.unavailableReplicas ?? 0}`],
+    [uiText.resourceDetail.revision, String(annotations['deployment.kubernetes.io/revision'] ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.generation, String((deployment.metadata as any)?.generation ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.observedGeneration, String(deployment.status?.observedGeneration ?? uiText.resourceDetail.dash)],
+  ];
+
+  const configurationProperties: Array<[string, string]> = [
+    [uiText.resourceDetail.strategy, strategy.type ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.maxSurge, String(rollingUpdate.maxSurge ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.maxUnavailable, String(rollingUpdate.maxUnavailable ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.minReadySeconds, String(deployment.spec?.minReadySeconds ?? 0)],
+    [uiText.resourceDetail.progressDeadlineSeconds, String(deployment.spec?.progressDeadlineSeconds ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.revisionHistoryLimit, String(deployment.spec?.revisionHistoryLimit ?? uiText.resourceDetail.dash)],
+    [uiText.resourceDetail.paused, String(Boolean(deployment.spec?.paused))],
+    [uiText.resourceDetail.serviceAccount, podSpec.serviceAccountName ?? uiText.resourceDetail.dash],
+    [uiText.resourceDetail.nodeSelector, formatKeyValues(podSpec.nodeSelector ?? {})],
   ];
 
   return (
     <div className="drawer-body pod-overview">
+      <div className="pod-section">
+        <div className="pod-section-header">
+          <h4>{uiText.resourceDetail.resourceUsage}</h4>
+          <div className="metrics-toolbar">
+            <select value={metricsWindow} onChange={(event) => setMetricsWindow(event.target.value as '1h' | '6h' | '24h')}>
+              <option value="1h">1h</option>
+              <option value="6h">6h</option>
+              <option value="24h">24h</option>
+            </select>
+            <button onClick={() => deploymentDataQuery.refetch()} disabled={deploymentDataQuery.isFetching}>{uiText.common.refresh}</button>
+          </div>
+        </div>
+        <div className="metrics-note">{uiText.resourceDetail.deploymentMetricsDescription}</div>
+        {deploymentDataQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingMetrics}</div>}
+        {deploymentDataQuery.isError && <div className="metrics-error">{uiText.resourceDetail.metricsUnavailable}</div>}
+        {!deploymentDataQuery.isLoading && !deploymentDataQuery.isError && (
+          <>
+            <div className="deployment-metric-selector" role="group" aria-label={uiText.resourceDetail.metricSelection}>
+              <button className={activeMetric === 'cpu' ? 'active' : ''} onClick={() => setActiveMetric('cpu')}>{uiText.resourceDetail.cpuUsage}</button>
+              <button className={activeMetric === 'memory' ? 'active' : ''} onClick={() => setActiveMetric('memory')}>{uiText.resourceDetail.memoryUsage}</button>
+            </div>
+            <div className="deployment-metric-chart">
+              <div className="deployment-metric-heading">
+                <span>{activeMetric === 'cpu' ? uiText.resourceDetail.cpuUsage : uiText.resourceDetail.memoryUsage}</span>
+                <div className="deployment-metric-heading-values">
+                  <span><span className={`metrics-swatch ${activeMetric === 'memory' ? 'memory' : 'usage'}`} /><b>{uiText.resourceDetail.current}</b> <strong>{activeMetricValue}</strong></span>
+                  <span><span className="metrics-swatch request" /><b>{uiText.resourceDetail.requests}</b> <strong>{formatMetricValue(activeRequest, activeMetric)}</strong></span>
+                  <span><span className="metrics-swatch limit" /><b>{uiText.resourceDetail.limits}</b> <strong>{formatMetricValue(activeLimit, activeMetric)}</strong></span>
+                </div>
+              </div>
+              <div className="deployment-metric-plot">
+                <div className="metrics-grid" />
+                <svg className="metrics-svg" viewBox="0 0 720 240" preserveAspectRatio="none">
+                  {activeRequest > 0 && <line x1="0" y1={requestY} x2="720" y2={requestY} className="metrics-line request" />}
+                  {activeLimit > 0 && <line x1="0" y1={limitY} x2="720" y2={limitY} className="metrics-line limit" />}
+                  {chartBars.map((sample) => {
+                    const height = Math.max(1, (sample.value / activeChartMax) * 180);
+                    const x = 20 + ((sample.at - chartStart) / Math.max(chartEnd - chartStart, 1)) * 680 - barWidth / 2;
+                    return (
+                      <rect
+                        key={sample.at}
+                        x={x}
+                        y={220 - height}
+                        width={barWidth}
+                        height={height}
+                        className={`metrics-bar ${activeMetric}`}
+                      >
+                        <title>{`${new Date(sample.at).toLocaleTimeString()}: ${formatMetricValue(sample.value, activeMetric)}`}</title>
+                      </rect>
+                    );
+                  })}
+                </svg>
+                <div className="deployment-metric-axis" aria-hidden="true">
+                  <span>{formatChartTime(chartStart, metricsWindow)}</span>
+                  <span>{formatChartTime(chartStart + (chartEnd - chartStart) / 2, metricsWindow)}</span>
+                  <span>{uiText.resourceDetail.now}</span>
+                </div>
+              </div>
+            </div>
+            <div className="deployment-pod-metrics-header">
+              <h5>{uiText.resourceDetail.podsReporting}</h5>
+              <span>{reportingPods}/{memoryByPod.length}</span>
+            </div>
+            <div className="overview-table-wrapper deployment-pod-metrics">
+              <table className="overview-table">
+                <thead><tr><th>{uiText.resourceDetail.pod}</th><th>{uiText.resourceDetail.cpuUsage}</th><th>{uiText.resourceDetail.memoryUsage}</th><th>{uiText.resourceDetail.status}</th></tr></thead>
+                <tbody>
+                  {memoryByPod.map((pod) => (
+                    <tr key={pod.name}>
+                      <td>{pod.name}</td>
+                      <td>{pod.cpuMillicores !== undefined ? `${pod.cpuMillicores.toFixed(0)}m` : uiText.resourceDetail.dash}</td>
+                      <td>{pod.memoryBytes !== undefined ? formatBytes(pod.memoryBytes) : uiText.resourceDetail.dash}</td>
+                      <td className={pod.memoryBytes !== undefined ? 'status-running' : 'metrics-error'}>{pod.memoryBytes !== undefined ? uiText.resourceDetail.reporting : pod.error ?? uiText.resourceDetail.metricsUnavailable}</td>
+                    </tr>
+                  ))}
+                  {memoryByPod.length === 0 && <tr><td colSpan={4} className="dim">{uiText.resourceDetail.noDeploymentPods}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="pod-section">
         <div className="pod-section-header">
           <h4>{uiText.resourceDetail.properties}</h4>
@@ -561,10 +806,42 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
               <div className="pod-property-value">{value}</div>
             </div>
           ))}
-          <div className="pod-property-row">
-            <div className="pod-property-label">{uiText.resourceDetail.annotations}</div>
-            <div className="pod-property-value">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)}</div>
-          </div>
+        </div>
+      </div>
+
+      <div className="pod-section">
+        <div className="pod-section-header"><h4>{uiText.resourceDetail.rolloutStatus}</h4></div>
+        <div className="overview-table-wrapper rollout-status-table">
+          <table className="overview-table">
+            <thead>
+              <tr>{rolloutProperties.map(([label]) => <th key={label}>{label}</th>)}</tr>
+            </thead>
+            <tbody>
+              <tr>{rolloutProperties.map(([label, value]) => <td key={label}>{value}</td>)}</tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="pod-section">
+        <div className="pod-section-header"><h4>{uiText.resourceDetail.configuration}</h4></div>
+        <div className="pod-properties-table">
+          {configurationProperties.map(([label, value]) => (
+            <div key={label} className="pod-property-row"><div className="pod-property-label">{label}</div><div className="pod-property-value">{value}</div></div>
+          ))}
+        </div>
+      </div>
+
+      <div className="pod-section">
+        <div className="pod-section-header"><h4>{uiText.resourceDetail.conditions}</h4></div>
+        <div className="pod-properties-table">
+          {conditions.length === 0 && <div className="dim">{uiText.resourceDetail.noConditions}</div>}
+          {conditions.map((condition, index) => (
+            <div key={`${condition.type ?? 'condition'}-${index}`} className="pod-property-row">
+              <div className="pod-property-label">{condition.type ?? uiText.resourceDetail.dash} ({condition.status ?? uiText.resourceDetail.dash})</div>
+              <div className="pod-property-value">{[condition.reason, condition.message, condition.lastUpdateTime && formatCreated(condition.lastUpdateTime)].filter(Boolean).join(' - ') || uiText.resourceDetail.dash}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -575,6 +852,8 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
         <div className="container-overview-list">
           {containers.map((container: any) => {
             const ports = Array.isArray(container.ports) ? container.ports : [];
+            const env = Array.isArray(container.env) ? container.env : [];
+            const mounts = Array.isArray(container.volumeMounts) ? container.volumeMounts : [];
             const resources = container.resources ?? {};
             return (
               <div key={container.name} className="container-card">
@@ -582,13 +861,36 @@ function DeploymentOverviewTab({ deployment }: { deployment: K8sObject }) {
                 <div className="pod-properties-table">
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.image}</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? uiText.resourceDetail.dash}</span></div></div>
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.ports}</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? uiText.resourceDetail.tcp}`).join(', ') : uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.imagePullPolicy}</div><div className="pod-property-value">{container.imagePullPolicy ?? uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.command}</div><div className="pod-property-value">{[...(container.command ?? []), ...(container.args ?? [])].join(' ') || uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.environment}</div><div className="pod-property-value">{env.length ? env.map((item: any) => item.value !== undefined ? `${item.name}=${item.value}` : `${item.name}=<valueFrom>`).join(', ') : uiText.resourceDetail.dash}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.mounts}</div><div className="pod-property-value">{mounts.length ? mounts.map((mount: any) => `${mount.name}: ${mount.mountPath}${mount.readOnly ? uiText.resourceDetail.readOnlySuffix : ''}`).join(', ') : uiText.resourceDetail.dash}</div></div>
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.requests}</div><div className="pod-property-value">{formatResourceBlock(resources.requests)}</div></div>
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.limits}</div><div className="pod-property-value">{formatResourceBlock(resources.limits)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.readinessProbe}</div><div className="pod-property-value">{formatProbe(container.readinessProbe)}</div></div>
+                  <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.livenessProbe}</div><div className="pod-property-value">{formatProbe(container.livenessProbe)}</div></div>
                 </div>
               </div>
             );
           })}
         </div>
+      </div>
+
+      <div className="pod-section">
+        <div className="pod-section-header"><h4>{uiText.resourceDetail.events}</h4></div>
+        {deploymentEventsQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
+        {deploymentEventsQuery.isError && <div className="metrics-error">{(deploymentEventsQuery.error as Error).message}</div>}
+        {!deploymentEventsQuery.isLoading && !deploymentEventsQuery.isError && deploymentEvents.length === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
+        {deploymentEvents.length > 0 && (
+          <div className="pod-properties-table">
+            {deploymentEvents.slice(0, 20).map((event: any, index) => (
+              <div key={`${event.metadata?.uid ?? index}`} className="pod-property-row">
+                <div className="pod-property-label"><span className={`event-badge ${String(event.type ?? uiText.resourceDetail.normalEventType).toLowerCase()}`}>{event.type ?? uiText.resourceDetail.normalEventType}</span> {event.reason ?? uiText.resourceDetail.eventReasonFallback}</div>
+                <div className="pod-property-value">{event.message ?? uiText.resourceDetail.dash} <span className="dim event-time">{formatEventTime(event.lastTimestamp ?? event.eventTime ?? event.metadata?.creationTimestamp)}</span></div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1323,17 +1625,34 @@ function formatResourceBlock(resources?: Record<string, string>): string {
     .join(', ');
 }
 
+function formatKeyValues(values: Record<string, unknown>): string {
+  const entries = Object.entries(values);
+  return entries.length ? entries.map(([key, value]) => `${key}=${String(value)}`).join(', ') : uiText.resourceDetail.dash;
+}
+
+function formatProbe(probe?: any): string {
+  if (!probe) return uiText.resourceDetail.dash;
+  const handler = probe.httpGet
+    ? `HTTP ${probe.httpGet.path ?? '/'}:${probe.httpGet.port}`
+    : probe.tcpSocket
+      ? `TCP :${probe.tcpSocket.port}`
+      : probe.exec
+        ? `Exec ${(probe.exec.command ?? []).join(' ')}`
+        : uiText.resourceDetail.dash;
+  return `${handler}; delay ${probe.initialDelaySeconds ?? 0}s; period ${probe.periodSeconds ?? 10}s`;
+}
+
 function windowMs(window: '1h' | '6h' | '24h'): number {
   if (window === '6h') return 6 * 60 * 60 * 1000;
   if (window === '24h') return 24 * 60 * 60 * 1000;
   return 60 * 60 * 1000;
 }
 
-function buildMetricPath(points: Array<{ at: number; value: number }>, kind: 'usage'): string {
+function buildMetricPath(points: Array<{ at: number; value: number }>, kind: 'usage', maxValue?: number): string {
   if (points.length === 0) return '';
   const min = points[0].at;
   const max = points[points.length - 1].at || min + 1;
-  const peak = Math.max(...points.map((p) => p.value), 1);
+  const peak = maxValue ?? Math.max(...points.map((p) => p.value), 1);
   return points
     .map((point, index) => {
       const x = ((point.at - min) / Math.max(max - min, 1)) * 720;
@@ -1341,6 +1660,19 @@ function buildMetricPath(points: Array<{ at: number; value: number }>, kind: 'us
       return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(' ');
+}
+
+function formatMetricValue(value: number, metric: 'cpu' | 'memory'): string {
+  if (value <= 0) return uiText.resourceDetail.dash;
+  return metric === 'memory' ? formatBytes(value) : `${value.toFixed(0)}m`;
+}
+
+function formatChartTime(timestamp: number, window: '1h' | '6h' | '24h'): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(window === '24h' ? { weekday: 'short' as const } : {}),
+  });
 }
 
 function formatBytes(bytes: number): string {

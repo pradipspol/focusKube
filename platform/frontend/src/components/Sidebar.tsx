@@ -78,6 +78,11 @@ function isCloudTreeGroupKey(key: string): boolean {
 
 const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   {
+    title: 'Overview',
+    icon: '▦',
+    items: [{ label: 'Overview', view: { type: 'overview' } }],
+  },
+  {
     title: 'Applications',
     icon: '◈',
     items: [{ label: 'Applications', view: { type: 'applications' } }],

@@ -11,6 +11,7 @@ import { AwsPanel } from './components/AwsPanel';
 import { ObservabilityPanel } from './components/observability/ObservabilityPanel';
 import { useToast } from './components/ToastViewport';
 import { ApplicationsPanel } from './components/ApplicationsPanel';
+import { ClusterOverviewPanel } from './components/ClusterOverviewPanel';
 import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { MinikubePanel } from './components/MinikubePanel';
@@ -30,6 +31,7 @@ import type { AwsIdentity, AzureAccount, ContextsResponse, KubeContext } from '.
 
 export type View =
   | { type: 'resource'; plural: string; focusContext?: string; focusName?: string }
+  | { type: 'overview' }
   | { type: 'applications' }
   | { type: 'helm'; mode: 'charts' | 'releases' }
   | { type: 'portForwarding' }
@@ -91,6 +93,7 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   const suffix = kubeconfigKey ? `:${kubeconfigKey}` : '';
   if (view.type === 'resource') return `resource:${view.plural}:${sourceKey}:${contextKey}${suffix}:${view.focusContext ?? ''}:${view.focusName ?? ''}`;
   if (view.type === 'helm') return `helm:${view.mode}:${sourceKey}:${contextKey}${suffix}`;
+  if (view.type === 'overview') return `overview:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'applications') return `applications:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'portForwarding') return `portForwarding:${sourceKey}:${contextKey}${suffix}`;
   if (view.type === 'observability') return `observability:${view.tab ?? 'timeline'}:${sourceKey}:${contextKey}${suffix}`;
@@ -105,6 +108,8 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
   const base =
     view.type === 'resource'
       ? view.plural.charAt(0).toUpperCase() + view.plural.slice(1)
+      : view.type === 'overview'
+        ? 'Overview'
       : view.type === 'applications'
         ? 'Applications'
       : view.type === 'helm'
@@ -159,6 +164,7 @@ function isView(value: unknown): value is View {
     return true;
   }
   return (
+    candidate.type === 'overview' ||
     candidate.type === 'applications' ||
     candidate.type === 'portForwarding' ||
     candidate.type === 'logs' ||
@@ -1203,6 +1209,27 @@ export default function App() {
                       })()
                     ) : null
                   ))}
+                  {activeTab?.view.type === 'overview' && (
+                    <ClusterOverviewPanel
+                      scope={activeTabScope}
+                      namespaces={namespaces}
+                      selectedNamespaces={selectedNamespaces}
+                      onSelectedNamespacesChange={handleSelectedNamespacesChange}
+                      onOpenResource={(plural) => openView(
+                        { type: 'resource', plural },
+                        activeTab.originContext,
+                        activeTab.originSource,
+                        activeTab.originKubeconfigId,
+                      )}
+                      onOpenHelmReleases={() => openView(
+                        { type: 'helm', mode: 'releases' },
+                        activeTab.originContext,
+                        activeTab.originSource,
+                        activeTab.originKubeconfigId,
+                      )}
+                      onAzureAuthRequired={openAzureAuthPanel}
+                    />
+                  )}
                   {activeTab?.view.type === 'applications' && (
                     <ApplicationsPanel
                       scope={activeTabScope}
