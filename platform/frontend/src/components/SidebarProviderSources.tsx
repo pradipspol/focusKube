@@ -12,6 +12,8 @@ import awsIcon from '../../assets/aws.svg';
 import kubeIcon from '../../assets/local-kubeconfigs.svg';
 import minikubeIcon from '../../assets/minikube.svg';
 import { TreeDisclosure } from './TreeDisclosure';
+import { SidebarAction } from './SidebarAction';
+import { SidebarContextMenu } from './SidebarContextMenu';
 
 
 const CLOUD_ACCOUNT_MAX_RETRIES = 5;
@@ -190,6 +192,7 @@ export function SidebarProviderSources ({
   const [azureHeaderMenuOpen, setAzureHeaderMenuOpen] = useState(false);
   const [azureAccountMenuEmail, setAzureAccountMenuEmail] = useState<string | undefined>();
   const [awsHeaderMenuOpen, setAwsHeaderMenuOpen] = useState(false);
+  const [minikubeMenuOpen, setMinikubeMenuOpen] = useState(false);
   const [awsAccountNode, setAwsAccountNode] = useState<LiveEksAccountNode | null>(null);
   const [azureProbeAttempts, setAzureProbeAttempts] = useState(0);
   const [awsProbeAttempts, setAwsProbeAttempts] = useState(0);
@@ -653,24 +656,38 @@ export function SidebarProviderSources ({
   }, [azureAccounts, isGroupCollapsed]);
 
   useEffect(() => {
-    if (!menuLocalKubeconfigId && !menuLocalContextKey && !azureHeaderMenuOpen && !azureAccountMenuEmail && !awsHeaderMenuOpen) {
+    if (!menuLocalKubeconfigId && !menuLocalContextKey && !azureHeaderMenuOpen && !azureAccountMenuEmail && !awsHeaderMenuOpen && !minikubeMenuOpen) {
       return;
     }
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (target.closest('.action-menu') || target.closest('.action-trigger')) return;
+      if (target.closest('.action-menu') || target.closest('.sidebar-action-button')) return;
       setMenuLocalKubeconfigId(undefined);
       setMenuLocalContextKey(undefined);
       setAzureHeaderMenuOpen(false);
       setAzureAccountMenuEmail(undefined);
       setAwsHeaderMenuOpen(false);
+      setMinikubeMenuOpen(false);
     };
 
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [menuLocalKubeconfigId, menuLocalContextKey, azureHeaderMenuOpen, azureAccountMenuEmail, awsHeaderMenuOpen]);
+  }, [menuLocalKubeconfigId, menuLocalContextKey, azureHeaderMenuOpen, azureAccountMenuEmail, awsHeaderMenuOpen, minikubeMenuOpen]);
+
+  useEffect(() => {
+    const closeMenus = () => {
+      setMenuLocalKubeconfigId(undefined);
+      setMenuLocalContextKey(undefined);
+      setAzureHeaderMenuOpen(false);
+      setAzureAccountMenuEmail(undefined);
+      setAwsHeaderMenuOpen(false);
+      setMinikubeMenuOpen(false);
+    };
+    window.addEventListener('sidebar-context-menu-open', closeMenus);
+    return () => window.removeEventListener('sidebar-context-menu-open', closeMenus);
+  }, []);
 
   const refreshAzureTree = () => {
     expandGroup('azureRoot');
@@ -776,71 +793,32 @@ export function SidebarProviderSources ({
             <span>{uiText.sidebar.azureAccounts}</span>
             {loadingSubscriptions && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAzureAccounts} />}
           </button>
-          <div className="action-trigger-wrap">
-            <button
-              className="aks-auth-button action-trigger"
-              title={uiText.sidebar.azureConnections}
-              aria-label={uiText.sidebar.azureConnections}
+          <div className="sidebar-action-slot">
+            <SidebarAction
+              label={uiText.sidebar.azureConnections}
               onClick={(event) => {
                 event.stopPropagation();
                 setAzureHeaderMenuOpen((open) => !open);
                 setAzureAccountMenuEmail(undefined);
               }}
-            >
-              {hasAzureCloudAccount ? '⋮' : '+'}
-            </button>
+            />
             {azureHeaderMenuOpen && (
-              <div className="action-menu sidebar-action-menu">
-                <button
-                  className="action-menu-item"
-                  onClick={() => {
-                    setAzureHeaderMenuOpen(false);
-                    onOpenCloudAzureView?.();
-                  }}
-                >
-                  Add Azure connection
-                </button>
-                {/* {hasAzureCloudAccount && (
-                  <button
-                    className="action-menu-item"
-                    onClick={() => {
-                      setAzureHeaderMenuOpen(false);
-                      onOpenCloudAzureView?.();
-                    }}
-                  >
-                    Reconnect Azure
-                  </button>
-                )} */}
-                <button
-                  className="action-menu-item"
-                  onClick={() => {
-                    setAzureHeaderMenuOpen(false);
-                    refreshAzureTree();
-                  }}
-                >
-                  Refresh
-                </button>
-                {hasAzureCloudAccount && (
-                  <button
-                    className="action-menu-item danger"
-                    onClick={() => {
-                      setAzureHeaderMenuOpen(false);
-                      Promise.resolve(onAzureSignOut())
-                        .then(() => fetchAccounts())
-                        .catch(() => {
-                          /* handled in state */
-                        });
-                    }}
-                  >
-                    Sign Out All
-                  </button>
-                )}
-              </div>
+              <SidebarContextMenu
+                actions={[
+                  { label: 'Add Azure connection', onSelect: () => { setAzureHeaderMenuOpen(false); onOpenCloudAzureView?.(); } },
+                  { label: 'Refresh', onSelect: () => { setAzureHeaderMenuOpen(false); refreshAzureTree(); } },
+                  ...(hasAzureCloudAccount ? [{
+                    label: 'Sign Out All',
+                    danger: true,
+                    onSelect: async () => { setAzureHeaderMenuOpen(false); await onAzureSignOut(); await fetchAccounts(); },
+                  }] : []),
+                ]}
+              />
             )}
           </div>
         </div>
         {(collapsed || !isGroupCollapsed('azureRoot')) && (
-          <div className="k8sexplorer-items">
+          <div className="sidebar-tree-children">
             {azureProbeRequested && loadingSubscriptions && !collapsed && (
               <div className="sidebar-hint">
                 Checking Azure account ({azureProbeAttempts}/{CLOUD_ACCOUNT_MAX_RETRIES})...
@@ -873,49 +851,29 @@ export function SidebarProviderSources ({
                           <span className="aks-account-email">{accountNode.email}</span>
                           {accountBusy && <span className="tiny-spinner" aria-label="working" />}
                         </button>
-                        <div className="action-trigger-wrap">
-                          <button
-                            className="aks-auth-button action-trigger"
-                            title={`Actions for ${accountNode.email}`}
-                            aria-label={`Actions for ${accountNode.email}`}
+                        <div className="sidebar-action-slot">
+                          <SidebarAction
+                            label={`Actions for ${accountNode.email}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               setAzureAccountMenuEmail(accountMenuOpen ? undefined : accountNode.email);
                               setAzureHeaderMenuOpen(false);
                             }}
-                          >
-                            ⋮
-                          </button>
+                          />
                           {accountMenuOpen && (
-                            <div className="action-menu sidebar-action-menu">
-                              <button
-                                className="action-menu-item"
-                                onClick={() => {
-                                  setAzureAccountMenuEmail(undefined);
-                                  onOpenCloudAzureView?.();
-                                }}
-                              >
-                                Reconnect
-                              </button>
-                              <button
-                                className="action-menu-item"
-                                onClick={() => handleDisconnectAzureAccount(accountNode.email)}
-                              >
-                                Disconnect clusters
-                              </button>
-                              <button
-                                className="action-menu-item danger"
-                                onClick={() => handleSignOutAzureAccount(accountNode.email)}
-                              >
-                                Sign out
-                              </button>
-                            </div>
+                            <SidebarContextMenu
+                              actions={[
+                                { label: 'Reconnect', onSelect: () => { setAzureAccountMenuEmail(undefined); onOpenCloudAzureView?.(); } },
+                                { label: 'Disconnect clusters', onSelect: () => handleDisconnectAzureAccount(accountNode.email) },
+                                { label: 'Sign out', danger: true, onSelect: () => handleSignOutAzureAccount(accountNode.email) },
+                              ]}
+                            />
                           )}
                         </div>
                       </div>
                     )}
                     {(collapsed || accountExpanded) && (
-                      <div className="aks-tree-children">
+                      <div className="sidebar-tree-children">
                         {accountNode.tenants.map((tenantNode) => {
                           const tenantKey = `azure-account:${accountNode.id}:tenant:${tenantNode.id}`;
                           const tenantExpanded = !isGroupCollapsed(tenantKey);
@@ -932,7 +890,7 @@ export function SidebarProviderSources ({
                                 </button>
                               )}
                               {(collapsed || tenantExpanded) && (
-                                <div className="aks-tree-children">
+                                <div className="sidebar-tree-children">
                                   {tenantNode.subscriptions.map((subscriptionNode) => {
                                     const subKey = azureSubTreeKey(accountNode.id, subscriptionNode.id);
                                     const subExpanded = !isGroupCollapsed(subKey);
@@ -960,7 +918,7 @@ export function SidebarProviderSources ({
                                           </button>
                                         )}
                                         {(collapsed || subExpanded) && (
-                                          <div className="aks-tree-children">
+                                          <div className="sidebar-tree-children">
                                             {!collapsed &&
                                               !loadingResourceGroups[subCacheKey] &&
                                               subscriptionNode.resourceGroups.length === 0 && (
@@ -997,7 +955,7 @@ export function SidebarProviderSources ({
                                                     </button>
                                                   )}
                                                   {(collapsed || rgExpanded) && (
-                                                    <div className="aks-tree-children">
+                                                    <div className="sidebar-tree-children">
                                                       {!collapsed && !loadingClusters[rgCacheKey] && clusters.length === 0 && (
                                                         <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
                                                       )}
@@ -1081,7 +1039,7 @@ export function SidebarProviderSources ({
                                                               )}
                                                             </div>
                                                             {(collapsed || clusterExpanded) && (
-                                                              <div className="aks-tree-children">
+                                                              <div className="sidebar-tree-children">
                                                                 {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
                                                                   <div className="sidebar-hint">{uiText.sidebar.noContextImported}</div>
                                                                 )}
@@ -1128,61 +1086,29 @@ export function SidebarProviderSources ({
             <span>{uiText.sidebar.awsAccounts}</span>
             {loadingAwsTree && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAwsClusters} />}
           </button>
-          <div className="action-trigger-wrap">
-            <button
-              className="aks-auth-button action-trigger"
-              title={uiText.sidebar.awsConnections}
-              aria-label={uiText.sidebar.awsConnections}
+          <div className="sidebar-action-slot">
+            <SidebarAction
+              label={uiText.sidebar.awsConnections}
               onClick={(event) => {
                 event.stopPropagation();
                 setAwsHeaderMenuOpen((open) => !open);
               }}
-            >
-              {hasAwsCloudAccount ? '⋮' : '+'}
-            </button>
+            />
             {awsHeaderMenuOpen && (
-              <div className="action-menu sidebar-action-menu">
-                <button
-                  className="action-menu-item"
-                  onClick={() => {
-                    setAwsHeaderMenuOpen(false);
-                    onOpenCloudAwsView?.();
-                  }}
-                >
-                  {hasAwsCloudAccount ? 'Reconnect AWS' : 'Add AWS connection'}
-                </button>
-                {hasAwsCloudAccount && (
-                  <button
-                    className="action-menu-item"
-                    onClick={() => {
-                      setAwsHeaderMenuOpen(false);
-                      refreshAwsTree();
-                    }}
-                  >
-                    Refresh
-                  </button>
-                )}
-                {hasAwsCloudAccount && (
-                  <button
-                    className="action-menu-item danger"
-                    onClick={() => {
-                      setAwsHeaderMenuOpen(false);
-                      Promise.resolve(onAwsSignOut())
-                        .then(() => fetchAwsTree())
-                        .catch(() => {
-                          /* handled in state */
-                        });
-                    }}
-                  >
-                    Sign Out
-                  </button>
-                )}
-              </div>
+              <SidebarContextMenu
+                actions={[
+                  { label: hasAwsCloudAccount ? 'Reconnect AWS' : 'Add AWS connection', onSelect: () => { setAwsHeaderMenuOpen(false); onOpenCloudAwsView?.(); } },
+                  ...(hasAwsCloudAccount ? [
+                    { label: 'Refresh', onSelect: () => { setAwsHeaderMenuOpen(false); refreshAwsTree(); } },
+                    { label: 'Sign Out', danger: true, onSelect: async () => { setAwsHeaderMenuOpen(false); await onAwsSignOut(); await fetchAwsTree(); } },
+                  ] : []),
+                ]}
+              />
             )}
           </div>
         </div>
         {(collapsed || !isGroupCollapsed('awsRoot')) && (
-          <div className="k8sexplorer-items">
+          <div className="sidebar-tree-children">
             {awsProbeRequested && loadingAwsTree && !collapsed && (
               <div className="sidebar-hint">
                 Checking AWS account ({awsProbeAttempts}/{CLOUD_ACCOUNT_MAX_RETRIES})...
@@ -1197,7 +1123,7 @@ export function SidebarProviderSources ({
             )}
             {!hasAwsCloudAccount && awsError && !collapsed && <div className="sidebar-hint">{awsError}</div>}
             {hasAwsCloudAccount && awsAccountNode && (
-              <div className="aks-tree-children">
+              <div className="sidebar-tree-children">
                 {awsAccountNode.regions.length === 0 && !collapsed && (
                   <div className="sidebar-hint">{uiText.sidebar.noEksClustersFound}</div>
                 )}
@@ -1216,7 +1142,7 @@ export function SidebarProviderSources ({
                         </button>
                       )}
                       {(collapsed || regionExpanded) && (
-                        <div className="aks-tree-children">
+                        <div className="sidebar-tree-children">
                           {!collapsed && regionNode.clusters.length === 0 && (
                             <div className="sidebar-hint">No clusters found.</div>
                           )}
@@ -1283,7 +1209,7 @@ export function SidebarProviderSources ({
                                   )}
                                 </div>
                                 {(collapsed || clusterExpanded) && (
-                                  <div className="aks-tree-children">
+                                  <div className="sidebar-tree-children">
                                     {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
                                       <div className="sidebar-hint">No context imported yet.</div>
                                     )}
@@ -1314,14 +1240,13 @@ export function SidebarProviderSources ({
               <img src={kubeIcon} className="svg-inject" alt="Kubernetes" />
               <span>Local Kubeconfigs</span>
             </button>
-            <button
-              className="local-kubeconfig-upload-button"
-              title="Upload kubeconfig"
-              disabled={uploadBusy}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {uploadBusy ? '⋮' : '+'}
-            </button>
+            <div className="sidebar-action-slot">
+              <SidebarAction
+                label="Upload kubeconfig"
+                disabled={uploadBusy}
+                onClick={() => fileInputRef.current?.click()}
+              />
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -1332,7 +1257,7 @@ export function SidebarProviderSources ({
           </div>
         )}
         {(collapsed || !isGroupCollapsed('localKubeconfigsRoot')) && (
-          <div className="k8sexplorer-items">
+          <div className="sidebar-tree-children">
             {localKubeconfigs.length === 0 && !collapsed && (
               <div className="sidebar-hint">No local kubeconfigs uploaded yet.</div>
             )}
@@ -1384,23 +1309,20 @@ export function SidebarProviderSources ({
                     </span>
                     {!collapsed && (
                       <div className="context-meta">
-                        <div className="action-trigger-wrap">
-                          <button
-                            className="action-trigger sidebar-action-trigger"
-                            title={`Actions for ${item.name}`}
+                        <div className="sidebar-action-slot">
+                          <SidebarAction
+                            label={`Actions for ${item.name}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               setMenuLocalKubeconfigId((current) => (current === item.id ? undefined : item.id));
                             }}
-                          >
-                            ⋮
-                          </button>
+                          />
                           {isMenuOpen && (
-                            <div className="action-menu sidebar-action-menu">
-                              <button
-                                className="action-menu-item danger"
-                                onClick={async (event) => {
-                                  event.stopPropagation();
+                            <SidebarContextMenu
+                              actions={[{
+                                label: 'Remove Config',
+                                danger: true,
+                                onSelect: async () => {
                                   setMenuLocalKubeconfigId(undefined);
                                   const ok = await confirm({
                                     title: uiText.confirmDialog.removeTitle,
@@ -1408,22 +1330,17 @@ export function SidebarProviderSources ({
                                     details: 'This cannot be undone.',
                                     confirmLabel: uiText.confirmDialog.remove,
                                   });
-                                  if (!ok) return;
-                                  onDeleteLocalKubeconfig(item.id).catch((err) => {
-                                    console.error('Failed to remove local kubeconfig:', err);
-                                  });
-                                }}
-                              >
-                                Remove Config
-                              </button>
-                            </div>
+                                  if (ok) await onDeleteLocalKubeconfig(item.id);
+                                },
+                              }]}
+                            />
                           )}
                         </div>
                       </div>
                     )}
                   </div>
                   {(collapsed || expanded) && (
-                    <div className="aks-tree-children">
+                    <div className="sidebar-tree-children">
                       {localAzureAuthInProgress && !collapsed && (
                         <div className="sidebar-hint sidebar-hint-loading">
                           <span className="tiny-spinner" aria-label="checking local Azure authentication" />
@@ -1494,46 +1411,38 @@ export function SidebarProviderSources ({
                                       className="context-status-dot disconnected"
                                       title="Disconnected — click to connect"
                                     />
-                                    <div className="action-trigger-wrap">
-                                      <button
-                                        className="action-trigger sidebar-action-trigger"
-                                        title={`Actions for ${ctxName}`}
+                                    <div className="sidebar-action-slot">
+                                      <SidebarAction
+                                        label={`Actions for ${ctxName}`}
                                         onClick={(event) => {
                                           event.stopPropagation();
                                           setMenuLocalContextKey((current) => (current === stubKey ? undefined : stubKey));
                                         }}
-                                      >
-                                        ⋮
-                                      </button>
+                                      />
                                       {stubMenuOpen && (
-                                        <div className="action-menu sidebar-action-menu">
-                                          <button
-                                            className="action-menu-item"
-                                            onClick={async (event) => {
-                                              event.stopPropagation();
+                                        <SidebarContextMenu
+                                          actions={[
+                                            {
+                                              label: 'Connect',
+                                              onSelect: async () => {
                                               setMenuLocalContextKey(undefined);
                                               if (!isMinikubeConfig) {
                                                 const ok = await ensureLocalAzureConnected(ctxName);
                                                 if (!ok) return;
                                               }
-                                              onConnectLocalKubeconfig(item.id, ctxName).catch((err) => {
-                                                console.error('Failed to connect local kubeconfig context:', err);
-                                              });
-                                            }}
-                                          >
-                                            Connect
-                                          </button>
-                                          <button
-                                            className="action-menu-item danger"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
+                                              await onConnectLocalKubeconfig(item.id, ctxName);
+                                              },
+                                            },
+                                            {
+                                              label: 'Remove context',
+                                              danger: true,
+                                              onSelect: () => {
                                               setMenuLocalContextKey(undefined);
                                               removeContext();
-                                            }}
-                                          >
-                                            Remove context
-                                          </button>
-                                        </div>
+                                              },
+                                            },
+                                          ]}
+                                        />
                                       )}
                                     </div>
                                   </div>
@@ -1562,23 +1471,29 @@ export function SidebarProviderSources ({
             <img src={minikubeIcon} className="svg-inject" alt="" />
             <span>{collapsed ? 'M' : 'Local Minikube'}</span>
           </button>
+          <div className="sidebar-action-slot">
+            <SidebarAction
+              label="Minikube options"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMinikubeMenuOpen((open) => !open);
+              }}
+            />
+            {minikubeMenuOpen && (
+              <SidebarContextMenu
+                actions={[{
+                  label: 'Cluster Configuration',
+                  onSelect: () => {
+                    setMinikubeMenuOpen(false);
+                    onSelect({ type: 'minikube' });
+                  },
+                }]}
+              />
+            )}
+          </div>
         </div>
         {(collapsed || minikubeExpanded) && (
-          <div className="k8sexplorer-items">
-            <div className="context-root">
-              <div
-                className={`nav-item context-item ${view?.type === 'minikube' ? 'active' : ''}`}
-                title="Cluster Configuration"
-                onClick={() => onSelect({ type: 'minikube' })}
-                onDoubleClick={() => onPin({ type: 'minikube' })}
-              >
-                <span className="context-label-wrap">
-                  <span className="context-caret">*</span>
-                  <span className="local-kubeconfig-bullet">◍</span>
-                  <span>{collapsed ? 'C' : 'Cluster Configuration'}</span>
-                </span>
-              </div>
-            </div>
+          <div className="sidebar-tree-children">
             <div className="context-root">
               <div
                 className={`nav-item context-item ${activeTabOriginSource === 'minikube' ? 'active' : ''} ${!isMinikubeRunning ? 'disabled' : ''}`}

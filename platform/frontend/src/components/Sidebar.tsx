@@ -5,6 +5,8 @@ import type { Scope } from '../api/client';
 import type { KubeContext, LocalKubeconfigSummary } from '../api/types';
 import { SidebarProviderSources } from './SidebarProviderSources';
 import { TreeDisclosure } from './TreeDisclosure';
+import { SidebarAction } from './SidebarAction';
+import { SidebarContextMenu } from './SidebarContextMenu';
 import kubeCluster from '../../assets/kubernetes.svg';
 import starredIcon from '../../assets/starred.svg';
 import { uiText } from '../text';
@@ -399,13 +401,19 @@ export function Sidebar ({
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (target.closest('.action-menu') || target.closest('.action-trigger')) return;
+      if (target.closest('.action-menu') || target.closest('.sidebar-action-button')) return;
       setMenuContextName(undefined);
     };
 
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [menuContextName]);
+
+  useEffect(() => {
+    const closeMenu = () => setMenuContextName(undefined);
+    window.addEventListener('sidebar-context-menu-open', closeMenu);
+    return () => window.removeEventListener('sidebar-context-menu-open', closeMenu);
+  }, []);
 
   const orderedContexts = useMemo(() => contexts, [contexts]);
   const starredContextList = useMemo(
@@ -455,7 +463,7 @@ export function Sidebar ({
   };
 
   const renderSectionGroups = (contextName: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string) => (
-    <div className="context-sections">
+    <div className="sidebar-tree-children">
       {GROUPS.map((group) => {
         const consumedActivePlurals = new Set<string>();
 
@@ -469,7 +477,7 @@ export function Sidebar ({
               </button>
             )}
             {(collapsed || !isGroupCollapsed(`${contextName}:${group.title}`)) && (
-              <div className="k8sexplorer-items nested-items">
+              <div className="sidebar-tree-children">
                 {group.items.map((item) => {
                   const isContextMatched = activeTabOriginContext === contextName && activeTabOriginKubeconfigId === originKubeconfigId;
                   const itemActive = item.view
@@ -617,23 +625,20 @@ export function Sidebar ({
               />
             )}
             {!collapsed && (
-              <div className="action-trigger-wrap">
-                <button
-                  className="action-trigger sidebar-action-trigger"
-                  title={`Actions for ${ctx.name}`}
+              <div className="sidebar-action-slot">
+                <SidebarAction
+                  label={`Actions for ${ctx.name}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     setMenuContextName((current) => (current === nodeIdentityKey ? undefined : nodeIdentityKey));
                   }}
-                >
-                  ⋮
-                </button>
+                />
                 {menuContextName === nodeIdentityKey && (
-                  <div className="action-menu sidebar-action-menu">
-                    <button
-                      className="action-menu-item"
-                      onClick={async (event) => {
-                        event.stopPropagation();
+                  <SidebarContextMenu
+                    actions={[
+                      {
+                        label: isSelectedContext ? 'Disconnect' : 'Connect',
+                        onSelect: async () => {
                         setMenuContextName(undefined);
                         if (isSelectedContext) {
                           setConnectingContextKey(nodeIdentityKey);
@@ -659,35 +664,25 @@ export function Sidebar ({
                           setConnectingContextKey(undefined);
                         }
                         expandGroup(`${nodeKeyPrefix}:${ctx.name}`);
-                      }}
-                    >
-                      {isSelectedContext ? 'Disconnect' : 'Connect'}
-                    </button>
-                    {!isLocalContextNode && resolvedSource && (
-                      <button
-                        className="action-menu-item"
-                        onClick={(event) => {
-                          event.stopPropagation();
+                        },
+                      },
+                      ...(!isLocalContextNode && resolvedSource ? [{
+                        label: isStarred ? 'Unstar' : 'Star',
+                        onSelect: () => {
                           setMenuContextName(undefined);
                           toggleStar(resolvedSource, ctx.name);
-                        }}
-                      >
-                        {isStarred ? 'Unstar' : 'Star'}
-                      </button>
-                    )}
-                    {options?.onRemove && (
-                      <button
-                        className="action-menu-item danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
+                        },
+                      }] : []),
+                      ...(options?.onRemove ? [{
+                        label: 'Remove context',
+                        danger: true,
+                        onSelect: () => {
                           setMenuContextName(undefined);
                           options.onRemove?.();
-                        }}
-                      >
-                        Remove context
-                      </button>
-                    )}
-                  </div>
+                        },
+                      }] : []),
+                    ]}
+                  />
                 )}
               </div>
             )}
@@ -731,7 +726,7 @@ export function Sidebar ({
                   <img src={starredIcon} className="svg-inject" alt="Starred" />
                   <span>{uiText.sidebar.starredContexts}</span>
                 </button>
-                <div className="k8sexplorer-items">
+                <div className="sidebar-tree-children">
                   {(collapsed || !isGroupCollapsed('contextsRoot')) && (
                     <>
                       {!collapsed && starredContextList.length === 0 && (

@@ -781,11 +781,21 @@ a {
 /* Layout */
 .body {
   display: grid;
-  grid-template-columns: 48px var(--sidebar-width, 15vw) var(--resizer-width) 1fr;
+  grid-template-columns: 48px var(--sidebar-width, 15vw) var(--resizer-width) minmax(400px, 1fr);
+  height: 100%;
   min-height: 0;
+  gap: 0;
 }
 .body.sidebar-collapsed {
-  grid-template-columns: 48px var(--sidebar-collapsed-width) var(--resizer-width) 1fr;
+  grid-template-columns: 48px var(--sidebar-collapsed-width) var(--resizer-width) minmax(400px, 1fr);
+}
+/* Sidebar width is controlled via --sidebar-width CSS variable */
+.sidebar {
+  width: var(--sidebar-width, 15vw);
+  max-width: 35vw;
+}
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
 }
 .activity-bar {
   display: flex;
@@ -859,6 +869,7 @@ a {
   background: var(--surface-sidebar);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--space-md) 0;
 }
 .sidebar.collapsed {
@@ -889,7 +900,7 @@ a {
   --tree-indent-guide: 1px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 .dock-parent-toggle {
   margin-left: 0;
@@ -987,13 +998,13 @@ a {
   background: var(--surface-hover-soft);
   color: var(--text-heading);
 }
-.root-group .nested-items .nav-item.active {
+.root-group .sidebar-tree-children .nav-item.active {
   background: var(--surface-active);
   border-left-color: var(--brand);
   color: var(--sidebar-active-text);
   font-weight: var(--fw-semibold);
 }
-.root-group .nested-items .nav-item.active:hover {
+.root-group .sidebar-tree-children .nav-item.active:hover {
   background: var(--surface-hover);
 }
 .sidebar-toggle {
@@ -1028,7 +1039,7 @@ a {
 .k8sexplorer-toggle {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-xs);
   width: 100%;
   text-align: left;
   background: transparent;
@@ -1052,26 +1063,49 @@ a {
   font-size: var(--fs-sm);
   line-height: 1;
 }
-.k8sexplorer-items {
-  margin-bottom: 3px;
-  margin-left: var(--tree-indent-step);
-  padding-left: 8px;
+.sidebar-tree-children {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: calc(8px + var(--tree-indent-step));
   border-left: var(--tree-indent-guide) solid var(--subtle-border);
+  box-sizing: border-box;
+}
+.sidebar-tree-children > .k8sexplorer-title,
+.sidebar-tree-children > .nav-item,
+.sidebar-tree-children > .context-root > .nav-item,
+.sidebar-tree-children > .context-root > .aks-account-row {
+  margin-left: 0;
+}
+.sidebar-tree-children > .k8sexplorer-title,
+.sidebar-tree-children > .context-root > .nav-item,
+.sidebar-tree-children > .context-root > .aks-account-row > .aks-account-toggle {
+  padding-left: 8px;
 }
 .local-kubeconfigs-header-row,
 .aks-header-row {
+  position: relative;
   display: flex;
+  width: 100%;
+  box-sizing: border-box;
   align-items: center;
   gap: 6px;
-  padding-right: var(--sidebar-gutter);
+  padding-right: calc(var(--sidebar-gutter) + var(--sidebar-action-size));
 }
-.aks-tree-group,
-.aks-tree-children {
-  margin-left: var(--tree-indent-step);
-  padding-left: 8px;
-  border-left: var(--tree-indent-guide) solid var(--subtle-border);
+.local-kubeconfigs-header-row > .k8sexplorer-toggle,
+.aks-header-row > .k8sexplorer-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
 }
-.aks-tree-children .context-root {
+.local-kubeconfigs-header-row > .sidebar-action-slot,
+.aks-header-row > .sidebar-action-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: auto;
+  right: var(--sidebar-gutter);
+  transform: none;
+}
+.sidebar-tree-children .context-root {
   border-top: 0;
   padding-top: 0;
 }
@@ -1083,11 +1117,22 @@ a {
   font-size: var(--fs-sm);
 }
 .aks-account-row {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
   min-height: 30px;
-  padding-right: var(--sidebar-gutter);
+  padding-right: calc(var(--sidebar-gutter) + var(--sidebar-action-size));
 }
 .aks-account-row .aks-account-toggle {
   padding-left: 8px;
+}
+.aks-account-row > .sidebar-action-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: auto;
+  right: var(--sidebar-gutter);
+  transform: none;
 }
 .hidden-file-input {
   display: none;
@@ -1102,9 +1147,12 @@ a {
   font-size: var(--fs-2xs);
 }
 .nav-item {
+  position: relative;
   display: flex;
+  width: 100%;
+  box-sizing: border-box;
   justify-content: space-between;
-  padding: var(--space-sm) var(--sidebar-gutter);
+  padding: var(--space-sm) calc(var(--sidebar-gutter) + var(--sidebar-action-size)) var(--space-sm) var(--sidebar-gutter);
   cursor: pointer;
   border-left: 2px solid transparent;
   color: var(--text-strong);
@@ -1136,6 +1184,7 @@ a {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .context-label-wrap > span:last-child {
   overflow: hidden;
@@ -1156,13 +1205,21 @@ a {
   animation: spin 0.8s linear infinite;
   display: inline-block;
 }
-/* Every right-aligned sidebar action trigger — section headers (Azure ⋯,
-   Local Kubeconfigs +) and per-row (⋯) — shares one square, bare style with a
-   hover chip. Sidebar-scoped so it overrides the generic .action-trigger. */
-.sidebar .context-menu-trigger,
-.sidebar .sidebar-action-trigger,
-.sidebar .aks-auth-button,
-.sidebar .local-kubeconfig-upload-button {
+.sidebar-action-slot {
+  width: var(--sidebar-action-size);
+  height: var(--sidebar-action-size);
+  min-width: var(--sidebar-action-size);
+  flex: 0 0 var(--sidebar-action-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 50%;
+  right: var(--sidebar-gutter);
+  transform: translateY(-50%);
+  z-index: 2;
+}
+.sidebar-action-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1174,25 +1231,48 @@ a {
   background: transparent;
   border-radius: var(--radius-sm);
   color: var(--icon-muted);
-  font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
   line-height: 1;
   flex: 0 0 auto;
 }
-.sidebar .context-menu-trigger:hover,
-.sidebar .sidebar-action-trigger:hover,
-.sidebar .aks-auth-button:hover,
-.sidebar .local-kubeconfig-upload-button:hover {
+.sidebar-action-button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+.sidebar-action-button:hover,
+.sidebar-action-button:focus-visible {
   border-color: transparent;
   background: var(--surface-hover-soft);
   color: var(--text-bright);
 }
+.sidebar-action-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.sidebar-action-slot > .action-menu {
+  right: 0;
+}
+.local-kubeconfigs-header-row > .sidebar-action-slot,
+.aks-header-row > .sidebar-action-slot,
+.aks-account-row > .sidebar-action-slot,
+.nav-item > .context-meta > .sidebar-action-slot {
+  right: var(--sidebar-gutter);
+}
 .context-meta {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--sidebar-gutter);
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  margin-left: var(--space-lg);
-  flex: 0 0 auto;
+  width: auto;
+  justify-content: flex-end;
+}
+.context-meta > .sidebar-action-slot {
+  position: static;
+  transform: none;
 }
 .context-star-button {
   border: 0;
@@ -1260,47 +1340,21 @@ a {
   width: 10px;
   display: inline-flex;
 }
-.context-sections {
-  border-left: var(--tree-indent-guide) solid var(--subtle-border);
-  margin-left: var(--tree-indent-step);
-  padding-left: 8px;
-  margin-bottom: 6px;
-}
-.context-sections .nested-group {
-  margin-top: 3px;
-}
-.context-sections .section-toggle {
-  min-height: 28px;
-  margin-left: 0;
-  padding-left: 6px;
-  border-radius: var(--radius-sm);
-}
-.context-sections .nested-items {
-  margin-left: var(--tree-indent-step);
-  padding-left: 8px;
-  border-left: var(--tree-indent-guide) solid var(--subtle-border);
-}
-.context-sections .resource-nav-item {
+.sidebar-tree-children .resource-nav-item {
   min-height: 28px;
   padding-top: 4px;
   padding-bottom: 4px;
+  /* padding-left: 8px; */
   border-left-color: transparent;
   border-radius: var(--radius-sm);
 }
-.context-sections .resource-nav-item.active {
+.sidebar-tree-children .resource-nav-item.active {
   border-left-color: var(--brand);
-}
-.aks-tree-group {
-  margin-left: var(--tree-indent-step);
-}
-.aks-tree-toggle {
-  padding-left: 8px;
 }
 .aks-account-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-right: var(--sidebar-gutter);
 }
 .aks-account-row .aks-account-toggle {
   flex: 1 1 auto;
@@ -1316,11 +1370,6 @@ a {
   position: relative;
   flex: 0 0 auto;
   display: inline-flex;
-}
-.aks-tree-children {
-  border-left: var(--tree-indent-guide) solid var(--subtle-border);
-  margin-left: var(--tree-indent-step);
-  padding-left: 8px;
 }
 .aks-connect-button {
   border: 1px solid var(--control-border);
@@ -1339,18 +1388,6 @@ a {
     transform: rotate(360deg);
   }
 }
-.nested-group .k8sexplorer-title {
-  padding-left: 2px;
-}
-.nested-group .section-toggle {
-  display: grid;
-  grid-template-columns: 12px 14px 1fr;
-  column-gap: 4px;
-  align-items: center;
-}
-.nested-items .nav-item {
-  padding-left: 8px;
-}
 .nav-item.disabled {
   opacity: 0.62;
   cursor: default;
@@ -1363,13 +1400,18 @@ a {
   position: absolute;
   top: calc(100% + 4px);
   right: var(--space-xs);
-  z-index: 12;
+  z-index: 5000;
   min-width: clamp(8rem, 12vw, 12rem);
   padding: var(--space-sm);
   background: var(--surface-menu);
+  opacity: 1;
+  pointer-events: auto;
   border: 1px solid var(--border);
   border-radius: clamp(0.35rem, 0.6vw, 0.6rem);
   box-shadow: 0 12px 32px var(--shadow-color-strong);
+}
+.sidebar-action-menu {
+  isolation: isolate;
 }
 .context-menu-item,
 .sidebar-action-menu .action-menu-item {
@@ -1395,6 +1437,7 @@ a {
   min-height: 0;
   min-width: 0;
   position: relative;
+  grid-column: 4;
 }
 /* Keep tab bar and toolbars at their natural height so the
    table itself flexes to fill the remaining space. */
@@ -2582,8 +2625,27 @@ tbody tr:hover .row-actions {
 /* Sidebar menus anchor to their row (absolute), not the viewport — override
    the fixed-positioning of the generic .action-menu so they stay on screen. */
 .action-menu.sidebar-action-menu {
-  position: absolute;
-  z-index: 20;
+  position: fixed;
+  z-index: 2000;
+  width: 180px;
+  min-width: 180px;
+  max-width: 220px;
+  padding: 4px;
+  background-color: var(--surface-menu);
+  background-image: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+.action-menu.sidebar-action-menu .action-menu-item {
+  padding: 5px 8px;
+  background-color: transparent;
+}
+.action-menu.sidebar-action-menu .action-menu-item:hover,
+.action-menu.sidebar-action-menu .action-menu-item:focus-visible {
+  background-color: var(--surface-menu-hover);
+  border-color: transparent;
+  color: var(--text-heading);
+  outline: none;
 }
 .action-menu.sidebar-action-menu::before {
   display: none;
@@ -3790,7 +3852,11 @@ tbody tr:hover .row-actions {
 
 @media (max-width: 1440px) {
   .body {
-    grid-template-columns: min(var(--sidebar-width, 18vw), 22vw) 6px 1fr;
+    grid-template-columns: 48px min(var(--sidebar-width, 18vw), 22vw) 6px minmax(0, 1fr);
+  }
+
+  .body.sidebar-collapsed {
+    grid-template-columns: 48px var(--sidebar-collapsed-width) 6px minmax(0, 1fr);
   }
 
   .topbar {
