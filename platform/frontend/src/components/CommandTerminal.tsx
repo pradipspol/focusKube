@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { wsUrl, type Scope } from '../api/client';
+import { uiText } from '../text';
 
 interface Props {
   scope: Scope;
@@ -320,12 +321,12 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
         onMouseDown={startResize}
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize terminal panel"
-        title="Drag to resize terminal"
+        aria-label={uiText.terminalDock.resizePanel}
+        title={uiText.terminalDock.dragToResize}
       />
       <div className="terminal-panel-header">
         <div className="terminal-panel-title-group">
-          <span className="terminal-panel-title">Terminal</span>
+          <span className="terminal-panel-title">{uiText.exec.terminal}</span>
           <span className="terminal-panel-meta">{scope.context ? scope.context : 'current context'}{scope.namespace ? ` / ${scope.namespace}` : ''}</span>
         </div>
         <div className="terminal-panel-status-group">

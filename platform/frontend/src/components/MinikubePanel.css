@@ -3,6 +3,7 @@
 .minikube-panel {
   display: flex;
   flex-direction: column;
+  min-height: 100%;
   gap: 1.5rem;
   padding: 1.5rem;
   background: var(--surface-secondary);

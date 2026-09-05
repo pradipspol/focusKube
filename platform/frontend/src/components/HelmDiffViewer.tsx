@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { uiText } from '../text';
 
 interface Props {
   currentManifest: string;
@@ -39,7 +40,7 @@ export function HelmDiffViewer({ currentManifest, newManifest }: Props) {
 
       <div className="diff-content">
         <div className="diff-pane">
-          <div className="diff-pane-header">Current Manifest</div>
+          <div className="diff-pane-header">{uiText.common.currentManifest}</div>
           <pre className="mono" style={{ overflow: 'auto', maxHeight: '40vh', fontSize: '12px', padding: '8px' }}>
             {currentManifest || '(empty)'}
           </pre>
@@ -47,7 +48,7 @@ export function HelmDiffViewer({ currentManifest, newManifest }: Props) {
 
         {newManifest && (
           <div className="diff-pane">
-            <div className="diff-pane-header">New Manifest</div>
+            <div className="diff-pane-header">{uiText.common.newManifest}</div>
             <pre
               className="mono"
               style={{

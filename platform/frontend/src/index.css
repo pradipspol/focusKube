@@ -167,7 +167,8 @@
   --space-lg: clamp(0.75rem, 1.1vw, 1.1rem);
 
   /* ---- Sizing ---- */
-  --sidebar-gutter: clamp(0.8rem, 1.2vw, 1.2rem);  /* right padding for sidebar rows so action buttons share one column */
+  /* --sidebar-gutter: clamp(0.8rem, 1.2vw, 1.2rem);  right padding for sidebar rows so action buttons share one column */
+  --sidebar-gutter: clamp(0rem, 0vw, 2rem);
   --sidebar-action-size: 22px;                     /* square hit-area for every sidebar action trigger (⋯ / +) */
   --control-max-width: clamp(10.5rem, 14vw, 14rem);
   --namespace-input-width: clamp(7.5rem, 10vw, 10rem);
@@ -988,7 +989,8 @@ a {
   border: 0;
 }
 .root-header .root-toggle {
-  padding-left: var(--space-md);
+  padding-left: var(--space-xs);
+  gap: var(--space-xs);
 }
 .k8sexplorer-toggle.route-link {
   width: 100%;
@@ -1026,8 +1028,8 @@ a {
   margin-left: 0;
 }
 .k8sexplorer-group {
-  margin-top: 2px;
-  margin-left: 4px;
+  margin-top: 1px;
+  /* margin-left: 4px; */
 }
 .k8sexplorer-title {
   padding: var(--space-xs) var(--space-md);
@@ -1064,9 +1066,9 @@ a {
   line-height: 1;
 }
 .sidebar-tree-children {
-  margin-left: 0;
+  margin-left: calc(10px + var(--tree-indent-step));
   margin-right: 0;
-  padding-left: calc(8px + var(--tree-indent-step));
+  /* padding-left: calc(8px + var(--tree-indent-step)); */
   border-left: var(--tree-indent-guide) solid var(--subtle-border);
   box-sizing: border-box;
 }
@@ -1157,6 +1159,7 @@ a {
   border-left: 2px solid transparent;
   color: var(--text-strong);
   min-width: 0;
+  /* gap: 8px; */
 }
 .nav-item:hover {
   background: var(--surface-hover);
@@ -1259,6 +1262,16 @@ a {
 .nav-item > .context-meta > .sidebar-action-slot {
   right: var(--sidebar-gutter);
 }
+/* .context-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: max-content;
+  justify-content: flex-end;
+} */
+
 .context-meta {
   position: absolute;
   top: 0;
@@ -1266,7 +1279,7 @@ a {
   right: var(--sidebar-gutter);
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-2xl);
   width: auto;
   justify-content: flex-end;
 }
@@ -1465,6 +1478,7 @@ a {
   overflow: hidden;
 }
 .main-content-body {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1493,7 +1507,7 @@ a {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 20;
+  z-index: 50;
   display: flex;
   flex-direction: column;
   min-height: 28px;
@@ -1691,7 +1705,7 @@ a {
 .terminal-session-search-input {
   min-width: clamp(10rem, 16vw, 16rem);
   max-width: clamp(12rem, 20vw, 22rem);
-  height: 24px;
+  height: 32px;
   padding: 2px 8px;
   font-size: var(--fs-xs);
 }

@@ -8,6 +8,7 @@ import { downloadFile, toCsv, toTxt, type ExportFormat } from '../utils/export';
 import { getWatchWorker, releaseWatchWorker } from '../utils/workerRuntime';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
+import { LoadingOverlay } from './LoadingOverlay';
 import { ResourceDetail } from './ResourceDetail';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
 import { useConfirm, type ConfirmFn } from './ConfirmDialog';
@@ -1256,7 +1257,7 @@ export function ResourceTable({
           {uiText.resource.roleCannotListPrefix}<span className="mono">{plural}</span>{uiText.resource.roleCannotListSuffix}
         </div>
       )}
-      {list.isLoading && <div className="empty">{uiText.resource.loading}</div>}
+      {list.isLoading && <LoadingOverlay message={uiText.resource.loading} />}
 
       {!list.isLoading && items.length === 0 && <div className="empty">{uiText.resource.noResourcesFound}</div>}
 

@@ -5,6 +5,7 @@ import type { K8sObject } from '../api/types';
 import { age, statusOf } from '../utils/format';
 import { DataTable } from './DataTable';
 import { NamespaceSelector } from './NamespaceSelector';
+import { LoadingOverlay } from './LoadingOverlay';
 import { uiText } from '../text';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
@@ -135,11 +136,11 @@ export function ApplicationsPanel({
   return (
     <>
       {/* <div className="toolbar">
-        <h2>Applications</h2>
+        <h2>{uiText.applications.title}</h2>
         <span className="dim">{items.length} items</span>
         {selectedCount > 0 && <span className="dim">{selectedCount} selected</span>}
         <div className="toolbar-actions">
-          <button className="toolbar-refresh" onClick={() => applications.refetch()} title="Refresh">
+          <button className="toolbar-refresh" onClick={() => applications.refetch()} title={uiText.common.refresh}>
             ⟳
           </button>
           <NamespaceSelector
@@ -171,7 +172,7 @@ export function ApplicationsPanel({
       </div>
 
       {applications.isError && <div className="notice error">{(applications.error as Error).message}</div>}
-      {applications.isLoading && <div className="empty">{uiText.common.loadingApplications}</div>}
+      {applications.isLoading && <LoadingOverlay message={uiText.common.loadingApplications} />}
       {!applications.isLoading && items.length === 0 && <div className="empty">{uiText.common.noApplicationsFound}</div>}
 
       {items.length > 0 && (
@@ -291,7 +292,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
       <div className="drawer app-details-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <span className="badge">{uiText.applications.title}</span>
-          <h3>{`ApplicationInstance: ${row.instance}`}</h3>
+          <h3>{`${uiText.applications.instance}: ${row.instance}`}</h3>
           <button onClick={onClose}>✕</button>
         </div>
         <div className="drawer-body pod-overview">
@@ -317,7 +318,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
             <div className="app-props-row"><span>{uiText.applications.application}</span><span>{row.application}</span></div>
             <div className="app-props-row"><span>{uiText.applications.version}</span><span>{row.version}</span></div>
             <div className="app-props-row"><span>{uiText.applications.managedBy}</span><span>{row.managedBy}</span></div>
-            <div className="app-props-row"><span>Name</span><span>{row.obj.metadata?.name ?? '-'}</span></div>
+            <div className="app-props-row"><span>{uiText.applications.name}</span><span>{row.obj.metadata?.name ?? '-'}</span></div>
             <div className="app-props-row"><span>{uiText.applications.namespace}</span><span>{row.namespace}</span></div>
           </div>
         </section>
@@ -331,11 +332,11 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
               <thead>
                 <tr>
                   <th>{uiText.resourceDetail.name}</th>
-                  <th>Node</th>
+                  <th>{uiText.applications.node}</th>
                   <th>{uiText.applications.namespace}</th>
-                  <th>Ready</th>
-                  <th>CPU</th>
-                  <th>Memory</th>
+                  <th>{uiText.applications.ready}</th>
+                  <th>{uiText.applications.cpu}</th>
+                  <th>{uiText.applications.memory}</th>
                   <th>{uiText.applications.status}</th>
                 </tr>
               </thead>
@@ -371,7 +372,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
               <tr>
                 <th>{uiText.resourceDetail.name}</th>
                 <th>{uiText.resourceDetail.kind}</th>
-                <th>Component</th>
+                <th>{uiText.applications.component}</th>
               </tr>
             </thead>
             <tbody>
@@ -387,7 +388,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         <section className="app-details-section">
           <h4>{uiText.resourceDetail.vulnerabilities}</h4>
           <div className="dim">{uiText.resourceDetail.images}</div>
-          <div className="security-placeholder">Unknown</div>
+          <div className="security-placeholder">{uiText.applications.unknown}</div>
         </section>
 
         <section className="app-details-section">
@@ -398,7 +399,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
             <div className="pod-properties-table">
               {details.data?.events.slice(0, 20).map((event: any, index: number) => (
                 <div key={`${event.metadata?.uid ?? index}`} className="pod-property-row">
-                  <div className="pod-property-label">{event.reason ?? event.type ?? 'Event'}</div>
+                  <div className="pod-property-label">{event.reason ?? event.type ?? uiText.applications.event}</div>
                   <div className="pod-property-value">{event.message ?? '-'}</div>
                 </div>
               ))}

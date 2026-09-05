@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
+import { uiText } from '../text';
 
 export interface DataColumn<T> {
   key: string;
@@ -277,7 +278,7 @@ export function DataTable<T>({
                 <input
                   ref={selectAllRef}
                   type="checkbox"
-                  title="Select all"
+                  title={uiText.common.selectAll}
                   checked={allSelected}
                   onChange={toggleAll}
                 />
@@ -315,7 +316,7 @@ export function DataTable<T>({
               );
             })}
             {(hasActions || showColumnPicker) && (
-              <th aria-label="Actions">
+                  <th aria-label={uiText.common.actions}>
                 <ColumnVisibilityPicker
                   columns={columns}
                   visibleColumns={visibleColumns}
@@ -342,7 +343,7 @@ export function DataTable<T>({
                   <td className="select-cell">
                     <input
                       type="checkbox"
-                      title="Select row"
+                      title={uiText.common.selectRow}
                       checked={selected.has(key)}
                       onChange={() => toggleRow(key)}
                     />
@@ -357,7 +358,7 @@ export function DataTable<T>({
                   <td className={hasActions ? `actions-cell ${openKey === key ? 'menu-open' : ''}` : 'table-column-picker-spacer'}>
                     {hasActions ? (
                       <div className="row-actions row-actions-visible">
-                        <button className="action-trigger" title="Actions" onClick={(event) => openMenu(key, event)}>
+                        <button className="action-trigger" title={uiText.common.actions} onClick={(event) => openMenu(key, event)}>
                           ⋮
                         </button>
                         {openKey === key && menuPos && (

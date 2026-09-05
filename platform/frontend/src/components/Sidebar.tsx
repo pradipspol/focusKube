@@ -617,7 +617,7 @@ export function Sidebar ({
           </span>
           <span className="context-meta">
             {connectingContextKey === nodeIdentityKey ? (
-              <span className="tiny-spinner" aria-label="connecting" />
+              <span className="tiny-spinner" aria-label={uiText.sidebar.connecting} />
             ) : (
               <span
                 className={`context-status-dot ${isSelectedContext ? 'connected' : 'disconnected'}`}
@@ -627,7 +627,7 @@ export function Sidebar ({
             {!collapsed && (
               <div className="sidebar-action-slot">
                 <SidebarAction
-                  label={`Actions for ${ctx.name}`}
+                  label={uiText.sidebar.actionsFor(ctx.name)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setMenuContextName((current) => (current === nodeIdentityKey ? undefined : nodeIdentityKey));
@@ -637,7 +637,7 @@ export function Sidebar ({
                   <SidebarContextMenu
                     actions={[
                       {
-                        label: isSelectedContext ? 'Disconnect' : 'Connect',
+                        label: isSelectedContext ? uiText.sidebar.disconnect : uiText.sidebar.connect,
                         onSelect: async () => {
                         setMenuContextName(undefined);
                         if (isSelectedContext) {
@@ -667,14 +667,14 @@ export function Sidebar ({
                         },
                       },
                       ...(!isLocalContextNode && resolvedSource ? [{
-                        label: isStarred ? 'Unstar' : 'Star',
+                        label: isStarred ? uiText.sidebar.unstar : uiText.sidebar.star,
                         onSelect: () => {
                           setMenuContextName(undefined);
                           toggleStar(resolvedSource, ctx.name);
                         },
                       }] : []),
                       ...(options?.onRemove ? [{
-                        label: 'Remove context',
+                        label: uiText.sidebar.removeContext,
                         danger: true,
                         onSelect: () => {
                           setMenuContextName(undefined);
@@ -730,7 +730,7 @@ export function Sidebar ({
                   {(collapsed || !isGroupCollapsed('contextsRoot')) && (
                     <>
                       {!collapsed && starredContextList.length === 0 && (
-                        <div className="sidebar-hint">No starred contexts yet.</div>
+                        <div className="sidebar-hint">{uiText.sidebar.noStarredContexts}</div>
                       )}
                       {starredContextList.map((ctx) => renderContextNode(ctx, 'starred', undefined, undefined, ctx.source?.provider))}
                     </>

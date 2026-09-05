@@ -7,6 +7,8 @@ import {
   useStopCluster,
   useDeleteCluster,
 } from '../api/minikubeApi';
+import { uiText } from '../text';
+import { LoadingOverlay } from './LoadingOverlay';
 import './MinikubePanel.css';
 
 /**
@@ -42,6 +44,15 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
   // badge text and its colour agree (there is a distinct .status-stopped style).
   const displayStatus = status === 'not-installed' && health?.installed ? 'stopped' : status;
   const setupScripts = setupScriptsData?.scripts || [];
+  const loadingMessage = startCluster.isPending
+    ? uiText.minikube.starting
+    : stopCluster.isPending
+      ? uiText.minikube.stopping
+      : openingExplorer
+        ? uiText.minikube.openingExplorer
+        : healthLoading || statusLoading
+          ? uiText.minikube.checkingStatus
+          : null;
 
   const downloadScript = (content: string, filename: string) => {
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -94,55 +105,56 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
 
   return (
     <div className="minikube-panel">
+      {loadingMessage && <LoadingOverlay message={loadingMessage} />}
       <div className="minikube-header">
-        <h2>Minikube Local Cluster</h2>
+        <h2>{uiText.minikube.title}</h2>
         {health?.installed ? (
-          <span className="badge badge-success">Installed</span>
+          <span className="badge badge-success">{uiText.minikube.installed}</span>
         ) : (
-          <span className="badge badge-error">Not Installed</span>
+          <span className="badge badge-error">{uiText.minikube.notInstalled}</span>
         )}
       </div>
 
       {/* Cluster Status Section */}
       <section className="minikube-section">
-        <h3>Cluster Status</h3>
+        <h3>{uiText.minikube.clusterStatus}</h3>
         <div className="status-info">
           <div className="info-row">
-            <label>Name:</label>
+            <label>{uiText.minikube.name}</label>
             <input
               type="text"
               value={clusterName}
               onChange={(e) => setClusterName(e.target.value)}
-              placeholder="minikube"
+              placeholder={uiText.minikube.namePlaceholder}
             />
           </div>
           <div className="info-row">
-            <label>Status:</label>
+            <label>{uiText.minikube.status}</label>
             <span
               className={`status-badge status-${displayStatus}`}
             >
               {health?.installed
                 ? displayStatus === 'stopped'
-                  ? 'Cluster Stopped'
+                  ? uiText.minikube.clusterStopped
                   : displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1)
-                : 'Not Installed: Setup Minikube. Steps Below'}
+                : uiText.minikube.notInstalledSetup}
             </span>
           </div>
           {statusData?.kubernetesVersion && (
             <div className="info-row">
-              <label>Kubernetes:</label>
+              <label>{uiText.minikube.kubernetes}</label>
               <span>{statusData.kubernetesVersion}</span>
             </div>
           )}
           {statusData?.ip && (
             <div className="info-row">
-              <label>IP Address:</label>
+              <label>{uiText.minikube.ipAddress}</label>
               <span className="ip-address">{statusData.ip}</span>
             </div>
           )}
           {statusData?.driver && (
             <div className="info-row">
-              <label>Driver:</label>
+              <label>{uiText.minikube.driver}</label>
               <span>{statusData.driver}</span>
             </div>
           )}
@@ -151,49 +163,49 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
 
       {/* Cluster Control Section */}
       <section className="minikube-section">
-        <h3>Cluster Control</h3>
+        <h3>{uiText.minikube.clusterControl}</h3>
         <div className="button-group">
           <button
             className="btn btn-primary"
             onClick={handleStartCluster}
             disabled={status === 'running' || startCluster.isPending}
           >
-            {startCluster.isPending ? 'Starting...' : 'Start'}
+            {startCluster.isPending ? uiText.minikube.starting : uiText.minikube.start}
           </button>
           <button
             className="btn btn-warning"
             onClick={handleStopCluster}
             disabled={status !== 'running' || stopCluster.isPending}
           >
-            {stopCluster.isPending ? 'Stopping...' : 'Stop'}
+            {stopCluster.isPending ? uiText.minikube.stopping : uiText.minikube.stop}
           </button>
           <button
             className="btn btn-danger"
             onClick={handleDeleteCluster}
             disabled={deleteCluster.isPending}
           >
-            {deleteCluster.isPending ? 'Deleting...' : 'Delete'}
+            {deleteCluster.isPending ? uiText.minikube.deleting : uiText.minikube.delete}
           </button>
         </div>
 
         {status !== 'running' && (
             <>
-              <h4>Cluster Parameters</h4>
+              <h4>{uiText.minikube.clusterParameters}</h4>
               <div className="form-group">
-                <label>Driver:</label>
+                <label>{uiText.minikube.driver}</label>
                 <select
                   value={clusterConfig.driver}
                   onChange={(e) =>
                     setClusterConfig({ ...clusterConfig, driver: e.target.value })
                   }
                 >
-                  <option value="docker">Docker Desktop</option>
-                  <option value="hyperv">Hyper-V</option>
-                  <option value="virtualbox">VirtualBox</option>
+                  <option value="docker">{uiText.minikube.dockerDesktop}</option>
+                  <option value="hyperv">{uiText.minikube.hyperV}</option>
+                  <option value="virtualbox">{uiText.minikube.virtualBox}</option>
                 </select>
               </div>
               <div className="form-group">
-                <label>CPUs:</label>
+                <label>{uiText.minikube.cpus}</label>
                 <input
                   type="number"
                   min="1"
@@ -208,14 +220,14 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
                 />
               </div>
               <div className="form-group">
-                <label>Memory:</label>
+                <label>{uiText.minikube.memory}</label>
                 <input
                   type="text"
                   value={clusterConfig.memory}
                   onChange={(e) =>
                     setClusterConfig({ ...clusterConfig, memory: e.target.value })
                   }
-                  placeholder="4096m"
+                  placeholder={uiText.minikube.memoryPlaceholder}
                 />
               </div>
             </>
@@ -227,12 +239,12 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
             onClick={handleOpenResourceExplorer}
             disabled={openingExplorer}
           >
-            {openingExplorer ? 'Opening Explorer...' : 'Open Resource Explorer'}
+            {openingExplorer ? uiText.minikube.openingExplorer : uiText.minikube.openResourceExplorer}
           </button>
         )}
       </section>
       <section className="minikube-section">
-        <h3>Cluster Setup Steps</h3>
+        <h3>{uiText.minikube.setupSteps}</h3>
         <div className="config-section">
           
           <p className="config-help-text">

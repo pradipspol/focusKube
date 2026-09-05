@@ -849,11 +849,11 @@ export function SidebarProviderSources ({
                         >
                           <TreeDisclosure collapsed={!accountExpanded} />
                           <span className="aks-account-email">{accountNode.email}</span>
-                          {accountBusy && <span className="tiny-spinner" aria-label="working" />}
+                          {accountBusy && <span className="tiny-spinner" aria-label={uiText.sidebar.working} />}
                         </button>
                         <div className="sidebar-action-slot">
                           <SidebarAction
-                            label={`Actions for ${accountNode.email}`}
+                            label={uiText.sidebar.actionsFor(accountNode.email)}
                             onClick={(event) => {
                               event.stopPropagation();
                               setAzureAccountMenuEmail(accountMenuOpen ? undefined : accountNode.email);
@@ -913,7 +913,7 @@ export function SidebarProviderSources ({
                                             <TreeDisclosure collapsed={!subExpanded} />
                                             <span>{subscriptionNode.name}</span>
                                             {loadingResourceGroups[subCacheKey] && (
-                                              <span className="tiny-spinner" aria-label="loading resource groups" />
+                                              <span className="tiny-spinner" aria-label={uiText.sidebar.loadingResourceGroups} />
                                             )}
                                           </button>
                                         )}
@@ -950,7 +950,7 @@ export function SidebarProviderSources ({
                                                       <TreeDisclosure collapsed={!rgExpanded} />
                                                       <span>{resourceGroupNode.name}</span>
                                                       {loadingClusters[rgCacheKey] && (
-                                                        <span className="tiny-spinner" aria-label="loading clusters" />
+                                                        <span className="tiny-spinner" aria-label={uiText.sidebar.loadingClusters} />
                                                       )}
                                                     </button>
                                                   )}
@@ -1035,7 +1035,7 @@ export function SidebarProviderSources ({
                                                                 <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                                               </span>
                                                               {!collapsed && clusterLoading && (
-                                                                <span className="tiny-spinner" aria-label="loading context" />
+                                                                <span className="tiny-spinner" aria-label={uiText.sidebar.loadingContext} />
                                                               )}
                                                             </div>
                                                             {(collapsed || clusterExpanded) && (
@@ -1144,7 +1144,7 @@ export function SidebarProviderSources ({
                       {(collapsed || regionExpanded) && (
                         <div className="sidebar-tree-children">
                           {!collapsed && regionNode.clusters.length === 0 && (
-                            <div className="sidebar-hint">No clusters found.</div>
+                            <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
                           )}
                           {regionNode.clusters.map((cluster) => {
                             const clusterNodeKey = `aws-region:${regionNode.name}:cluster:${cluster.name}`;
@@ -1205,13 +1205,13 @@ export function SidebarProviderSources ({
                                     <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                   </span>
                                   {!collapsed && clusterLoading && (
-                                    <span className="tiny-spinner" aria-label="loading context" />
+                                    <span className="tiny-spinner" aria-label={uiText.sidebar.loadingContext} />
                                   )}
                                 </div>
                                 {(collapsed || clusterExpanded) && (
                                   <div className="sidebar-tree-children">
                                     {matchingContexts.length === 0 && !collapsed && !clusterLoading && (
-                                      <div className="sidebar-hint">No context imported yet.</div>
+                                      <div className="sidebar-hint">{uiText.sidebar.noContextImported}</div>
                                     )}
                                     {matchingContexts.map((ctx) =>
                                       renderContextNode(ctx, `eks-context:${clusterNodeKey}`, undefined, undefined, 'eks'),
@@ -1238,7 +1238,7 @@ export function SidebarProviderSources ({
             <button className="k8sexplorer-title k8sexplorer-toggle" onClick={() => toggleGroup('localKubeconfigsRoot')}>
               <TreeDisclosure collapsed={isGroupCollapsed('localKubeconfigsRoot')} />
               <img src={kubeIcon} className="svg-inject" alt="Kubernetes" />
-              <span>Local Kubeconfigs</span>
+              <span>{uiText.sidebar.localKubeconfigs}</span>
             </button>
             <div className="sidebar-action-slot">
               <SidebarAction
@@ -1259,7 +1259,7 @@ export function SidebarProviderSources ({
         {(collapsed || !isGroupCollapsed('localKubeconfigsRoot')) && (
           <div className="sidebar-tree-children">
             {localKubeconfigs.length === 0 && !collapsed && (
-              <div className="sidebar-hint">No local kubeconfigs uploaded yet.</div>
+              <div className="sidebar-hint">{uiText.sidebar.noLocalKubeconfigs}</div>
             )}
             {localKubeconfigs.map((item) => {
               const isMenuOpen = menuLocalKubeconfigId === item.id;
@@ -1343,16 +1343,16 @@ export function SidebarProviderSources ({
                     <div className="sidebar-tree-children">
                       {localAzureAuthInProgress && !collapsed && (
                         <div className="sidebar-hint sidebar-hint-loading">
-                          <span className="tiny-spinner" aria-label="checking local Azure authentication" />
+                          <span className="tiny-spinner" aria-label={uiText.sidebar.checkingLocalAzureAuth} />
                           <span>{`Checking local Azure authentication (${localAzureRetryCount}/${localAzureMaxRetries})...`}</span>
                         </div>
                       )}
                       {localAzureAuthFailed && !collapsed && (
-                        <div className="sidebar-hint">Authenticate Azure (local scope) to view contexts.</div>
+                        <div className="sidebar-hint">{uiText.sidebar.authenticateLocalAzure}</div>
                       )}
                       {!localAzureAuthenticated && collapsed && null}
                       {(localAzureAuthenticated || isMinikubeConfig) && item.contexts.length === 0 && !collapsed && (
-                        <div className="sidebar-hint">No contexts found in this file.</div>
+                        <div className="sidebar-hint">{uiText.sidebar.noContextsInFile}</div>
                       )}
                       {(localAzureAuthenticated || isMinikubeConfig) &&
                         item.contexts.map((ctxName) => {
@@ -1409,7 +1409,7 @@ export function SidebarProviderSources ({
                                   <div className="context-meta">
                                     <span
                                       className="context-status-dot disconnected"
-                                      title="Disconnected — click to connect"
+                                      title={uiText.sidebar.disconnectedClickToConnect}
                                     />
                                     <div className="sidebar-action-slot">
                                       <SidebarAction
@@ -1464,7 +1464,7 @@ export function SidebarProviderSources ({
         <div className="local-kubeconfigs-header-row">
           <button
             className="k8sexplorer-title k8sexplorer-toggle"
-            title="Local Minikube"
+            title={uiText.sidebar.localMinikube}
             onClick={() => toggleGroup('minikubeRoot')}
           >
             <TreeDisclosure collapsed={!minikubeExpanded} />

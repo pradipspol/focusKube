@@ -8,6 +8,7 @@ import { MultiPodLogsPanel } from './MultiPodLogsPanel';
 import { CorrelationDashboard } from './CorrelationDashboard';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
 import { uiText } from '../../text';
+import { LoadingOverlay } from '../LoadingOverlay';
 
 interface Props {
   scope: Scope;
@@ -110,11 +111,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   }
 
   if (isLoading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">{uiText.observabilityPanel.loading}</div>
-      </div>
-    );
+    return <LoadingOverlay message={uiText.observabilityPanel.loading} />;
   }
 
   if (!isAvailable) {

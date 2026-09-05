@@ -356,7 +356,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
       </p>
       <div className="create-resource-controls">
         <div className="form-group create-resource-type">
-          <label htmlFor="create-resource-type">Resource type</label>
+          <label htmlFor="create-resource-type">{uiText.common.resourceType}</label>
           <select
             id="create-resource-type"
             value={selectedResourceType}
@@ -373,7 +373,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
           </select>
         </div>
         <div className="form-group create-resource-namespace">
-          <label htmlFor="create-resource-namespace">Namespace</label>
+          <label htmlFor="create-resource-namespace">{uiText.common.namespace}</label>
           <select
             id="create-resource-namespace"
             value={namespace}

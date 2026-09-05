@@ -115,9 +115,9 @@ export function TopBar({
 
   const levelOptions: LogLevel[] = ['debug', 'info', 'warn', 'error'];
   const themeOptions: Array<{ value: Theme; label: string }> = [
-    { value: 'dark', label: 'Dark' },
-    { value: 'light', label: 'Light' },
-    { value: 'contrast', label: 'Contrast' },
+    { value: 'dark', label: uiText.theme.dark },
+    { value: 'light', label: uiText.theme.light },
+    { value: 'contrast', label: uiText.theme.contrast },
   ];
 
   return (

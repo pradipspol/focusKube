@@ -84,11 +84,11 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
           {currentValues.data && (
             <>
               <div className="form-group">
-                <label htmlFor="version-input">Target Chart Version (optional)</label>
+                <label htmlFor="version-input">{uiText.helm.targetChartVersionOptional}</label>
                 <input
                   id="version-input"
                   type="text"
-                  placeholder="Leave empty to keep current version"
+                  placeholder={uiText.helm.keepCurrentVersion}
                   value={version}
                   onChange={(e) => setVersion(e.target.value)}
                 />

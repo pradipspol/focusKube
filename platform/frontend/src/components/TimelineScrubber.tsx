@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react';
+import { uiText } from '../text';
 
 export interface TimelineTick {
   ts: number;
@@ -98,7 +99,7 @@ export function TimelineScrubber({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', borderBottom: '1px solid var(--surface-border)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <label style={{ fontWeight: 500 }}>Cluster Timeline</label>
+        <label style={{ fontWeight: 500 }}>{uiText.timeline.clusterTimeline}</label>
         {onToggleLive && (
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9em' }}>
             <input

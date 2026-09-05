@@ -147,8 +147,8 @@ export function TerminalDock({
           onMouseDown={startResize}
           role="separator"
           aria-orientation="horizontal"
-          aria-label="Resize terminal panel"
-          title="Drag to resize terminal"
+          aria-label={uiText.terminalDock.resizePanel}
+          title={uiText.terminalDock.dragToResize}
         />
       )}
       <div className="terminal-tabs-bar">
@@ -182,7 +182,7 @@ export function TerminalDock({
             className="terminal-new-tab-button"
             type="button"
             onClick={onNewSession}
-            title="Open new terminal"
+            title={uiText.terminalDock.openNewTerminal}
           >
             +
           </button>
@@ -741,7 +741,7 @@ function DockedPodLogsSessionPane({ session, active }: { session: Extract<LogsTe
       <div className="terminal-session-header terminal-session-header-logs">
         <div className="terminal-session-title-group terminal-session-title-group-search">
           <span className="terminal-session-title">{session.title}</span>
-          <span className="terminal-session-meta">Pod logs</span>
+          <span className="terminal-session-meta">{uiText.terminalDock.podLogs}</span>
           <input
             className="terminal-session-search-input"
             type="search"
@@ -750,20 +750,20 @@ function DockedPodLogsSessionPane({ session, active }: { session: Extract<LogsTe
               setSearchQuery(event.target.value);
               setSearchIndex(0);
             }}
-            placeholder="Search pod logs"
-            aria-label="Search pod logs"
+            placeholder={uiText.terminalDock.searchPodLogs}
+            aria-label={uiText.terminalDock.searchPodLogs}
           />
-          <span className="terminal-session-search-count">{normalizedQuery ? `${matchCount} matches` : 'all lines'}</span>
+          <span className="terminal-session-search-count">{normalizedQuery ? uiText.terminalDock.matches(matchCount) : uiText.terminalDock.allLines}</span>
           <button className="terminal-search-nav-button" type="button" onClick={() => setSearchIndex((current) => (matchCount ? (current - 1 + matchCount) % matchCount : 0))} disabled={!normalizedQuery}>
-            Prev
+            {uiText.terminalDock.previous}
           </button>
           <button className="terminal-search-nav-button" type="button" onClick={() => setSearchIndex((current) => (matchCount ? (current + 1) % matchCount : 0))} disabled={!normalizedQuery}>
-            Next
+            {uiText.terminalDock.next}
           </button>
         </div>
         <div className="terminal-session-status-group terminal-session-status-group-logs">
           <div className="field terminal-session-log-field">
-            <label>Container</label>
+            <label>{uiText.logs.container}</label>
             <select value={container} onChange={(e) => setContainer(e.target.value)}>
               {containers.map((entry) => (
                 <option key={entry} value={entry}>
@@ -774,9 +774,9 @@ function DockedPodLogsSessionPane({ session, active }: { session: Extract<LogsTe
           </div>
           <label className="field terminal-session-log-follow">
             <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-            Follow
+            {uiText.logs.follow}
           </label>
-          <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'streaming' : 'disconnected'}</span>
+          <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? uiText.logs.streaming : uiText.logs.disconnected}</span>
         </div>
       </div>
       <div className="terminal-session-body terminal-session-body-logs">

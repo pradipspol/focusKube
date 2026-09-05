@@ -219,7 +219,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
               {charts.data && charts.data.charts.length > 0 && (
                 <>
                   <div className="form-group">
-                    <label htmlFor="chart-select">Chart</label>
+                    <label htmlFor="chart-select">{uiText.common.chart}</label>
                     <select
                       id="chart-select"
                       value={selectedChart?.name ?? ''}
@@ -229,7 +229,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                         setVersion('');
                       }}
                     >
-                      <option value="">Select a chart...</option>
+                      <option value="">{uiText.helm.selectChart}</option>
                       {charts.data.charts
                         .map((c) => c.name)
                         .filter((v, i, arr) => arr.indexOf(v) === i)
@@ -244,9 +244,9 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
                   {selectedChart && chartVersions.length > 0 && (
                     <div className="form-group">
-                      <label htmlFor="version-select">Chart Version</label>
+                      <label htmlFor="version-select">{uiText.common.chartVersion}</label>
                       <select id="version-select" value={version} onChange={(e) => setVersion(e.target.value)}>
-                        <option value="">Latest</option>
+                        <option value="">{uiText.common.latest}</option>
                         {chartVersions.map((v) => (
                           <option key={v} value={v}>
                             {v}
@@ -265,7 +265,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
           {chartSource === 'local' && (
             <>
               <div className="form-group">
-                <label htmlFor="chart-upload">Upload Chart (.tgz)</label>
+                <label htmlFor="chart-upload">{uiText.helm.uploadChart}</label>
                 <div className="file-upload-area">
                   <input
                     ref={fileInputRef}
@@ -300,14 +300,14 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                 <input
                   id="release-name"
                   type="text"
-                  placeholder="my-release"
+                  placeholder={uiText.helm.releaseNamePlaceholder}
                   value={releaseName}
                   onChange={(e) => setReleaseName(e.target.value)}
                 />
               </div>
 
               <div className="form-group">
-                <label htmlFor="namespace-select">Namespace</label>
+                <label htmlFor="namespace-select">{uiText.helm.namespace}</label>
                 <select id="namespace-select" value={namespace} onChange={(e) => setNamespace(e.target.value)}>
                   {namespaces.map((ns) => (
                     <option key={ns} value={ns}>

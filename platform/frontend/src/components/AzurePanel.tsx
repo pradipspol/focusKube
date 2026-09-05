@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import type { AzureScope } from '../api/client';
 import type { AksCluster, AzureAccount, AzureAccountGroup } from '../api/types';
 import { uiText } from '../text';
+import { LoadingOverlay } from './LoadingOverlay';
 
 interface Props {
   azureSource?: AzureScope;
@@ -264,6 +265,7 @@ export function AzurePanel({
 
   return (
     <div style={{ padding: 16, maxWidth: 900 }}>
+      {(account.isLoading || accounts.isLoading) && <LoadingOverlay message={uiText.azure.checking} />}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <h2 style={{ margin: 0 }}>{uiText.azure.connectionsTitle}</h2>
         <button className="primary" onClick={() => login.mutate()} disabled={login.isPending || polling}>
@@ -283,7 +285,7 @@ export function AzurePanel({
 
       {loginPending && (
         <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
-          <span className="azure-login-spinner" aria-label="Azure sign-in in progress" />
+          <span className="azure-login-spinner" aria-label={uiText.azure.signInProgress} />
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <span>{uiText.azure.signInProgress}</span>
@@ -312,11 +314,11 @@ export function AzurePanel({
         {/* <div className="dim" style={{ marginBottom: 8 }}>
           Scope: <b>{azureScopeLabel}</b>
         </div> */}
-        {(account.isLoading || awaitingAzureAccount) && <div className="dim">{uiText.azure.checking}</div>}
+        {awaitingAzureAccount && <div className="dim">{uiText.azure.checking}</div>}
         {loggedIn ? (
           <div className="notice">
             <div style={{ marginTop: 14 }}>
-              {(accounts.isLoading || accounts.isFetching) && <div className="dim">Loading Azure accounts...</div>}
+              {(accounts.isLoading || accounts.isFetching) && <div className="dim">{uiText.azure.loadingAccounts}</div>}
               {accounts.isError && <div className="notice error">{(accounts.error as Error).message}</div>}
               {!accounts.isLoading && !accounts.isError && accountGroups.length === 0 && totalSubscriptionCount === 0 ? (
                 <div className="notice" style={{ padding: '10px 12px' }}>
@@ -358,7 +360,7 @@ export function AzurePanel({
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
                         <button
-                          title="Re-sync from Azure and reload this account into the sidebar"
+                          title={uiText.azure.resyncTitle}
                           onClick={() => {
                             void qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
                             void qc.invalidateQueries({ queryKey: ['azure', 'account'] });
@@ -369,7 +371,7 @@ export function AzurePanel({
                           }}
                           disabled={refreshAccounts.isPending}
                         >
-                          {refreshAccounts.isPending ? 'Refreshing...' : 'Refresh'}
+                          {refreshAccounts.isPending ? uiText.azure.refreshing : uiText.azure.refresh}
                         </button>
                         <button
                           className="danger"
@@ -389,7 +391,7 @@ export function AzurePanel({
                           // doesn't lock the other accounts' buttons.
                           disabled={logout.isPending && signingOutEmail === group.email}
                         >
-                          {logout.isPending && signingOutEmail === group.email ? 'Signing out...' : uiText.azure.signOut}
+                          {logout.isPending && signingOutEmail === group.email ? uiText.azure.signingOut : uiText.azure.signOut}
                         </button>
                       </div>
                     </div>
@@ -406,7 +408,7 @@ export function AzurePanel({
       {/* {loggedIn && (
         <>
           <section style={{ marginBottom: 24 }}>
-            <h3>Subscription</h3>
+            <h3>{uiText.applications.namespace}</h3>
             <div className="dim" style={{ marginBottom: 8 }}>
               {subs.data?.subscriptions.length ?? 0} subscriptions available
             </div>
@@ -427,7 +429,7 @@ export function AzurePanel({
 
           <section>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h3 style={{ margin: 0 }}>AKS Clusters</h3>
+              <h3 style={{ margin: 0 }}>{uiText.azure.connectionsTitle}</h3>
                 <button onClick={() => aks.refetch()}>{uiText.azure.refresh}</button>
             </div>
               {aks.isLoading && <div className="dim">{uiText.azure.loadingClusters}</div>}
@@ -437,11 +439,11 @@ export function AzurePanel({
               <table>
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Resource Group</th>
-                    <th>Location</th>
-                    <th>Version</th>
-                    <th>State</th>
+                    <th>{uiText.aws.name}</th>
+                    <th>{uiText.resourceDetail.resourceNames}</th>
+                    <th>{uiText.applications.namespace}</th>
+                    <th>{uiText.aws.version}</th>
+                    <th>{uiText.applications.status}</th>
                     <th></th>
                   </tr>
                 </thead>

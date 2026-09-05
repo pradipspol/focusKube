@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AwsAuthConfig, AwsIdentity, EksCluster } from '../api/types';
 import { uiText } from '../text';
+import { LoadingOverlay } from './LoadingOverlay';
 
 interface Props {
   onContextsChanged: () => Promise<void> | void;
@@ -170,6 +171,9 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
 
   return (
     <div style={{ padding: 16, maxWidth: 900 }}>
+      {(awsAccount.isLoading || (awsLoggedIn && eks.isLoading)) && (
+        <LoadingOverlay message={awsAccount.isLoading ? uiText.aws.checking : uiText.aws.loadingClusters} />
+      )}
       <h2>{uiText.aws.connectionsTitle}</h2>
       {message && (
         <div className={`notice ${messageIsError ? 'error' : ''}`}>
@@ -184,7 +188,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
 
       <section style={{ marginBottom: 24 }}>
         <h3>{uiText.aws.accountTitle}</h3>
-        {(awsAccount.isLoading || awaitingAwsAccount) && <div className="dim">{uiText.aws.checking}</div>}
+        {awaitingAwsAccount && <div className="dim">{uiText.aws.checking}</div>}
         {awsLoggedIn ? (
           <div className="notice">
             <div>
@@ -207,40 +211,40 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                 <div className="dim" style={{ marginBottom: 12 }}>{uiText.aws.configureDescription}</div>
                 <div style={{ display: 'grid', gap: 10 }}>
                   <select value={awsAuthMode} onChange={(e) => setAwsAuthMode(e.target.value as 'sso' | 'static' | 'role')}>
-                    <option value="sso">SSO</option>
-                    <option value="static">Access key + secret</option>
-                    <option value="role">IAM role</option>
+                    <option value="sso">{uiText.aws.sso}</option>
+                    <option value="static">{uiText.aws.accessKeySecret}</option>
+                    <option value="role">{uiText.aws.iamRole}</option>
                   </select>
-                  <input value={awsProfileName} onChange={(e) => setAwsProfileName(e.target.value)} placeholder="Profile name" />
+                  <input value={awsProfileName} onChange={(e) => setAwsProfileName(e.target.value)} placeholder={uiText.aws.profileName} />
                   {awsAuthMode === 'sso' && (
                     <>
-                      <input value={awsSsoSessionName} onChange={(e) => setAwsSsoSessionName(e.target.value)} placeholder="SSO session name" />
-                      <input value={awsSsoStartUrl} onChange={(e) => setAwsSsoStartUrl(e.target.value)} placeholder="SSO start URL" />
-                      <input value={awsSsoRegion} onChange={(e) => setAwsSsoRegion(e.target.value)} placeholder="SSO region" />
-                      <input value={awsAccountId} onChange={(e) => setAwsAccountId(e.target.value)} placeholder="Account ID" />
-                      <input value={awsRoleName} onChange={(e) => setAwsRoleName(e.target.value)} placeholder="Role name" />
+                      <input value={awsSsoSessionName} onChange={(e) => setAwsSsoSessionName(e.target.value)} placeholder={uiText.aws.ssoSessionName} />
+                      <input value={awsSsoStartUrl} onChange={(e) => setAwsSsoStartUrl(e.target.value)} placeholder={uiText.aws.ssoStartUrl} />
+                      <input value={awsSsoRegion} onChange={(e) => setAwsSsoRegion(e.target.value)} placeholder={uiText.aws.ssoRegion} />
+                      <input value={awsAccountId} onChange={(e) => setAwsAccountId(e.target.value)} placeholder={uiText.aws.accountId} />
+                      <input value={awsRoleName} onChange={(e) => setAwsRoleName(e.target.value)} placeholder={uiText.aws.roleName} />
                     </>
                   )}
                   {awsAuthMode === 'static' && (
                     <>
-                      <input value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} placeholder="Access key ID" />
-                      <input value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} placeholder="Secret access key" type="password" />
-                      <input value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} placeholder="Session token (optional)" />
+                      <input value={awsAccessKeyId} onChange={(e) => setAwsAccessKeyId(e.target.value)} placeholder={uiText.aws.accessKeyId} />
+                      <input value={awsSecretAccessKey} onChange={(e) => setAwsSecretAccessKey(e.target.value)} placeholder={uiText.aws.secretAccessKey} type="password" />
+                      <input value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} placeholder={uiText.aws.sessionTokenOptional} />
                     </>
                   )}
                   {awsAuthMode === 'role' && (
                     <>
-                      <input value={awsRoleArn} onChange={(e) => setAwsRoleArn(e.target.value)} placeholder="Role ARN" />
-                      <input value={awsSourceProfileName} onChange={(e) => setAwsSourceProfileName(e.target.value)} placeholder="Source profile name (optional)" />
+                      <input value={awsRoleArn} onChange={(e) => setAwsRoleArn(e.target.value)} placeholder={uiText.aws.roleArn} />
+                      <input value={awsSourceProfileName} onChange={(e) => setAwsSourceProfileName(e.target.value)} placeholder={uiText.aws.sourceProfileOptional} />
                       <select value={awsCredentialSource} onChange={(e) => setAwsCredentialSource(e.target.value as 'Environment' | 'Ec2InstanceMetadata' | 'EcsContainer')}>
                         <option value="Ec2InstanceMetadata">Ec2InstanceMetadata</option>
                         <option value="Environment">Environment</option>
                         <option value="EcsContainer">EcsContainer</option>
                       </select>
-                      <input value={awsRoleSessionName} onChange={(e) => setAwsRoleSessionName(e.target.value)} placeholder="Role session name" />
+                      <input value={awsRoleSessionName} onChange={(e) => setAwsRoleSessionName(e.target.value)} placeholder={uiText.aws.roleSessionName} />
                     </>
                   )}
-                  <input value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="Default AWS region" />
+                  <input value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder={uiText.aws.defaultRegion} />
                   <div>
                     <button
                       className="primary"
@@ -279,7 +283,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                         )
                       }
                     >
-                      {awsConfigureAuth.isPending ? 'Saving…' : uiText.aws.saveConnection}
+                      {awsConfigureAuth.isPending ? uiText.aws.saving : uiText.aws.saveConnection}
                     </button>
                   </div>
                 </div>
@@ -292,16 +296,16 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                 </button>
                 {awsLoginPending && (
                   <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
-                    <span className="azure-login-spinner" aria-label="AWS sign-in in progress" />
+                    <span className="azure-login-spinner" aria-label={uiText.aws.signInProgressLabel} />
                     <div>
                       <div>{uiText.aws.signInProgress}</div>
                       {awsDevice ? (
                         <div style={{ marginTop: 6 }}>
-                          Open{' '}
+                          {uiText.aws.open}{' '}
                           <a href={awsDevice.verificationUrl} target="_blank" rel="noreferrer">
                             {awsDevice.verificationUrl ?? 'the device login page'}
                           </a>{' '}
-                          and enter code <code className="inline">{awsDevice.userCode}</code>
+                          {uiText.aws.enterCode} <code className="inline">{awsDevice.userCode}</code>
                         </div>
                       ) : (
                         <div className="dim" style={{ marginTop: 6 }}>{awsPendingMessage}</div>
@@ -313,7 +317,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
               </>
             ) : (
               <div className="notice" style={{ marginTop: 10 }}>
-                AWS auth profile saved. Refresh the account listing to verify access.
+                {uiText.aws.profileSaved}
               </div>
             )}
           </>
@@ -323,7 +327,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
       {awsLoggedIn && (
         <section>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h3 style={{ margin: 0 }}>EKS Clusters</h3>
+            <h3 style={{ margin: 0 }}>{uiText.aws.eksClusters}</h3>
             <button onClick={() => eks.refetch()}>{uiText.aws.refresh}</button>
           </div>
           {eks.isLoading && <div className="dim">{uiText.aws.loadingClusters}</div>}
@@ -334,10 +338,10 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Region</th>
-                  <th>Version</th>
-                  <th>Status</th>
+                  <th>{uiText.aws.name}</th>
+                  <th>{uiText.aws.region}</th>
+                  <th>{uiText.aws.version}</th>
+                  <th>{uiText.aws.status}</th>
                   <th></th>
                 </tr>
               </thead>

@@ -16,6 +16,7 @@ import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { ApplicationSelector, type ApplicationOption } from './ApplicationSelector';
 import { uiText } from '../text';
+import { LoadingOverlay } from './LoadingOverlay';
 
 interface Props {
   scope: Scope;
@@ -540,7 +541,7 @@ export function TopologyPanel({ scope, namespaces }: Props) {
       <div className="toolbar toolbar-compact-top">
         <h2 style={{ margin: 0 }}>{uiText.topology.title}</h2>
         <div className="toolbar-actions">
-          {query.isFetching && <span className="tiny-spinner" aria-label="loading topology" />}
+          {query.isFetching && <span className="tiny-spinner" aria-label={uiText.topology.loadingTopology} />}
           <select
             className="namespace-dropdown-trigger"
             value={namespace}
@@ -568,7 +569,7 @@ export function TopologyPanel({ scope, namespaces }: Props) {
       {!namespace ? (
         <div className="empty">{uiText.topology.selectNamespaceToView}</div>
       ) : query.isLoading ? (
-        <div className="empty">{uiText.topology.loading}</div>
+        <LoadingOverlay message={uiText.topology.loading} />
       ) : selectedApps.length === 0 ? (
         <div className="empty">{uiText.topology.selectApplicationsToView}</div>
       ) : nodes.length === 0 ? (

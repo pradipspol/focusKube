@@ -4,6 +4,7 @@ import { api, type Scope } from '../api/client';
 import type { HelmRelease, K8sObject } from '../api/types';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { uiText } from '../text';
+import { LoadingOverlay } from './LoadingOverlay';
 import { NamespaceSelector } from './NamespaceSelector';
 
 type OverviewKind = 'pods' | 'deployments' | 'replicasets' | 'cronjobs' | 'daemonsets' | 'statefulsets' | 'jobs' | 'helmreleases';
@@ -160,6 +161,7 @@ export function ClusterOverviewPanel ({ scope, namespaces, selectedNamespaces, o
 
   return (
     <>
+      {overview.isLoading && <LoadingOverlay message={uiText.applications.loadingOverview} />}
       <div className="toolbar">
         <h2>{uiText.applications.clusterOverview}</h2>
         <span className="dim">{uiText.applications.clusterOverviewDescription}</span>

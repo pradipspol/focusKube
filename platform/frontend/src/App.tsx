@@ -163,7 +163,6 @@ const NAMESPACE_SELECTIONS_STORAGE_KEY = 'k8sExplorer.namespacesByContext';
 // Where the footer "Support" button points. Update to your team's support channel.
 const SUPPORT_URL = 'https://github.com/pradipspol/focusKube/issues';
 const THEME_STORAGE_KEY = 'k8sExplorer.theme';
-
 export type Theme = 'dark' | 'light' | 'contrast';
 
 function loadStoredTheme(): Theme {
@@ -333,7 +332,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('k8sExplorer.sidebarCollapsed') === 'true';
   });
-  const [sidebarActivity, setSidebarActivity] = useState<'explorer' | 'search'>('explorer');
+  const [sidebarActivity, setSidebarActivity] = useState<'explorer' | 'search' | 'settings'>('explorer');
   const [sidebarWidthVw, setSidebarWidthVw] = useState<number>(() => {
     const rawVw = Number(localStorage.getItem('k8sExplorer.sidebarWidthVw'));
     if (Number.isFinite(rawVw)) {
@@ -351,6 +350,7 @@ export default function App() {
   });
   const [createResourceOpen, setCreateResourceOpen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+
   const [terminalHeightPx, setTerminalHeightPx] = useState<number>(() => {
     const raw = Number(localStorage.getItem('k8sExplorer.terminalHeightPx'));
     if (Number.isFinite(raw)) return Math.min(520, Math.max(180, raw));
@@ -1177,10 +1177,10 @@ export default function App() {
         <div
           className="sidebar-resizer"
           onMouseDown={startSidebarResize}
-          title="Drag to resize sidebar"
+          title={uiText.common.resizeSidebar}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize sidebar"
+            aria-label={uiText.common.resizeSidebar}
         />
         <div className={`main ${tabs.length === 0 ? 'main-empty' : ''}`}>
             <div className="main-workspace">
@@ -1233,7 +1233,7 @@ export default function App() {
 
                 <div className="main-content-body">
                   {tabs.length === 0 && (
-                    <div className="main-empty-state" aria-label="empty workspace">
+                    <div className="main-empty-state" aria-label={uiText.common.emptyWorkspace}>
                       <img className="main-empty-brand-image" src={focusKubeBrand} alt="" aria-hidden="true" />
                       {/* <div className="main-empty-brand-wrap">
                         <div className="main-empty-brand">
@@ -1433,7 +1433,7 @@ export default function App() {
           title={uiText.common.refresh}
         >
           <span aria-hidden="true">🛟</span>
-          <span>Support</span>
+          <span>{uiText.common.support}</span>
         </a>
       </footer>
       {createResourceOpen && (
@@ -1447,9 +1447,9 @@ export default function App() {
         />
       )}
       {desktopDialog && (
-          <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>
+        <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>
           <pre className="desktop-help-content">{desktopDialog.content}</pre>
-          {desktopDialog.loading && <div className="dim">Loading...</div>}
+          {desktopDialog.loading && <div className="dim">{uiText.common.loadingPage}</div>}
         </Modal>
       )}
       {tabMenu && (

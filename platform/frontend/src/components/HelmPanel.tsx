@@ -7,6 +7,7 @@ import { Modal } from './Modal';
 import { DataTable } from './DataTable';
 import { DetailsModal } from './DetailsModal';
 import { NamespaceSelector } from './NamespaceSelector';
+import { LoadingOverlay } from './LoadingOverlay';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { HelmInstallModal } from './HelmInstallModal';
 import { HelmUpgradeModal } from './HelmUpgradeModal';
@@ -125,8 +126,8 @@ export function HelmPanel({
         <h2>{mode === 'releases' ? uiText.helm.releasesTitle : uiText.helm.chartsTitle}</h2>
         <span className="dim">
           {mode === 'releases'
-            ? `${visibleReleases.length} releases`
-            : `${showCatalog ? charts.data?.charts.length ?? 0 : usedCharts.length} charts`}
+            ? uiText.helm.releasesCount(visibleReleases.length)
+            : uiText.helm.chartsCount(showCatalog ? charts.data?.charts.length ?? 0 : usedCharts.length)}
         </span>
         {mode === 'charts' && (
           <label className="helm-catalog-toggle" title={uiText.helm.showAllInstallableCharts}>
@@ -136,7 +137,7 @@ export function HelmPanel({
         )}
         <div className="toolbar-actions">
           {(releases.isFetching || charts.isFetching) && (
-            <span className="tiny-spinner" aria-label="refreshing helm resources" />
+            <span className="tiny-spinner" aria-label={uiText.helm.refreshingResources} />
           )}
           <NamespaceSelector
             namespaces={namespaces}
@@ -169,12 +170,12 @@ export function HelmPanel({
       {mode === 'charts' && !showCatalog && releases.isError && (
         <div className="notice error">{(releases.error as Error).message}</div>
       )}
-      {mode === 'releases' && releases.isLoading && <div className="empty">{uiText.common.loading}</div>}
-      {mode === 'charts' && showCatalog && charts.isLoading && <div className="empty">{uiText.helm.loadingCharts}</div>}
-      {mode === 'charts' && !showCatalog && releases.isLoading && <div className="empty">{uiText.common.loading}</div>}
+      {mode === 'releases' && releases.isLoading && <LoadingOverlay message={uiText.common.loading} />}
+      {mode === 'charts' && showCatalog && charts.isLoading && <LoadingOverlay message={uiText.helm.loadingCharts} />}
+      {mode === 'charts' && !showCatalog && releases.isLoading && <LoadingOverlay message={uiText.common.loading} />}
 
       {mode === 'releases' && releases.data && visibleReleases.length === 0 && (
-        <div className="empty">No Helm releases found.</div>
+        <div className="empty">{uiText.helm.noReleasesFound}</div>
       )}
       {mode === 'charts' && showCatalog && charts.data && charts.data.charts.length === 0 && (
         <div className="empty">{uiText.helm.noChartsFound}</div>
@@ -190,15 +191,15 @@ export function HelmPanel({
           initialSortKey="name"
           onShowDetails={(r) =>
             setDetails({
-              title: `Release — ${r.name}`,
+              title: uiText.helm.releaseDetailsTitle(r.name),
               rows: [
-                ['Name', r.name],
-                ['Namespace', r.namespace],
-                ['Revision', r.revision],
-                ['Status', r.status],
-                ['Chart', r.chart],
-                ['App version', r.app_version],
-                ['Updated', r.updated ? new Date(r.updated).toLocaleString() : undefined],
+                [uiText.resourceDetail.name, r.name],
+                [uiText.applications.namespace, r.namespace],
+                [uiText.resourceDetail.revision, r.revision],
+                [uiText.applications.status, r.status],
+                [uiText.helm.chartsTitle, r.chart],
+                [uiText.helm.appVersion, r.app_version],
+                [uiText.helm.updated, r.updated ? new Date(r.updated).toLocaleString() : undefined],
               ],
             })
           }
@@ -382,17 +383,17 @@ function HelmHistoryModal({
 
   return (
     <Modal title={`History — ${release.name}`} onClose={onClose}>
-      {history.isLoading && <div className="dim">Loading…</div>}
+      {history.isLoading && <div className="dim">{uiText.helm.loadingHistory}</div>}
       {history.isError && <div className="notice error">{(history.error as Error).message}</div>}
       {rollback.isError && <div className="notice error">{(rollback.error as Error).message}</div>}
       {history.data && (
         <table>
           <thead>
             <tr>
-              <th>Rev</th>
-              <th>Status</th>
-              <th>Chart</th>
-              <th>Updated</th>
+              <th>{uiText.helm.revisionShort}</th>
+              <th>{uiText.applications.status}</th>
+              <th>{uiText.helm.chartsTitle}</th>
+              <th>{uiText.helm.updated}</th>
               <th></th>
             </tr>
           </thead>
@@ -440,7 +441,7 @@ function HelmValuesModal({
   });
   return (
     <Modal title={`Values — ${release.name}`} onClose={onClose}>
-      {values.isLoading && <div className="dim">Loading…</div>}
+      {values.isLoading && <div className="dim">{uiText.common.loading}</div>}
       {values.isError && <div className="notice error">{(values.error as Error).message}</div>}
       {values.data && (
         <pre className="mono" style={{ maxHeight: '50vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>
