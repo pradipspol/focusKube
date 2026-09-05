@@ -24,6 +24,7 @@ import focusKubeBrand from '../assets/focusKube.png';
 import {
   TerminalDock,
   type DockSession,
+  type OpenDeploymentLogsTerminalRequest,
   type OpenPodLogsTerminalRequest,
   type OpenPodTerminalRequest,
   type TerminalSession,
@@ -580,6 +581,26 @@ export default function App() {
       kind: 'logs',
       source: 'pod',
       title: namespace ? `${namespace} / ${podName} logs` : `${podName} logs`,
+      pod: request.pod,
+      context: request.context,
+      follow: request.follow,
+    };
+    setTerminalSessions((current) => [...current, session]);
+    setActiveTerminalSessionId(session.id);
+  };
+
+  const openDeploymentLogsTerminal = (request: OpenDeploymentLogsTerminalRequest) => {
+    setTerminalMinimized(false);
+    const index = terminalSessionCounterRef.current++;
+    const deploymentName = request.deployment.metadata?.name ?? 'Deployment';
+    const podName = request.pod.metadata?.name ?? 'Pod';
+    const namespace = request.pod.metadata?.namespace ?? request.deployment.metadata?.namespace;
+    const session: DockSession = {
+      id: `terminal:${index}`,
+      kind: 'logs',
+      source: 'deployment',
+      title: namespace ? `${namespace} / ${deploymentName} · ${podName} logs` : `${deploymentName} · ${podName} logs`,
+      deployment: request.deployment,
       pod: request.pod,
       context: request.context,
       follow: request.follow,
@@ -1269,6 +1290,7 @@ export default function App() {
                           onAzureAuthRequired={openAzureAuthPanel}
                           onOpenPodTerminal={openPodTerminal}
                           onOpenPodLogsTerminal={openPodLogsTerminal}
+                          onOpenDeploymentLogsTerminal={openDeploymentLogsTerminal}
                         />
                       </div>
                         );

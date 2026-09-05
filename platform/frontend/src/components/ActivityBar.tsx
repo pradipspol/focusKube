@@ -15,20 +15,23 @@ export function ActivityBar ({ active, onSelect }: Props) {
                     <path d="M4 9h16" />
                 </svg>
             </button>
-            <button className={`activity-bar-button ${active === 'search' ? 'active' : ''}`} title={uiText.activityBar.search} aria-label={uiText.activityBar.search} onClick={() => onSelect('search')}>
+            {/* <button className={`activity-bar-button ${active === 'search' ? 'active' : ''}`} title={uiText.activityBar.search} aria-label={uiText.activityBar.search} onClick={() => onSelect('search')}>
                 <span aria-hidden="true">⌕</span>
             </button>
-            <button className={`activity-bar-button ${active === 'settings' ? 'active' : ''}`} title={uiText.topbar.settings} aria-label={uiText.topbar.settings} onClick={() => onSelect('settings')}>
-                <span aria-hidden="true">⚙️</span>
-            </button>
+            <button className={`activity-bar-button ${active === 'settings' ? 'active' : ''}`} title={uiText.activityBar.settings} aria-label={uiText.activityBar.settings} onClick={() => onSelect('settings')}>
+                <svg className="activity-bar-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 8a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm0 6a2 2 0 1 1 2-2 2 2 0 0 1-2 2zm0-10a8 8 0 0 0-8 8 8 8 0 0 0 8 8 8 8 0 0 0 8-8 8 8 0 0 0-8-8zm0 14a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6z" />
+                </svg>
+            </button> */}
         </nav>
     );
 }
 
 export function ActivityPanel ({ contexts, onContextChange, onOpenExplorer }: { contexts: KubeContext[]; onContextChange: (name: string) => void; onOpenExplorer: () => void }) {
+    
     return (
         <div className="activity-panel">
-            <div className="activity-panel-header">{uiText.activityBar.search}</div>
+            <div className="activity-panel-header">{uiText.activityBar.settings}</div>
             <div className="activity-search-results">
                 {/* {contexts.map((context) => (
           <button key={`${context.source?.provider ?? 'context'}:${context.name}`} className="activity-search-result" onClick={() => { onContextChange(context.name); onOpenExplorer(); }}>

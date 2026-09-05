@@ -6,12 +6,13 @@ import { api, getDesktopEmail, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { getMetricsWorker } from '../utils/workerRuntime';
-import { LogsViewer } from './LogsViewer';
+import { useWatchedResourceList } from '../hooks/useWatchedResourceList';
+import { LogsPanel } from './LogsPanel';
 import { ExecTerminal } from './ExecTerminal';
 import { DeploymentActions } from './DeploymentActions';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './ToastViewport';
-import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
+import type { OpenDeploymentLogsTerminalRequest, OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 import { TreeDisclosure } from './TreeDisclosure';
 import { uiText } from '../text';
@@ -51,9 +52,20 @@ interface Props {
   onChanged: () => void;
   onOpenPodTerminal?: (request: OpenPodTerminalRequest) => void;
   onOpenPodLogsTerminal?: (request: OpenPodLogsTerminalRequest) => void;
+  onOpenDeploymentLogsTerminal?: (request: OpenDeploymentLogsTerminalRequest) => void;
 }
 
-export function ResourceDetail({ plural, object, scope, initialTab, onClose, onChanged, onOpenPodTerminal, onOpenPodLogsTerminal }: Props) {
+export function ResourceDetail({
+  plural,
+  object,
+  scope,
+  initialTab,
+  onClose,
+  onChanged,
+  onOpenPodTerminal,
+  onOpenPodLogsTerminal,
+  onOpenDeploymentLogsTerminal,
+}: Props) {
   const name = object.metadata!.name!;
   const ns = object.metadata?.namespace;
   const opScope: Scope = { ...scope, namespace: ns };
@@ -92,6 +104,7 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
 
   const tabs = useMemo(() => {
     const t: string[] = ['yaml'];
+    if (plural === 'deployments') t.unshift('logs');
     if (plural === 'deployments') t.unshift('actions');
     if (plural === 'deployments') t.unshift('overview');
     if (plural === 'pods') t.unshift('overview');
@@ -211,10 +224,19 @@ export function ResourceDetail({ plural, object, scope, initialTab, onClose, onC
           <YamlTab plural={plural} name={name} scope={opScope} onSaved={onChanged} />
         )}
         {tab === 'actions' && plural === 'deployments' && (
-          <DeploymentActions deployment={currentObject} scope={scope} onChanged={onChanged} />
+          <DeploymentActions
+            deployment={currentObject}
+            scope={scope}
+            onChanged={onChanged}
+            onOpenLogs={() => setTab('logs')}
+          />
         )}
-        {tab === 'logs' && (
-          <LogsViewer
+        {tab === 'logs' && plural === 'deployments' && (
+          <LogsPanel kind="deployment" deployment={currentObject} context={scope.context} />
+        )}
+        {tab === 'logs' && plural === 'pods' && (
+          <LogsPanel
+            kind="pod"
             pod={currentObject}
             context={scope.context}
             onOpenInTerminal={
@@ -575,18 +597,37 @@ function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; s
   const ownerReferences = Array.isArray((deployment.metadata as any)?.ownerReferences)
     ? (deployment.metadata as any).ownerReferences
     : [];
+  const deploymentNamespace = deployment.metadata?.namespace;
+  const deploymentScope: Scope = { ...scope, namespace: deploymentNamespace };
+  const overviewEnabled = !!scope.context && !!deploymentNamespace;
+
+  // Pods and events for this deployment are listed once and then kept fresh by
+  // the same watch-worker websocket ResourceTable uses elsewhere in the app,
+  // instead of each polling with its own repeating GET.
+  const podsQuery = useWatchedResourceList('deployment-overview', 'pods', deploymentScope, overviewEnabled);
+  const eventsQuery = useWatchedResourceList('deployment-overview', 'events', deploymentScope, overviewEnabled);
+
+  const relatedPods = useMemo(() => {
+    if (Object.keys(selector).length === 0) return [];
+    return (podsQuery.data?.items ?? []).filter((pod) => {
+      const podLabels = pod.metadata?.labels ?? {};
+      return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
+    });
+  }, [podsQuery.data, selector]);
+
+  // Metrics-server has no watch/streaming API, so this one still has to poll.
   const deploymentDataQuery = useQuery({
-    queryKey: ['deployment-overview-data', scope.context, deployment.metadata?.namespace, deployment.metadata?.name],
-    enabled: !!scope.context && !!deployment.metadata?.namespace && Object.keys(selector).length > 0,
+    queryKey: [
+      'deployment-overview-data',
+      scope.context,
+      deploymentNamespace,
+      deployment.metadata?.name,
+      relatedPods.map((pod) => pod.metadata?.name).join(','),
+    ],
+    enabled: overviewEnabled && Object.keys(selector).length > 0 && podsQuery.isSuccess,
     refetchInterval: 15_000,
     queryFn: async () => {
-      const deploymentScope = { ...scope, namespace: deployment.metadata?.namespace };
-      const podsResponse = await api.listResource('pods', deploymentScope);
-      const pods = (podsResponse.items ?? []).filter((pod) => {
-        const podLabels = pod.metadata?.labels ?? {};
-        return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
-      });
-      const podTargets = pods.flatMap((pod) => pod.metadata?.name
+      const podTargets = relatedPods.flatMap((pod) => pod.metadata?.name
         ? [{ name: pod.metadata.name, namespace: pod.metadata.namespace }]
         : []);
       const metricsResponse = podTargets.length
@@ -604,40 +645,24 @@ function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; s
       return { memoryByPod, sampledAt };
     },
   });
-  const deploymentEventsQuery = useQuery({
-    queryKey: ['deployment-events', scope.context, deployment.metadata?.namespace, deployment.metadata?.name, deployment.metadata?.uid],
-    enabled: !!scope.context && !!deployment.metadata?.namespace,
-    refetchInterval: 15_000,
-    queryFn: async () => {
-      const deploymentScope = { ...scope, namespace: deployment.metadata?.namespace };
-      const [podsResponse, eventsResponse] = await Promise.all([
-        api.listResource('pods', deploymentScope),
-        api.listResource('events', deploymentScope),
-      ]);
-      const relatedPods = (podsResponse.items ?? []).filter((pod) => {
-        if (Object.keys(selector).length === 0) return false;
-        const podLabels = pod.metadata?.labels ?? {};
-        return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
-      });
-      const podNames = new Set(relatedPods.map((pod) => pod.metadata?.name).filter(Boolean));
-      const podUids = new Set(relatedPods.map((pod) => pod.metadata?.uid).filter(Boolean));
-      return (eventsResponse.items ?? [])
-        .filter((event) => {
-          const involved = (event as any).involvedObject ?? (event as any).regarding;
-          const isDeployment = involved?.uid === deployment.metadata?.uid
-            || (involved?.kind === 'Deployment' && involved?.name === deployment.metadata?.name);
-          const isPod = podUids.has(involved?.uid) || (involved?.kind === 'Pod' && podNames.has(involved?.name));
-          return isDeployment || isPod;
-        })
-        .sort((a, b) => {
-          const aTime = new Date((a.lastTimestamp ?? a.eventTime ?? a.metadata?.creationTimestamp ?? '') as string).getTime();
-          const bTime = new Date((b.lastTimestamp ?? b.eventTime ?? b.metadata?.creationTimestamp ?? '') as string).getTime();
-          return bTime - aTime;
-        });
-    },
-  });
   const memoryByPod = deploymentDataQuery.data?.memoryByPod ?? [];
-  const deploymentEvents = deploymentEventsQuery.data ?? [];
+  const deploymentEvents = useMemo(() => {
+    const podNames = new Set(relatedPods.map((pod) => pod.metadata?.name).filter(Boolean));
+    const podUids = new Set(relatedPods.map((pod) => pod.metadata?.uid).filter(Boolean));
+    return (eventsQuery.data?.items ?? [])
+      .filter((event) => {
+        const involved = (event as any).involvedObject ?? (event as any).regarding;
+        const isDeployment = involved?.uid === deployment.metadata?.uid
+          || (involved?.kind === 'Deployment' && involved?.name === deployment.metadata?.name);
+        const isPod = podUids.has(involved?.uid) || (involved?.kind === 'Pod' && podNames.has(involved?.name));
+        return isDeployment || isPod;
+      })
+      .sort((a, b) => {
+        const aTime = new Date((a.lastTimestamp ?? a.eventTime ?? a.metadata?.creationTimestamp ?? '') as string).getTime();
+        const bTime = new Date((b.lastTimestamp ?? b.eventTime ?? b.metadata?.creationTimestamp ?? '') as string).getTime();
+        return bTime - aTime;
+      });
+  }, [eventsQuery.data, relatedPods, deployment.metadata?.uid, deployment.metadata?.name]);
   const totalCpuMillicores = memoryByPod.reduce((sum, pod) => sum + (pod.cpuMillicores ?? 0), 0);
   const totalMemoryBytes = memoryByPod.reduce((sum, pod) => sum + (pod.memoryBytes ?? 0), 0);
   const reportingPods = memoryByPod.filter((pod) => pod.memoryBytes !== undefined).length;
@@ -880,9 +905,9 @@ function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; s
 
       <div className="pod-section">
         <div className="pod-section-header"><h4>{uiText.resourceDetail.events}</h4></div>
-        {deploymentEventsQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
-        {deploymentEventsQuery.isError && <div className="metrics-error">{(deploymentEventsQuery.error as Error).message}</div>}
-        {!deploymentEventsQuery.isLoading && !deploymentEventsQuery.isError && deploymentEvents.length === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
+        {eventsQuery.isLoading && <div className="dim">{uiText.resourceDetail.loadingEvents}</div>}
+        {eventsQuery.isError && <div className="metrics-error">{(eventsQuery.error as Error).message}</div>}
+        {!eventsQuery.isLoading && !eventsQuery.isError && deploymentEvents.length === 0 && <div className="dim">{uiText.resourceDetail.noEventsFound}</div>}
         {deploymentEvents.length > 0 && (
           <div className="pod-properties-table">
             {deploymentEvents.slice(0, 20).map((event: any, index) => (

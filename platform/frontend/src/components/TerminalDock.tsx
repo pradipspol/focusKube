@@ -38,7 +38,14 @@ export interface OpenPodLogsTerminalRequest {
   follow?: boolean;
 }
 
-export type LogsTerminalSession = {
+export interface OpenDeploymentLogsTerminalRequest {
+  deployment: K8sObject;
+  pod: K8sObject;
+  context?: string;
+  follow?: boolean;
+}
+
+export type PodLogsTerminalSession = {
   id: string;
   kind: 'logs';
   title: string;
@@ -48,7 +55,20 @@ export type LogsTerminalSession = {
   follow?: boolean;
 };
 
-export type DockSession = TerminalSession | LogsTerminalSession;
+export type DeploymentLogsTerminalSession = {
+  id: string;
+  kind: 'logs';
+  title: string;
+  source: 'deployment';
+  deployment: K8sObject;
+  pod: K8sObject;
+  context?: string;
+  follow?: boolean;
+};
+
+export type LogsTerminalSession = PodLogsTerminalSession | DeploymentLogsTerminalSession;
+
+export type DockSession = TerminalSession | PodLogsTerminalSession | DeploymentLogsTerminalSession;
 
 interface Props {
   scope: Scope;
@@ -254,7 +274,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
   };
 
   if (session.kind === 'logs') {
-    return <DockedPodLogsSessionPane session={session} active={active} />;
+    return <DockedPodLogsSessionPane session={session as LogsTerminalSession} active={active} />;
   }
 
   useEffect(() => {
@@ -649,7 +669,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
   );
 }
 
-function DockedPodLogsSessionPane({ session, active }: { session: Extract<LogsTerminalSession, { source: 'pod' }>; active: boolean }) {
+function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSession; active: boolean }) {
   const containers = podContainers(session.pod);
   const [container, setContainer] = useState(containers[0] ?? '');
   const [follow, setFollow] = useState(session.follow ?? true);

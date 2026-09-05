@@ -87,6 +87,7 @@
     label: 'Activity bar',
     explorer: 'Explorer',
     search: 'Search',
+    settings: 'Settings',
     noClustersFound: 'No clusters found.',
   },
   minikube: {
@@ -297,6 +298,7 @@
     restartDeploymentAction: 'Restart deployment',
     triggerRolloutRestart: 'Trigger rollout restart',
     openDeploymentOverview: 'Open deployment overview',
+    openDeploymentLogs: 'Open deployment logs',
     openDeploymentActions: 'Open deployment actions',
     openResourceKindOverview: (kind: string) => `Open ${kind} overview`,
     editYamlTitle: 'Edit resource YAML',

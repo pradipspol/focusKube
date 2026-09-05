@@ -102,11 +102,15 @@ export const useMinikubeHealth = () => {
   });
 };
 
-export const useMinikubeStatus = (clusterName: string = 'minikube') => {
+// `poll` defaults to true so callers that only mount while minikube is actually
+// in view (e.g. the cluster setup page) keep refreshing without extra plumbing.
+// The sidebar, which is mounted at all times, passes false until the user
+// actually engages with minikube so this doesn't poll forever in the background.
+export const useMinikubeStatus = (clusterName: string = 'minikube', poll: boolean = true) => {
   return useQuery({
     queryKey: ['minikube', 'status', clusterName],
     queryFn: () => minikubeApi.getStatus(clusterName),
-    refetchInterval: 10000, // 10 seconds
+    refetchInterval: poll ? 10000 : false, // 10 seconds while relevant, single fetch otherwise
   });
 };
 

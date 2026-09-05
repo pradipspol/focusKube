@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
@@ -10,9 +10,10 @@ interface Props {
   deployment: K8sObject;
   scope: Scope;
   onChanged: () => void;
+  onOpenLogs?: () => void;
 }
 
-export function DeploymentActions({ deployment, scope, onChanged }: Props) {
+export function DeploymentActions({ deployment, scope, onChanged, onOpenLogs }: Props) {
   const qc = useQueryClient();
   const { canWrite } = usePermissions();
   const confirm = useConfirm();
@@ -21,6 +22,35 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
   const opScope: Scope = { ...scope, namespace: ns };
   const [replicas, setReplicas] = useState<number>(deployment.spec?.replicas ?? 1);
   const [message, setMessage] = useState<string>('');
+  const [selectedPodName, setSelectedPodName] = useState<string>('');
+
+  useEffect(() => {
+    setSelectedPodName('');
+  }, [name, ns]);
+
+  const deploymentPods = useQuery({
+    queryKey: ['deployment-pods', name, ns, scope.context],
+    queryFn: async () => {
+      const deploymentScope: Scope = { ...scope, namespace: ns };
+      const selector = deployment.spec?.selector?.matchLabels ?? {};
+      const response = await api.listResource('pods', deploymentScope);
+      return (response.items ?? []).filter((pod) => {
+        const podLabels = pod.metadata?.labels ?? {};
+        return Object.entries(selector).every(([key, value]) => podLabels[key] === String(value));
+      });
+    },
+    enabled: !!ns,
+    refetchInterval: 15_000,
+  });
+
+  const pods = deploymentPods.data ?? [];
+  const activePod = pods.find((pod) => pod.metadata?.name === selectedPodName) ?? pods[0];
+
+  useEffect(() => {
+    if (!activePod?.metadata?.name) return;
+    if (selectedPodName === activePod.metadata.name) return;
+    setSelectedPodName(activePod.metadata.name);
+  }, [activePod?.metadata?.name, selectedPodName]);
 
   const refresh = () => {
     onChanged();
@@ -69,6 +99,14 @@ export function DeploymentActions({ deployment, scope, onChanged }: Props) {
     <div style={{ padding: 14, overflow: 'auto' }}>
       {message && <div className="notice">{message}</div>}
       {!canWrite && <div className="notice">{uiText.deployment.readOnlyNotice}</div>}
+
+      <div className="actions-bar" style={{ marginBottom: 14 }}>
+        {onOpenLogs && (
+          <button className="drawer-action-icon" type="button" title={uiText.resourceDetail.logs} onClick={onOpenLogs}>
+            ≣
+          </button>
+        )}
+      </div>
 
       {canWrite && (
         <>

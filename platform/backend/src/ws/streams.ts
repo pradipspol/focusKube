@@ -119,6 +119,7 @@ function params(req: any) {
     namespace: q.get('namespace') || 'default',
     pod: q.get('pod') || '',
     container: q.get('container') || undefined,
+    deployment: q.get('deployment') || '',
     follow: q.get('follow') !== 'false',
     tailLines: parseInt(q.get('tailLines') || '200', 10),
     command: q.get('command') || '/bin/sh',
@@ -155,14 +156,40 @@ function wsWritable(ws: WebSocket): Writable {
   });
 }
 
+function matchesDeploymentSelector(selector: any, podLabels: Record<string, unknown>): boolean {
+  const matchLabels = selector?.matchLabels ?? {};
+  const matchExpressions = Array.isArray(selector?.matchExpressions) ? selector.matchExpressions : [];
+
+  const labelsMatch = Object.entries(matchLabels).every(([key, value]) => podLabels[key] === String(value));
+  if (!labelsMatch) return false;
+
+  return matchExpressions.every((expression: any) => {
+    const key = String(expression?.key ?? '');
+    const values = Array.isArray(expression?.values) ? expression.values.map((value: unknown) => String(value)) : [];
+    const labelValue = podLabels[key];
+    switch (expression?.operator) {
+      case 'In':
+        return labelValue !== undefined && values.includes(String(labelValue));
+      case 'NotIn':
+        return labelValue === undefined || !values.includes(String(labelValue));
+      case 'Exists':
+        return labelValue !== undefined;
+      case 'DoesNotExist':
+        return labelValue === undefined;
+      default:
+        return false;
+    }
+  });
+}
+
 async function handleLogs(ws: WebSocket, req: any) {
   const p = params(req);
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
   const context = p.context || session.activeContext || undefined;
   const azureConfigDir = await activeSessionAzureConfigDir(session, context);
-  if (!p.pod) {
-    ws.send('error: pod is required');
+  if (!p.pod && !p.deployment) {
+    ws.send('error: pod or deployment is required');
     ws.close();
     return;
   }
@@ -183,21 +210,41 @@ async function handleLogs(ws: WebSocket, req: any) {
     ws.close();
     return;
   }
-  let log: k8s.Log;
+  let kubeConfig: k8s.KubeConfig;
   try {
-    log = new k8s.Log(
-      await kube.rawConfig(context, {
-        kubeconfigPath,
-        fallbackContext: session.activeContext,
-        azureConfigDir,
-      }),
-    );
+    kubeConfig = await kube.rawConfig(context, {
+      kubeconfigPath,
+      fallbackContext: session.activeContext,
+      azureConfigDir,
+    });
   } catch (err) {
     ws.send(`error: ${(err as Error).message}`);
     ws.close();
     return;
   }
+  const log = new k8s.Log(kubeConfig);
   const stream = wsWritable(ws);
+
+  if (p.deployment) {
+    await handleDeploymentLogs(ws, log, stream, {
+      namespace: p.namespace,
+      deployment: p.deployment,
+      container: p.container ?? '',
+      follow: p.follow,
+      tailLines: Number.isFinite(p.tailLines) ? p.tailLines : 200,
+      timestamps: p.timestamps,
+      context,
+      kubeConfig,
+    });
+    return;
+  }
+
+  if (!p.pod) {
+    ws.send('error: pod is required');
+    ws.close();
+    return;
+  }
+
   let aborter: any;
   try {
     aborter = await log.log(p.namespace, p.pod, p.container ?? '', stream, {
@@ -213,6 +260,86 @@ async function handleLogs(ws: WebSocket, req: any) {
   }
   ws.on('close', () => abort(aborter));
   ws.on('error', () => abort(aborter));
+}
+
+async function handleDeploymentLogs(
+  ws: WebSocket,
+  log: k8s.Log,
+  stream: Writable,
+  params: {
+    namespace: string;
+    deployment: string;
+    container: string;
+    follow: boolean;
+    tailLines: number;
+    timestamps: boolean;
+    context?: string;
+    kubeConfig: k8s.KubeConfig;
+  },
+) {
+  const { namespace, deployment, container, follow, tailLines, timestamps, context, kubeConfig } = params;
+  const podsApi = k8s.KubernetesObjectApi.makeApiClient(kubeConfig);
+  let deploymentObj: any;
+  try {
+    deploymentObj = await podsApi.read({ apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: deployment, namespace } });
+  } catch (err) {
+    ws.send(`error: ${await describeK8sError(err, { context })}`);
+    ws.close();
+    return;
+  }
+
+  const selector = deploymentObj.body?.spec?.selector?.matchLabels ?? {};
+  let podList: any[] = [];
+  try {
+    const listRes = await podsApi.list('v1', 'Pod', namespace);
+    podList = (listRes.body as any)?.items ?? [];
+  } catch (err) {
+    ws.send(`error: ${await describeK8sError(err, { context })}`);
+    ws.close();
+    return;
+  }
+  const matchingPods = podList.filter((pod) => {
+    const podLabels = pod.metadata?.labels ?? {};
+    return matchesDeploymentSelector(selector, podLabels);
+  });
+
+  if (matchingPods.length === 0) {
+    ws.send('error: no pods matched this deployment selector');
+    ws.close();
+    return;
+  }
+
+  const aborters: any[] = [];
+  try {
+    const startedStreams = await Promise.all(
+      matchingPods
+        .map(async (pod) => {
+          const podName = pod.metadata?.name;
+          if (!podName) return null;
+          const containers = pod.spec?.containers ?? [];
+          const hasContainer = !container || containers.some((candidate: any) => candidate?.name === container);
+          if (!hasContainer) {
+            return null;
+          }
+          const aborter = await log.log(namespace, podName, container, stream, {
+            follow,
+            tailLines,
+            pretty: false,
+            timestamps,
+          });
+          return aborter;
+        }),
+    );
+    const activeStreams = startedStreams.filter(Boolean) as any[];
+    aborters.push(...activeStreams);
+  } catch (err) {
+    ws.send(`error: ${await describeK8sError(err, { context })}`);
+    ws.close();
+    return;
+  }
+
+  ws.on('close', () => aborters.forEach((aborter) => abort(aborter)));
+  ws.on('error', () => aborters.forEach((aborter) => abort(aborter)));
 }
 
 async function handleExec(ws: WebSocket, req: any) {

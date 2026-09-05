@@ -18,6 +18,7 @@ import { SidebarContextMenu } from './SidebarContextMenu';
 
 const CLOUD_ACCOUNT_MAX_RETRIES = 5;
 const CLOUD_ACCOUNT_RETRY_DELAY_MS = 1200;
+const MINIKUBE_POLL_WINDOW_MS = 60_000;
 
 type LiveAksResourceGroupNode = {
   name: string;
@@ -208,8 +209,29 @@ export function SidebarProviderSources ({
   const localAzureAuthFailed = !localAzureAuthenticated && localAzureAuthStatus === 'failed';
   const hasAzureCloudAccount = azureSignedIn || azureAccounts.length > 0;
   const hasAwsCloudAccount = awsSignedIn || !!awsAccountNode;
-  const { data: minikubeStatus } = useMinikubeStatus('minikube');
+  // Poll minikube status for up to a minute after a relevant trigger - initial
+  // sidebar load, or the user trying to open the minikube cluster - stopping
+  // early once it reports running. Once loaded there's nothing left to detect,
+  // so this must not keep polling for as long as the minikube tab stays active.
+  // The cluster setup page (MinikubePanel) has its own status query and keeps
+  // polling for the whole time it's open, independent of this window.
+  const [minikubePollDeadline, setMinikubePollDeadline] = useState<number | null>(() => Date.now() + MINIKUBE_POLL_WINDOW_MS);
+  const isMinikubeSetupPageOpen = view?.type === 'minikube';
+  const withinMinikubePollWindow = minikubePollDeadline !== null && Date.now() < minikubePollDeadline;
+  const pollMinikubeStatus = isMinikubeSetupPageOpen || withinMinikubePollWindow;
+  const startMinikubePollWindow = () => setMinikubePollDeadline(Date.now() + MINIKUBE_POLL_WINDOW_MS);
+  const { data: minikubeStatus } = useMinikubeStatus('minikube', pollMinikubeStatus);
   const isMinikubeRunning = minikubeStatus?.status === 'running';
+
+  useEffect(() => {
+    if (!withinMinikubePollWindow) return;
+    if (isMinikubeRunning) {
+      setMinikubePollDeadline(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setMinikubePollDeadline(null), minikubePollDeadline! - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [withinMinikubePollWindow, isMinikubeRunning, minikubePollDeadline]);
   const minikubeExpanded = !isGroupCollapsed('minikubeRoot');
   const minikubeResourcesExpanded = !isGroupCollapsed('minikubeResourcesRoot');
 
@@ -1499,6 +1521,10 @@ export function SidebarProviderSources ({
                 className={`nav-item context-item ${activeTabOriginSource === 'minikube' ? 'active' : ''} ${!isMinikubeRunning ? 'disabled' : ''}`}
                 title={isMinikubeRunning ? 'Open Minikube resource explorer' : 'Start Minikube to expand resources'}
                 onClick={async () => {
+                  // The user is trying to load minikube - (re)start the bounded
+                  // status-poll window so a not-yet-running cluster gets picked
+                  // up without polling indefinitely afterwards.
+                  startMinikubePollWindow();
                   if (!isMinikubeRunning) {
                     if (!isGroupCollapsed('minikubeResourcesRoot')) {
                       toggleGroup('minikubeResourcesRoot');

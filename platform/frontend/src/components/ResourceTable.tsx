@@ -13,6 +13,7 @@ import { ResourceDetail } from './ResourceDetail';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
 import { useConfirm, type ConfirmFn } from './ConfirmDialog';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
+import type { OpenDeploymentLogsTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
 
 interface Props {
@@ -30,6 +31,7 @@ interface Props {
   onAzureAuthRequired?: (source?: 'local' | 'cloud') => void;
   onOpenPodTerminal?: (request: OpenPodTerminalRequest) => void;
   onOpenPodLogsTerminal?: (request: OpenPodLogsTerminalRequest) => void;
+  onOpenDeploymentLogsTerminal?: (request: OpenDeploymentLogsTerminalRequest) => void;
 }
 
 const HAS_STATUS = ['pods', 'deployments', 'statefulsets', 'daemonsets', 'replicasets', 'jobs'];
@@ -297,12 +299,12 @@ function persistVisibleColumns(plural: string, next: string[]) {
 
 const QUICK_ACTION_KEYS_BY_PLURAL: Record<string, string[]> = {
   pods: ['pods.logs', 'pods.shell', 'common.editYaml'],
-  deployments: ['deploy.restart', 'deploy.overview', 'deploy.actions', 'common.editYaml'],
+  deployments: ['deploy.restart', 'deploy.logs', 'deploy.overview', 'deploy.actions', 'common.editYaml'],
 };
 
 const MENU_ACTION_KEYS_BY_PLURAL: Record<string, string[]> = {
   pods: ['pods.logs', 'pods.shell', 'common.editYaml', 'common.delete'],
-  deployments: ['deploy.restart', 'deploy.overview', 'deploy.actions', 'common.editYaml', 'common.delete'],
+  deployments: ['deploy.restart', 'deploy.logs', 'deploy.overview', 'deploy.actions', 'common.editYaml', 'common.delete'],
   daemonsets: ['workload.overview', 'common.editYaml', 'common.delete'],
   statefulsets: ['workload.overview', 'common.editYaml', 'common.delete'],
   replicasets: ['workload.overview', 'common.editYaml', 'common.delete'],
@@ -329,6 +331,8 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
       };
     case 'deploy.overview':
       return { label: uiText.resourceDetail.overview, title: uiText.resource.openDeploymentOverview, quickIcon: '◫', onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }) };
+    case 'deploy.logs':
+      return { label: uiText.resourceDetail.logs, title: uiText.resource.openDeploymentLogs, quickIcon: '≣', onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
     case 'deploy.actions':
       return { label: uiText.resourceDetail.actionsTab, title: uiText.resource.openDeploymentActions, quickIcon: '⚙', onClick: () => ctx.setSelected({ obj: o, tab: 'actions' }) };
     case 'workload.overview':
@@ -429,6 +433,7 @@ export function ResourceTable({
   onAzureAuthRequired,
   onOpenPodTerminal,
   onOpenPodLogsTerminal,
+  onOpenDeploymentLogsTerminal,
 }: Props) {
   const qc = useQueryClient();
   const { canWrite, canDelete } = usePermissions();
@@ -518,7 +523,11 @@ export function ResourceTable({
     retry: false,
     // Cluster-scoped resources (namespaces, nodes, storage classes, etc.) change
     // rarely and aren't worth polling — load once and let the user hit Refresh.
-    refetchOnWindowFocus: !isClusterScoped,
+    // Live-watch kinds (pods, deployments, ...) are already kept current by the
+    // websocket worker below once it's live, so refetching on focus would just
+    // repeat a GET the worker has already covered — only do it as a safety net
+    // while the watch itself isn't live yet.
+    refetchOnWindowFocus: isClusterScoped ? false : LIVE_WATCH_PLURALS.has(plural) ? watchState !== 'live' : true,
     // Kinds outside the live-watch allowlist (configmaps, secrets, endpoints, etc.)
     // fetch once and rely on the user hitting Refresh, same as cluster-scoped kinds.
     refetchInterval:
@@ -1355,7 +1364,7 @@ export function ResourceTable({
               const owner = ownerRefs[0];
               const rowKey = o.metadata?.uid ?? `${o.metadata?.namespace}/${o.metadata?.name}`;
               const podKey = podRowKey(o);
-              const podMetric = podMetrics.data?.get(rowKey);
+              const podMetric = podMetrics.data?.get(`${o.metadata?.namespace ?? ''}/${o.metadata?.name ?? ''}`);
               const cpuCell = formatPodCpuCell(podMetric?.cpuMillicores, o);
               const memoryCell = formatPodMemoryCell(podMetric?.memoryBytes, o);
               const containerCount = (o.spec?.containers ?? []).length;
@@ -1616,6 +1625,7 @@ export function ResourceTable({
           onChanged={() => qc.invalidateQueries({ queryKey })}
           onOpenPodTerminal={onOpenPodTerminal}
           onOpenPodLogsTerminal={onOpenPodLogsTerminal}
+          onOpenDeploymentLogsTerminal={onOpenDeploymentLogsTerminal}
         />
       )}
     </>
