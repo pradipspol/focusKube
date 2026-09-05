@@ -4,6 +4,7 @@ import { api, ApiError, setDesktopEmail } from './api/client';
 import type { AzureScope, ContextScope } from './api/client';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
+import { ActivityBar, ActivityPanel } from './components/ActivityBar';
 import { ResourceTable } from './components/ResourceTable';
 import { HelmPanel } from './components/HelmPanel';
 import { AzurePanel } from './components/AzurePanel';
@@ -19,6 +20,7 @@ import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
 import { uiText } from './text';
+import focusKubeBrand from '../assets/focusKube.png';
 import {
   TerminalDock,
   type DockSession,
@@ -84,6 +86,23 @@ function resolveScopeFromContext(ctx?: KubeContext): ContextScope | null {
   if (ctx.source.provider === 'aks') return 'azure';
   if (ctx.source.provider === 'eks') return 'aws';
   return null;
+}
+
+/**
+ * Origin (source + kubeconfig) for a context entry, in the shape `activeContextOrigin` needs.
+ * `context` and `activeContextOrigin` must always be set together - anywhere that updates
+ * `context` alone leaves origin-based lookups (like the namespace list's scope) resolving
+ * against whatever source was active before, not the context that's now selected.
+ */
+function originFromContextEntry(
+  ctx: KubeContext | undefined,
+  localKubeconfigs: ContextsResponse['localKubeconfigs'],
+): { source: 'aks' | 'eks' | 'local' | 'minikube'; kubeconfigId?: string } | null {
+  const provider = ctx?.source?.provider;
+  if (!provider) return null;
+  const kubeconfigId =
+    provider === 'local' ? localKubeconfigs?.find((cfg) => cfg.contexts.includes(ctx.name))?.id : undefined;
+  return { source: provider, kubeconfigId };
 }
 
 function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string, azureSource?: AzureScope): string {
@@ -314,6 +333,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('k8sExplorer.sidebarCollapsed') === 'true';
   });
+  const [sidebarActivity, setSidebarActivity] = useState<'explorer' | 'search'>('explorer');
   const [sidebarWidthVw, setSidebarWidthVw] = useState<number>(() => {
     const rawVw = Number(localStorage.getItem('k8sExplorer.sidebarWidthVw'));
     if (Number.isFinite(rawVw)) {
@@ -440,18 +460,10 @@ export default function App() {
   const resolveScopeSource = async (contextName?: string): Promise<ContextScope | null> => {
     if (!contextName) return null;
 
-    const sourceFromContext = (ctx?: KubeContext): ContextScope | null => {
-      if (!ctx?.source?.provider) return null;
-      if (ctx.source.provider === 'local') return 'local';
-      if (ctx.source.provider === 'aks') return 'azure';
-      if (ctx.source.provider === 'eks') return 'aws';
-      return null;
-    };
-
     const resolveFrom = (payload?: ContextsResponse): ContextScope | null => {
       if (!payload) return null;
       const ctx = payload.contexts.find((entry) => entry.name === contextName);
-      return sourceFromContext(ctx);
+      return resolveScopeFromContext(ctx);
     };
 
     const fromCache = resolveFrom(contextsQuery.data);
@@ -471,12 +483,7 @@ export default function App() {
     // Prefer the explicit origin recorded when this context was activated — falling
     // back to a name-only lookup is ambiguous whenever two sources share a context name.
     if (activeContextOrigin?.source) return contextScopeFromOriginSource(activeContextOrigin.source) ?? null;
-    const ctx = contextsQuery.data?.contexts.find((entry) => entry.name === context);
-    if (!ctx?.source?.provider) return null;
-    if (ctx.source.provider === 'local') return 'local';
-    if (ctx.source.provider === 'aks') return 'azure';
-    if (ctx.source.provider === 'eks') return 'aws';
-    return null;
+    return resolveScopeFromContext(contextsQuery.data?.contexts.find((entry) => entry.name === context));
   }, [contextsQuery.data, context, activeContextOrigin]);
 
   // Azure-specific queries never understand an 'aws' scope — fall back to 'cloud' for them.
@@ -500,10 +507,20 @@ export default function App() {
 
   useEffect(() => {
     if (contextInitialized || !contextsQuery.data) return;
-    if (contextsQuery.data.active) {
-      setContext(contextsQuery.data.active);
-    } else if ((contextsQuery.data.contexts?.length ?? 0) > 0) {
-      setContext(contextsQuery.data.contexts[0].name);
+    const initialName =
+      contextsQuery.data.active ||
+      (contextsQuery.data.contexts.length > 0 ? contextsQuery.data.contexts[0].name : undefined);
+    if (initialName) {
+      setContext(initialName);
+      // Set together with `context` - leaving origin unset here (while the tab-following
+      // effect below sets both) is what let `context` and `activeContextOrigin` end up
+      // pointing at two different sources after a reload.
+      setActiveContextOrigin(
+        originFromContextEntry(
+          contextsQuery.data.contexts.find((entry) => entry.name === initialName),
+          contextsQuery.data.localKubeconfigs,
+        ),
+      );
     }
     setContextInitialized(true);
   }, [contextsQuery.data, contextInitialized]);
@@ -818,6 +835,23 @@ export default function App() {
     });
   };
 
+  /**
+   * Close tabs pointing at specific contexts - used when one cloud account is signed out and
+   * only ITS contexts go away, so `closeTabsByOriginSource` (which closes every AKS tab)
+   * would take the other accounts' tabs down with it.
+   */
+  const closeTabsByContextNames = (contextNames: string[]) => {
+    if (contextNames.length === 0) return;
+    const contextSet = new Set(contextNames);
+    setTabs((current) => {
+      const next = current.filter((tab) => !(tab.originContext && contextSet.has(tab.originContext)));
+      if (!next.some((tab) => tab.id === activeTabId)) {
+        setActiveTabId(next[0]?.id ?? '');
+      }
+      return next;
+    });
+  };
+
   const closeTabsByLocalConfig = (kubeconfigId: string, contextNames: string[] = []) => {
     const contextSet = new Set(contextNames);
     setTabs((current) => {
@@ -988,6 +1022,19 @@ export default function App() {
     await queryClient.invalidateQueries({ queryKey: ['azure', 'subscriptions'] });
   };
 
+  /**
+   * One Azure account signed out while others may remain: close only the tabs whose contexts
+   * were removed with it, and let the Azure panel/tree re-read what's left.
+   */
+  const handleAzureAccountSignedOut = (_email: string, removedContexts: string[]) => {
+    closeTabsByContextNames(removedContexts);
+    queryClient.invalidateQueries({ queryKey: ['azure', 'account'] });
+    queryClient.invalidateQueries({ queryKey: ['azure', 'accounts'] });
+    queryClient.invalidateQueries({ queryKey: ['azure', 'subscriptions'] });
+    queryClient.invalidateQueries({ queryKey: ['azure', 'aks'] });
+    void queryClient.invalidateQueries({ queryKey: ['contexts'] });
+  };
+
   const handleAwsSignOut = async () => {
     closeTabsByOriginSource('eks');
     await api.awsLogout();
@@ -1008,10 +1055,12 @@ export default function App() {
     queryClient.setQueryData(['contexts'], updated);
     if (updated.active) {
       setContext(updated.active);
+      setActiveContextOrigin({ source: 'local', kubeconfigId: id });
       pushToast('success', `Connected ${updated.active}`);
       return;
     }
     setContext(undefined);
+    setActiveContextOrigin(null);
     pushToast('info', 'Kubeconfig loaded, but no usable context was found.');
   };
 
@@ -1021,6 +1070,11 @@ export default function App() {
     const updated = await api.deleteLocalKubeconfig(id);
     queryClient.setQueryData(['contexts'], updated);
     setContext(updated.active);
+    setActiveContextOrigin(
+      updated.active
+        ? originFromContextEntry(updated.contexts.find((entry) => entry.name === updated.active), updated.localKubeconfigs)
+        : null,
+    );
     pushToast('success', 'Removed local kubeconfig');
   };
 
@@ -1028,7 +1082,10 @@ export default function App() {
     closeTabsByLocalConfig(id, [contextName]);
     const updated = await api.deleteLocalKubeconfigContext(id, contextName);
     queryClient.setQueryData(['contexts'], updated);
-    if (!updated.active) setContext(undefined);
+    if (!updated.active) {
+      setContext(undefined);
+      setActiveContextOrigin(null);
+    }
     pushToast('success', `Removed context ${contextName}`);
   };
 
@@ -1079,7 +1136,14 @@ export default function App() {
         className={`body ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
         style={{ ['--sidebar-width' as any]: `${sidebarWidthVw}vw` }}
       >
-        <Sidebar
+        <ActivityBar
+          active={sidebarActivity}
+          onSelect={(activity) => {
+            setSidebarActivity(activity);
+            if (activity === 'explorer' && sidebarCollapsed) setSidebarCollapsed(false);
+          }}
+        />
+        {sidebarActivity === 'explorer' ? <Sidebar
           view={activeTab?.view}
           activeTabOriginContext={activeTab?.originContext}
           activeTabOriginSource={activeTab?.originSource}
@@ -1105,10 +1169,11 @@ export default function App() {
           onDeleteLocalKubeconfig={handleDeleteLocalKubeconfig}
           onDeleteLocalKubeconfigContext={handleDeleteLocalKubeconfigContext}
           onAzureSignOut={handleAzureSignOut}
+          onAzureAccountSignedOut={handleAzureAccountSignedOut}
           onOpenCloudAzureView={openCloudAzureView}
           onAwsSignOut={handleAwsSignOut}
           onOpenCloudAwsView={openCloudAwsView}
-        />
+        /> : <ActivityPanel contexts={contexts} onContextChange={(name) => { void handleContextChange(name); }} onOpenExplorer={activateExplorerRoute} />}
         <div
           className="sidebar-resizer"
           onMouseDown={startSidebarResize}
@@ -1169,13 +1234,14 @@ export default function App() {
                 <div className="main-content-body">
                   {tabs.length === 0 && (
                     <div className="main-empty-state" aria-label="empty workspace">
-                      <div className="main-empty-brand-wrap">
+                      <img className="main-empty-brand-image" src={focusKubeBrand} alt="" aria-hidden="true" />
+                      {/* <div className="main-empty-brand-wrap">
                         <div className="main-empty-brand">
                             <span className="main-empty-brand-focus">{uiText.brand.emptyStateNameFocus}</span>
                             <span className="main-empty-brand-kube">{uiText.brand.emptyStateNameKube}</span>
                           </div>
                           <div className="main-empty-tagline">{uiText.brand.emptyStateTagline}</div>
-                      </div>
+                      </div> */}
                     </div>
                   )}
 
@@ -1223,6 +1289,12 @@ export default function App() {
                       )}
                       onOpenHelmReleases={() => openView(
                         { type: 'helm', mode: 'releases' },
+                        activeTab.originContext,
+                        activeTab.originSource,
+                        activeTab.originKubeconfigId,
+                      )}
+                      onOpenEvents={() => openView(
+                        { type: 'resource', plural: 'events' },
                         activeTab.originContext,
                         activeTab.originSource,
                         activeTab.originKubeconfigId,
@@ -1290,6 +1362,10 @@ export default function App() {
                         pushToast('success', 'Sign in successful. Load context now.');
                         void queryClient.invalidateQueries({ queryKey: ['contexts'] });
                       }}
+                      onAzureAccountsRefresh={(scope) => {
+                        if (scope === 'cloud') setAzureTreeRefresh((n) => n + 1);
+                      }}
+                      onAzureAccountSignedOut={handleAzureAccountSignedOut}
                     />
                   )}
                   {activeTab?.view.type === 'aws' && (

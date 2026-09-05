@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import 'express-async-errors';
+import { promises as fsp } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { minikubeService } from '../services/minikubeService.js';
-import { buildTestApp, makeTestAuthUser } from '../testUtils/testApp.js';
+import { buildTestApp, makeTestAuthUser, makeTestSession } from '../testUtils/testApp.js';
 import { minikubeRouter } from './minikube.js';
 
-function app() {
-  return buildTestApp('/api/minikube', minikubeRouter, { authUser: makeTestAuthUser() });
+function app(session = makeTestSession()) {
+  return buildTestApp('/api/minikube', minikubeRouter, { authUser: makeTestAuthUser(), session });
 }
 
 test('GET /api/minikube/health returns installation status', async (t) => {
@@ -49,54 +52,23 @@ test('POST /api/minikube/start starts a cluster', async (t) => {
   assert.equal(response.body.status, 'running');
 });
 
-test('POST /api/minikube/deploy deploys a manifest', async (t) => {
-  const manifest = 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: test';
-  t.mock.method(minikubeService, 'deployManifest', async () => ({ success: true, output: 'pod created' }));
+test('POST /api/minikube/connect writes the exported kubeconfig to the session-scoped path, not the home directory', async (t) => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'minikube-connect-test-'));
+  const minikubeKubeconfigPath = path.join(dir, 'config');
+  const exportedKubeconfig = 'apiVersion: v1\nkind: Config\ncurrent-context: minikube\n';
 
-  const response = await request(app())
-    .post('/api/minikube/deploy')
-    .send({ manifest, clusterName: 'minikube' });
+  t.mock.method(minikubeService, 'exportKubeconfig', async () => ({
+    clusterName: 'minikube',
+    kubeconfig: exportedKubeconfig,
+  }));
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.success, true);
-});
-
-test('POST /api/minikube/deploy rejects an empty manifest', async () => {
-  const response = await request(app())
-    .post('/api/minikube/deploy')
-    .send({ manifest: '', clusterName: 'minikube' });
-
-  assert.equal(response.status, 400);
-});
-
-test('GET /api/minikube/pods returns pods', async (t) => {
-  const pods = [{
-    name: 'test-pod',
-    namespace: 'default',
-    status: 'Running',
-    ready: '1/1',
-    restarts: 0,
-    age: '1h',
-  }];
-  t.mock.method(minikubeService, 'getPods', async () => pods);
-
-  const response = await request(app())
-    .get('/api/minikube/pods')
-    .query({ clusterName: 'minikube', namespace: 'default' });
+  const response = await request(app(makeTestSession({ minikubeKubeconfigPath })))
+    .post('/api/minikube/connect');
 
   assert.equal(response.status, 200);
-  assert.equal(response.body.pods[0].name, 'test-pod');
-});
-
-test('GET /api/minikube/pods/:podName/logs returns logs', async (t) => {
-  t.mock.method(minikubeService, 'getPodLogs', async () => 'Starting pod...\nReady');
-
-  const response = await request(app())
-    .get('/api/minikube/pods/test-pod/logs')
-    .query({ clusterName: 'minikube', namespace: 'default' });
-
-  assert.equal(response.status, 200);
-  assert.equal(response.body.logs, 'Starting pod...\nReady');
+  assert.equal(response.body.contextName, 'minikube');
+  const written = await fsp.readFile(minikubeKubeconfigPath, 'utf8');
+  assert.equal(written, exportedKubeconfig);
 });
 
 test('GET /api/minikube/setup-scripts returns downloadable scripts', async (t) => {
@@ -116,20 +88,4 @@ test('GET /api/minikube/setup-scripts returns downloadable scripts', async (t) =
 
   assert.equal(response.status, 200);
   assert.equal(response.body.scripts[0].filename, 'focuskube-minikube-windows-docker.ps1');
-});
-
-test('POST /api/minikube/pods/:podName/test tests connectivity', async (t) => {
-  t.mock.method(minikubeService, 'testPod', async () => ({
-    name: 'test-pod',
-    status: 'Running',
-    readiness: true,
-    logs: 'Ready',
-  }));
-
-  const response = await request(app())
-    .post('/api/minikube/pods/test-pod/test')
-    .query({ clusterName: 'minikube', namespace: 'default' });
-
-  assert.equal(response.status, 200);
-  assert.equal(response.body.readiness, true);
 });

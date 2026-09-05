@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { logWarn } from '../util/logger.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 
 /**
  * Repair deprecated Azure flags from kubeconfig content (string).
@@ -54,18 +55,23 @@ export function repairKubeconfigContent(content: string, azureConfigDir?: string
 
 export async function repairKubeconfig(kubeconfigPath: string, azureConfigDir?: string): Promise<boolean> {
   try {
-    const content = await fs.readFile(kubeconfigPath, 'utf-8');
-    const repairedContent = repairKubeconfigContent(content, azureConfigDir);
-    
-    if (repairedContent !== content) {
-      await fs.writeFile(kubeconfigPath, repairedContent, 'utf-8');
-      logWarn('kube.config.repaired', {
-        kubeconfigPath,
-        message: 'Kubeconfig repaired: removed deprecated Azure flags, updated auth to azurecli',
-      });
-      return true;
-    }
-    return false;
+    // This is a read-modify-write of a file that AKS/EKS imports and context removal also
+    // rewrite, and it runs from the auth guard on essentially every request - without the
+    // shared lock it is the likeliest thing to clobber a concurrent import.
+    return await withFileLock(kubeconfigPath, async () => {
+      const content = await fs.readFile(kubeconfigPath, 'utf-8');
+      const repairedContent = repairKubeconfigContent(content, azureConfigDir);
+
+      if (repairedContent !== content) {
+        await writeFileAtomic(kubeconfigPath, repairedContent);
+        logWarn('kube.config.repaired', {
+          kubeconfigPath,
+          message: 'Kubeconfig repaired: removed deprecated Azure flags, updated auth to azurecli',
+        });
+        return true;
+      }
+      return false;
+    });
   } catch (err) {
     logWarn('kube.config.repair_failed', {
       kubeconfigPath,

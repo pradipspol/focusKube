@@ -15,6 +15,11 @@ import {
 export const resourcesRouter = Router();
 
 const ns = (req: any) => (req.query.namespace as string) || undefined;
+const namespaces = (req: any): string[] => {
+  const value = req.query.namespace;
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return values.flatMap((item) => String(item).split(',')).map((item) => item.trim()).filter(Boolean);
+};
 
 resourcesRouter.get('/_kinds', withRouteErrorLogging('resources', 'GET /_kinds', (req, res) => {
   setRequestOperation(req, 'resources.kinds.list');
@@ -109,6 +114,18 @@ resourcesRouter.post('/pods/metrics/batch', withRouteErrorLogging('resources', '
   res.json(result);
 }));
 
+resourcesRouter.get('/overview', withRouteErrorLogging('resources', 'GET /overview', async (req, res) => {
+  setRequestOperation(req, 'resources.overview');
+  const scoped = await resolveScopedRequestContext(req, { context: requestedContextFromQuery(req) ?? req.userSession.activeContext ?? undefined });
+  await ensureScopedContextAuth(req, scoped);
+  const result = await resourcesService.getClusterOverview(
+    scoped.requestedContext,
+    namespaces(req),
+    kubeOptionsForScope(req, scoped),
+  );
+  res.json(result);
+}));
+
 resourcesRouter.get('/:plural', withRouteErrorLogging('resources', 'GET /:plural', async (req, res) => {
   setRequestOperation(req, 'resources.list');
   const scoped = await resolveScopedRequestContext(req, { context: requestedContextFromQuery(req) ?? req.userSession.activeContext ?? undefined });
@@ -180,6 +197,34 @@ resourcesRouter.put('/:plural/:name/yaml', withRouteErrorLogging('resources', 'P
   );
 
   res.json(updated);
+}));
+
+// Runs the same update the PUT above would, as a server-side dry run: the API server applies
+// every admission/validation check (immutable-field rejections, typed-field decode errors, etc.)
+// without persisting anything, so this catches the same errors a real save would hit.
+resourcesRouter.post('/:plural/:name/yaml/_validate', withRouteErrorLogging('resources', 'POST /:plural/:name/yaml/_validate', async (req, res) => {
+  setRequestOperation(req, 'resources.yaml.validate');
+  const body = z.object({ yaml: z.string().min(1) }).safeParse(req.body);
+  if (!body.success) throw badRequest('yaml is required');
+
+  const scoped = await resolveScopedRequestContext(req);
+  await ensureScopedContextAuth(req, scoped);
+
+  const object: any = await resourcesService.replaceFromYaml(
+    body.data.yaml,
+    req.params.plural,
+    req.params.name,
+    scoped.requestedContext,
+    kubeOptionsForScope(req, scoped),
+    true,
+  );
+
+  res.json({
+    apiVersion: object.apiVersion,
+    kind: object.kind,
+    name: object.metadata?.name,
+    namespace: object.metadata?.namespace,
+  });
 }));
 
 resourcesRouter.delete('/:plural/:name', withRouteErrorLogging('resources', 'DELETE /:plural/:name', async (req, res) => {

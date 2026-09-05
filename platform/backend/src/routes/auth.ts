@@ -29,6 +29,6 @@ authRouter.get('/me', withRouteErrorLogging('auth', 'GET /me', (req, res) => {
 
 authRouter.post('/signout', withRouteErrorLogging('auth', 'POST /signout', async (_req, res) => {
   setRequestOperation(_req, 'auth.signout');
-  clearDesktopAuthState();
+  await clearDesktopAuthState();
   res.json({ ok: true });
 }));

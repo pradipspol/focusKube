@@ -7,7 +7,7 @@ import { kube } from '../kube/client.js';
 import { resourceWatchPath, resolveKind } from '../kube/resources.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
 import { describeK8sError } from '../util/k8sError.js';
-import { activeSessionAzureConfigDir, activeSessionKubeconfigPath } from '../auth/session.js';
+import { activeSessionAzureConfigDir, activeSessionKubeconfigPath, resolveSessionAuthContext } from '../auth/session.js';
 import { resolveAuthFromHeaders } from '../auth/session.js';
 import { hasCapability } from '../auth/rbac.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
@@ -159,21 +159,24 @@ async function handleLogs(ws: WebSocket, req: any) {
   const p = params(req);
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const context = p.context || session.activeContext || undefined;
+  const azureConfigDir = await activeSessionAzureConfigDir(session, context);
   if (!p.pod) {
     ws.send('error: pod is required');
     ws.close();
     return;
   }
+  const { scope, identity } = await resolveSessionAuthContext(session, context);
   try {
     await ensureContextAuthReady({
       context,
       kubeconfigPath,
       fallbackContext: session.activeContext,
       azureConfigDir,
+      source: scope,
       userId: req.authUser?.id,
       azureLogin: session.azureLogin,
+      identity,
     });
   } catch (err) {
     ws.send(`error: ${(err as Error).message}`);
@@ -216,21 +219,24 @@ async function handleExec(ws: WebSocket, req: any) {
   const p = params(req);
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const context = p.context || session.activeContext || undefined;
+  const azureConfigDir = await activeSessionAzureConfigDir(session, context);
   if (!p.pod) {
     ws.send('error: pod is required');
     ws.close();
     return;
   }
+  const { scope, identity } = await resolveSessionAuthContext(session, context);
   try {
     await ensureContextAuthReady({
       context,
       kubeconfigPath,
       fallbackContext: session.activeContext,
       azureConfigDir,
+      source: scope,
       userId: req.authUser?.id,
       azureLogin: session.azureLogin,
+      identity,
     });
   } catch (err) {
     ws.send(`error: ${(err as Error).message}`);
@@ -316,7 +322,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
   let child: ChildProcess | undefined;
   let kubectlExecutablePath: string | undefined;
   let cliKubeconfig: PreparedCliKubeconfig | undefined;
-  const resolvedAzureConfigDir = activeSessionAzureConfigDir(session);
+  const resolvedAzureConfigDir = await activeSessionAzureConfigDir(session, context);
   const resolvedKubeconfigPath = activeSessionKubeconfigPath(session);
   const azureConfigDir = resolvedAzureConfigDir ?? undefined;
   const kubeconfigPath = resolvedKubeconfigPath ?? null;
@@ -369,14 +375,17 @@ async function handlePortForward(ws: WebSocket, req: any) {
       ws.close();
       return;
     }
+    const { scope, identity: portForwardIdentity } = await resolveSessionAuthContext(session, context);
     try {
       await ensureContextAuthReady({
         context,
         kubeconfigPath: resolvedKubeconfigPath,
         fallbackContext: session.activeContext,
         azureConfigDir: resolvedAzureConfigDir,
+        source: scope,
         userId: req.authUser?.id,
         azureLogin: session.azureLogin,
+        identity: portForwardIdentity,
       });
     } catch (err) {
       send({ type: 'ERROR', message: (err as Error).message });
@@ -468,6 +477,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
         executablePath: kubectlExecutablePath,
         kubeconfigPath,
         azureConfigDir: azureConfigDir ?? null,
+        identity: portForwardIdentity,
         error: err.message,
       }, commandReason(err));
       send({ type: 'ERROR', message: err.message });
@@ -485,6 +495,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
           executablePath: kubectlExecutablePath,
           kubeconfigPath,
           azureConfigDir: azureConfigDir ?? null,
+          identity: portForwardIdentity,
           code: exitCode,
           namespace: namespace || null,
           targetKind,
@@ -499,6 +510,7 @@ async function handlePortForward(ws: WebSocket, req: any) {
           executablePath: kubectlExecutablePath,
           kubeconfigPath,
           azureConfigDir: azureConfigDir ?? null,
+          identity: portForwardIdentity,
           code: exitCode,
           namespace: namespace || null,
           targetKind,
@@ -592,8 +604,8 @@ async function handleWatch(ws: WebSocket, req: any) {
   const p = watchParams(req);
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const context = p.context || session.activeContext || undefined;
+  const azureConfigDir = await activeSessionAzureConfigDir(session, context);
   if (!p.plural) {
     ws.send(JSON.stringify({ type: 'ERROR', message: 'plural is required' }));
     ws.close();
@@ -608,14 +620,17 @@ async function handleWatch(ws: WebSocket, req: any) {
     return;
   }
 
+  const { scope, identity } = await resolveSessionAuthContext(session, context);
   try {
     await ensureContextAuthReady({
       context,
       kubeconfigPath,
       fallbackContext: session.activeContext,
       azureConfigDir,
+      source: scope,
       userId: req.authUser?.id,
       azureLogin: session.azureLogin,
+      identity,
     });
   } catch (err) {
     ws.send(JSON.stringify({ type: 'ERROR', message: (err as Error).message }));
@@ -719,8 +734,8 @@ async function handleMetrics(ws: WebSocket, req: any) {
   const p = metricsParams(req);
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const context = p.context || session.activeContext || undefined;
+  const azureConfigDir = await activeSessionAzureConfigDir(session, context);
 
   if (!p.pod) {
     ws.send(JSON.stringify({ type: 'ERROR', message: 'pod query parameter is required' }));
@@ -728,14 +743,17 @@ async function handleMetrics(ws: WebSocket, req: any) {
     return;
   }
 
+  const { scope, identity } = await resolveSessionAuthContext(session, context);
   try {
     await ensureContextAuthReady({
       context,
       kubeconfigPath,
       fallbackContext: session.activeContext,
       azureConfigDir,
+      source: scope,
       userId: req.authUser?.id,
       azureLogin: session.azureLogin,
+      identity,
     });
   } catch (err) {
     ws.send(JSON.stringify({ type: 'ERROR', message: (err as Error).message }));

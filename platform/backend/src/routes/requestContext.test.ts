@@ -24,6 +24,7 @@ function makeSession(overrides: Partial<UserSessionState> = {}): UserSessionStat
     azureLogin: {} as any,
     azureLoginCloud: {} as any,
     azureLoginLocal: {} as any,
+    azureLoginCloudPending: null,
     contextSourceHints: {},
     awsConfigFile: '/tmp/aws-config',
     awsCredentialsFile: '/tmp/aws-credentials',

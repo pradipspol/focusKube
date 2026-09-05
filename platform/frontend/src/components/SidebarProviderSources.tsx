@@ -10,6 +10,8 @@ import type { AksCluster, AwsIdentity, EksCluster, KubeContext, LocalKubeconfigS
 import azureIcon from '../../assets/azure.svg';
 import awsIcon from '../../assets/aws.svg';
 import kubeIcon from '../../assets/local-kubeconfigs.svg';
+import minikubeIcon from '../../assets/minikube.svg';
+import { TreeDisclosure } from './TreeDisclosure';
 
 
 const CLOUD_ACCOUNT_MAX_RETRIES = 5;
@@ -35,6 +37,7 @@ type LiveAksTenantNode = {
 };
 
 type LiveAksAccountNode = {
+  id: string;
   email: string;
   userType?: string;
   tenants: LiveAksTenantNode[];
@@ -42,7 +45,7 @@ type LiveAksAccountNode = {
 
 const UNKNOWN_TENANT_KEY = 'unknown';
 
-function groupSubscriptionsByTenant(
+function groupSubscriptionsByTenant (
   subscriptions: { id: string; name: string; tenantId?: string; tenantDisplayName?: string }[],
 ): LiveAksTenantNode[] {
   const byTenant = new Map<string, { name?: string; subs: LiveAksSubscriptionNode[] }>();
@@ -62,7 +65,7 @@ function groupSubscriptionsByTenant(
     .sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
 }
 
-function tenantLabel(tenant: LiveAksTenantNode): string {
+function tenantLabel (tenant: LiveAksTenantNode): string {
   if (tenant.id === UNKNOWN_TENANT_KEY) return 'Unknown tenant';
   return tenant.name ?? `Tenant ${tenant.id.slice(0, 8)}…`;
 }
@@ -127,6 +130,8 @@ interface Props {
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
   onDeleteLocalKubeconfigContext: (id: string, contextName: string) => Promise<void>;
   onAzureSignOut: () => Promise<void> | void;
+  /** One account signed out (not all of them); `removedContexts` are the imported contexts that went with it. */
+  onAzureAccountSignedOut?: (email: string, removedContexts: string[]) => void;
   onOpenCloudAzureView?: () => void;
   awsSignedIn: boolean;
   awsRefreshToken?: number;
@@ -134,7 +139,7 @@ interface Props {
   onOpenCloudAwsView?: () => void;
 }
 
-export function SidebarProviderSources({
+export function SidebarProviderSources ({
   collapsed,
   scope,
   view,
@@ -163,6 +168,7 @@ export function SidebarProviderSources({
   onDeleteLocalKubeconfig,
   onDeleteLocalKubeconfigContext,
   onAzureSignOut,
+  onAzureAccountSignedOut,
   onOpenCloudAzureView,
   awsSignedIn,
   awsRefreshToken,
@@ -219,6 +225,7 @@ export function SidebarProviderSources({
     try {
       setAzureAccounts((current) => current);
       const accounts = (await api.azureAccounts('cloud')).accounts.map((account) => ({
+        id: account.id,
         email: account.email,
         userType: account.userType,
         tenants: groupSubscriptionsByTenant(account.subscriptions),
@@ -231,13 +238,27 @@ export function SidebarProviderSources({
     }
   };
 
-  const fetchResourceGroupsForSubscription = async (subscriptionId: string, force = false) => {
-    if (!force && subscriptionClusterCache[subscriptionId]) return;
-    setLoadingResourceGroups((current) => ({ ...current, [subscriptionId]: true }));
+  // Two signed-in accounts can share access to the same subscription (shared tenant
+  // membership, or Lighthouse delegation) - the subscription/resource-group/cluster ids
+  // below are then literally identical across accounts, so every cache/tree key must be
+  // scoped by accountId or actions on one account's node bleed into the other's.
+  const rgCacheKeyFor = (accountId: string, subscriptionId: string) => `${accountId}:${subscriptionId}`;
+  const clusterCacheKeyFor = (accountId: string, subscriptionId: string, resourceGroup: string) =>
+    `${rgCacheKeyFor(accountId, subscriptionId)}:${resourceGroup}`;
+  const azureSubTreeKey = (accountId: string, subscriptionId: string) => `azure-account:${accountId}:sub:${subscriptionId}`;
+  const azureRgTreeKey = (accountId: string, subscriptionId: string, resourceGroup: string) =>
+    `${azureSubTreeKey(accountId, subscriptionId)}:rg:${resourceGroup}`;
+  const azureClusterTreeKey = (accountId: string, subscriptionId: string, resourceGroup: string, clusterName: string) =>
+    `${azureRgTreeKey(accountId, subscriptionId, resourceGroup)}:cluster:${clusterName}`;
+
+  const fetchResourceGroupsForSubscription = async (accountId: string, subscriptionId: string, force = false) => {
+    const cacheKey = rgCacheKeyFor(accountId, subscriptionId);
+    if (!force && subscriptionClusterCache[cacheKey]) return;
+    setLoadingResourceGroups((current) => ({ ...current, [cacheKey]: true }));
     setAksError(null);
     try {
-      const clusters = (await api.azureAks(subscriptionId, 'cloud')).clusters;
-      setSubscriptionClusterCache((current) => ({ ...current, [subscriptionId]: clusters }));
+      const clusters = (await api.azureAks(subscriptionId, 'cloud', accountId)).clusters;
+      setSubscriptionClusterCache((current) => ({ ...current, [cacheKey]: clusters }));
 
       const grouped = new Map<string, AksCluster[]>();
       for (const cluster of clusters) {
@@ -254,30 +275,34 @@ export function SidebarProviderSources({
         .sort((a, b) => a.name.localeCompare(b.name));
 
       setAzureAccounts((current) =>
-        current.map((account) => ({
-          ...account,
-          tenants: account.tenants.map((tenant) => ({
-            ...tenant,
-            subscriptions: tenant.subscriptions.map((sub) =>
-              sub.id === subscriptionId ? { ...sub, resourceGroups } : sub,
-            ),
-          })),
-        })),
+        current.map((account) =>
+          account.id !== accountId
+            ? account
+            : {
+              ...account,
+              tenants: account.tenants.map((tenant) => ({
+                ...tenant,
+                subscriptions: tenant.subscriptions.map((sub) =>
+                  sub.id === subscriptionId ? { ...sub, resourceGroups } : sub,
+                ),
+              })),
+            },
+        ),
       );
     } catch (err) {
       setAksError(err instanceof Error ? err.message : 'Failed to load resource groups');
     } finally {
-      setLoadingResourceGroups((current) => ({ ...current, [subscriptionId]: false }));
+      setLoadingResourceGroups((current) => ({ ...current, [cacheKey]: false }));
     }
   };
 
-  const fetchClustersForResourceGroup = async (clusterRef: Pick<ClusterRef, 'subscriptionId' | 'resourceGroup'>) => {
-    const key = `${clusterRef.subscriptionId}:${clusterRef.resourceGroup}`;
+  const fetchClustersForResourceGroup = async (accountId: string, clusterRef: Pick<ClusterRef, 'subscriptionId' | 'resourceGroup'>) => {
+    const key = clusterCacheKeyFor(accountId, clusterRef.subscriptionId, clusterRef.resourceGroup);
     if (resourceGroupClusters[key]) return;
     setLoadingClusters((current) => ({ ...current, [key]: true }));
     setAksError(null);
     try {
-      const clusters = (await api.azureAks(clusterRef.subscriptionId, 'cloud')).clusters
+      const clusters = (await api.azureAks(clusterRef.subscriptionId, 'cloud', accountId)).clusters
         .filter((cluster) => cluster.resourceGroup === clusterRef.resourceGroup)
         .sort((a, b) => a.name.localeCompare(b.name));
       setResourceGroupClusters((current) => ({ ...current, [key]: clusters }));
@@ -288,17 +313,33 @@ export function SidebarProviderSources({
     }
   };
 
+  // Subscription names collide across tenants/accounts (e.g. two different signed-in
+  // accounts can each have a "Production" subscription), so only fall back to a name
+  // match when the context predates subscriptionId tracking - never let a name match
+  // override a present-but-different id.
+  const subscriptionMatchesContextSource = (
+    sub: { id: string; name: string },
+    ctxSource: { subscriptionId?: string; subscriptionName?: string } | undefined,
+  ) => (ctxSource?.subscriptionId ? sub.id === ctxSource.subscriptionId : sub.name === ctxSource?.subscriptionName);
+
+  // Contexts imported before accountId tagging (or via legacy fallback) carry no
+  // accountId - treat those as matching by subscription/cluster alone. Otherwise a
+  // context tagged with one account must not surface under a different account's node,
+  // even when both accounts can see the same underlying subscription/cluster.
   const matchContextsForCluster = (
     allContexts: KubeContext[],
+    accountId: string,
     subscriptionId: string,
     subscriptionName: string,
     clusterName: string,
   ) =>
     allContexts.filter((ctx) => {
       if (ctx.source?.provider === 'aks' && ctx.source.clusterName) {
+        const accountMatches = !ctx.source.accountId || ctx.source.accountId === accountId;
         return (
+          accountMatches &&
           ctx.source.clusterName === clusterName &&
-          (ctx.source.subscriptionId === subscriptionId || ctx.source.subscriptionName === subscriptionName)
+          subscriptionMatchesContextSource({ id: subscriptionId, name: subscriptionName }, ctx.source)
         );
       }
       return false;
@@ -365,6 +406,7 @@ export function SidebarProviderSources({
       setAzureProbeAttempts(attempt);
       try {
         const accounts = (await api.azureAccounts('cloud')).accounts.map((account) => ({
+          id: account.id,
           email: account.email,
           userType: account.userType,
           tenants: groupSubscriptionsByTenant(account.subscriptions),
@@ -455,11 +497,24 @@ export function SidebarProviderSources({
     }
   }, [hasAzureCloudAccount, azureProbeRequested]);
 
+  // An external refresh signal (sign-in, per-account sign-out, the Azure panel's Refresh
+  // button) must rebuild this tree from scratch.
+  //
+  // Deliberately NOT gated on `azureProbeRequested`: that flag is only set from inside the
+  // probe, so on a fresh page load - where the persisted expand state is cleared and nothing
+  // has probed yet - the gate silently discarded the very refresh the caller asked for. It
+  // also must not be a dependency: having it in the array re-ran this effect the moment a
+  // later probe set it, firing a second concurrent probe whose loser could finish by wiping
+  // the tree and reporting "no Azure account detected".
+  //
+  // `refreshAzureTree` (not a bare probe) because the probe alone leaves the resource-group
+  // and cluster caches populated, and the restore effects skip any subscription that still
+  // has a cache entry - leaving the tree stuck reading "no resource groups found".
   useEffect(() => {
-    if (!azureRefreshToken || !azureProbeRequested) return;
-    expandGroup('aksRoot');
-    void probeAzureCloudAccounts();
-  }, [azureRefreshToken, azureProbeRequested, expandGroup]);
+    if (!azureRefreshToken) return;
+    refreshAzureTree();
+
+  }, [azureRefreshToken]);
 
   useEffect(() => {
     if (!azureSignedIn) return;
@@ -503,13 +558,13 @@ export function SidebarProviderSources({
   useEffect(() => {
     if (isGroupCollapsed('azureRoot') || azureAccounts.length > 0 || loadingSubscriptions || aksError) return;
     void probeAzureCloudAccounts();
-     
+
   }, [isGroupCollapsed, azureAccounts.length, loadingSubscriptions, aksError]);
 
   useEffect(() => {
     if (isGroupCollapsed('awsRoot') || awsAccountNode || loadingAwsTree || awsError) return;
     void probeAwsCloudAccounts();
-     
+
   }, [isGroupCollapsed, awsAccountNode, loadingAwsTree, awsError]);
 
   // Once the matching subscription is known, reveal it (and its owning account/tenant) too.
@@ -519,13 +574,11 @@ export function SidebarProviderSources({
     if (!ctx || ctx.source?.provider !== 'aks') return;
     findMatchingSubscription: for (const account of azureAccounts) {
       for (const tenant of account.tenants) {
-        const sub = tenant.subscriptions.find(
-          (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
-        );
+        const sub = tenant.subscriptions.find((s) => subscriptionMatchesContextSource(s, ctx.source));
         if (sub) {
-          expandGroup(`azure-account:${account.email}`);
-          expandGroup(`azure-account:${account.email}:tenant:${tenant.id}`);
-          expandGroup(`azure-sub:${sub.id}`);
+          expandGroup(`azure-account:${account.id}`);
+          expandGroup(`azure-account:${account.id}:tenant:${tenant.id}`);
+          expandGroup(azureSubTreeKey(account.id, sub.id));
           break findMatchingSubscription;
         }
       }
@@ -539,12 +592,10 @@ export function SidebarProviderSources({
     if (!ctx || ctx.source?.provider !== 'aks' || !ctx.source.resourceGroup) return;
     findMatchingResourceGroup: for (const account of azureAccounts) {
       for (const tenant of account.tenants) {
-        const sub = tenant.subscriptions.find(
-          (s) => s.id === ctx.source?.subscriptionId || s.name === ctx.source?.subscriptionName,
-        );
+        const sub = tenant.subscriptions.find((s) => subscriptionMatchesContextSource(s, ctx.source));
         const rg = sub?.resourceGroups.find((r) => r.name === ctx.source?.resourceGroup);
         if (rg) {
-          expandGroup(`azure-sub:${sub!.id}:rg:${rg.name}`);
+          expandGroup(azureRgTreeKey(account.id, sub!.id, rg.name));
           break findMatchingResourceGroup;
         }
       }
@@ -567,14 +618,17 @@ export function SidebarProviderSources({
     for (const account of azureAccounts) {
       for (const tenant of account.tenants) {
         for (const sub of tenant.subscriptions) {
-          if (isGroupCollapsed(`azure-sub:${sub.id}`) || loadingResourceGroups[sub.id] || subscriptionClusterCache[sub.id]) continue;
-          fetchResourceGroupsForSubscription(sub.id).catch(() => {
+          const cacheKey = rgCacheKeyFor(account.id, sub.id);
+          if (isGroupCollapsed(azureSubTreeKey(account.id, sub.id)) || loadingResourceGroups[cacheKey] || subscriptionClusterCache[cacheKey]) {
+            continue;
+          }
+          fetchResourceGroupsForSubscription(account.id, sub.id).catch(() => {
             /* handled in state */
           });
         }
       }
     }
-     
+
   }, [azureAccounts, isGroupCollapsed]);
 
   // Same restored-expanded-with-no-data gap one level down: a resource group left
@@ -584,18 +638,18 @@ export function SidebarProviderSources({
       for (const tenant of account.tenants) {
         for (const sub of tenant.subscriptions) {
           for (const rg of sub.resourceGroups) {
-            const rgCacheKey = `${sub.id}:${rg.name}`;
-            if (isGroupCollapsed(`azure-sub:${sub.id}:rg:${rg.name}`) || loadingClusters[rgCacheKey] || resourceGroupClusters[rgCacheKey]) {
+            const rgCacheKey = clusterCacheKeyFor(account.id, sub.id, rg.name);
+            if (isGroupCollapsed(azureRgTreeKey(account.id, sub.id, rg.name)) || loadingClusters[rgCacheKey] || resourceGroupClusters[rgCacheKey]) {
               continue;
             }
-            fetchClustersForResourceGroup({ subscriptionId: sub.id, resourceGroup: rg.name }).catch(() => {
+            fetchClustersForResourceGroup(account.id, { subscriptionId: sub.id, resourceGroup: rg.name }).catch(() => {
               /* handled in state */
             });
           }
         }
       }
     }
-     
+
   }, [azureAccounts, isGroupCollapsed]);
 
   useEffect(() => {
@@ -620,7 +674,13 @@ export function SidebarProviderSources({
 
   const refreshAzureTree = () => {
     expandGroup('azureRoot');
-    setAzureAccounts([]);
+    // Deliberately doesn't clear `azureAccounts` first: the backend already deregisters an
+    // account synchronously before /logout responds, so the very next /accounts fetch below
+    // already reflects the correct list. Clearing here first used to blank EVERY signed-in
+    // account (not just the one being removed) for the duration of that fetch, then refill -
+    // e.g. signing sghosh out made prapol's sidebar entry flash away too, even though prapol
+    // was never touched. Leaving stale data on screen until the fresh fetch swaps it in is
+    // strictly better than a spurious "everyone signed out" flash.
     setSubscriptionClusterCache({});
     setResourceGroupClusters({});
     void probeAzureCloudAccounts();
@@ -631,6 +691,7 @@ export function SidebarProviderSources({
     void probeAwsCloudAccounts();
   };
 
+  /** Drops an account's imported cluster contexts but leaves it signed in. */
   const handleDisconnectAzureAccount = async (email: string) => {
     const ok = await confirm({
       title: uiText.confirmDialog.removeTitle,
@@ -645,6 +706,37 @@ export function SidebarProviderSources({
       await api.azureDisconnectAccount(email);
       const updated = await api.reloadContexts();
       queryClient.setQueryData(['contexts'], updated);
+    } catch (err) {
+      setAksError(err instanceof Error ? err.message : 'Failed to disconnect account');
+    } finally {
+      setAzureBusyEmail(undefined);
+    }
+  };
+
+  /**
+   * Actually signs one account out: revokes its Azure CLI session, removes its isolated
+   * config dir and its imported contexts, and drops it from this tree.
+   *
+   * This used to be wired to `handleDisconnectAzureAccount`, which by design leaves the
+   * account signed in - so the menu item labelled "Sign out" removed the contexts but left
+   * the account in the tree and in the Azure panel.
+   */
+  const handleSignOutAzureAccount = async (email: string) => {
+    const ok = await confirm({
+      title: uiText.confirmDialog.removeTitle,
+      message: `Sign out ${email}?`,
+      details: 'Its imported cluster contexts will be removed. Other signed-in accounts are unaffected.',
+    });
+    if (!ok) return;
+    setAzureAccountMenuEmail(undefined);
+    setAzureBusyEmail(email);
+    setAksError(null);
+    try {
+      const { removed = [] } = await api.azureLogout(email, 'cloud');
+      const updated = await api.reloadContexts();
+      queryClient.setQueryData(['contexts'], updated);
+      onAzureAccountSignedOut?.(email, removed);
+      refreshAzureTree();
     } catch (err) {
       setAksError(err instanceof Error ? err.message : 'Failed to sign out account');
     } finally {
@@ -679,7 +771,7 @@ export function SidebarProviderSources({
             className="k8sexplorer-title k8sexplorer-toggle"
             onClick={() => toggleGroup('azureRoot')}
           >
-            <span>{isGroupCollapsed('azureRoot') ? '▸' : '▾'}</span>
+            <TreeDisclosure collapsed={isGroupCollapsed('azureRoot')} />
             <img src={azureIcon} className="svg-inject" alt="Azure" />
             <span>{uiText.sidebar.azureAccounts}</span>
             {loadingSubscriptions && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAzureAccounts} />}
@@ -764,7 +856,7 @@ export function SidebarProviderSources({
             {!hasAzureCloudAccount && aksError && !collapsed && <div className="sidebar-hint">{aksError}</div>}
             {hasAzureCloudAccount &&
               azureAccounts.map((accountNode) => {
-                const accountKey = `azure-account:${accountNode.email}`;
+                const accountKey = `azure-account:${accountNode.id}`;
                 const accountExpanded = !isGroupCollapsed(accountKey);
                 const accountMenuOpen = azureAccountMenuEmail === accountNode.email;
                 const accountBusy = azureBusyEmail === accountNode.email;
@@ -777,7 +869,7 @@ export function SidebarProviderSources({
                           onClick={() => toggleGroup(accountKey)}
                           title={accountNode.email}
                         >
-                          <span>{accountExpanded ? '▾' : '▸'}</span>
+                          <TreeDisclosure collapsed={!accountExpanded} />
                           <span className="aks-account-email">{accountNode.email}</span>
                           {accountBusy && <span className="tiny-spinner" aria-label="working" />}
                         </button>
@@ -805,15 +897,15 @@ export function SidebarProviderSources({
                               >
                                 Reconnect
                               </button>
-                              {/* <button
+                              <button
                                 className="action-menu-item"
                                 onClick={() => handleDisconnectAzureAccount(accountNode.email)}
                               >
                                 Disconnect clusters
-                              </button> */}
+                              </button>
                               <button
                                 className="action-menu-item danger"
-                                onClick={() => handleDisconnectAzureAccount(accountNode.email)}
+                                onClick={() => handleSignOutAzureAccount(accountNode.email)}
                               >
                                 Sign out
                               </button>
@@ -825,7 +917,7 @@ export function SidebarProviderSources({
                     {(collapsed || accountExpanded) && (
                       <div className="aks-tree-children">
                         {accountNode.tenants.map((tenantNode) => {
-                          const tenantKey = `azure-account:${accountNode.email}:tenant:${tenantNode.id}`;
+                          const tenantKey = `azure-account:${accountNode.id}:tenant:${tenantNode.id}`;
                           const tenantExpanded = !isGroupCollapsed(tenantKey);
                           return (
                             <div key={tenantKey} className="context-root">
@@ -835,15 +927,16 @@ export function SidebarProviderSources({
                                   onClick={() => toggleGroup(tenantKey)}
                                   title={tenantNode.id === UNKNOWN_TENANT_KEY ? undefined : tenantNode.id}
                                 >
-                                  <span>{tenantExpanded ? '▾' : '▸'}</span>
+                                  <TreeDisclosure collapsed={!tenantExpanded} />
                                   <span>{tenantLabel(tenantNode)}</span>
                                 </button>
                               )}
                               {(collapsed || tenantExpanded) && (
                                 <div className="aks-tree-children">
                                   {tenantNode.subscriptions.map((subscriptionNode) => {
-                                    const subKey = `azure-sub:${subscriptionNode.id}`;
+                                    const subKey = azureSubTreeKey(accountNode.id, subscriptionNode.id);
                                     const subExpanded = !isGroupCollapsed(subKey);
+                                    const subCacheKey = rgCacheKeyFor(accountNode.id, subscriptionNode.id);
                                     return (
                                       <div key={subKey} className="context-root">
                                         {!collapsed && (
@@ -853,15 +946,15 @@ export function SidebarProviderSources({
                                               const nextExpanded = isGroupCollapsed(subKey);
                                               toggleGroup(subKey);
                                               if (nextExpanded) {
-                                                fetchResourceGroupsForSubscription(subscriptionNode.id).catch(() => {
+                                                fetchResourceGroupsForSubscription(accountNode.id, subscriptionNode.id).catch(() => {
                                                   /* handled in state */
                                                 });
                                               }
                                             }}
                                           >
-                                            <span>{subExpanded ? '▾' : '▸'}</span>
+                                            <TreeDisclosure collapsed={!subExpanded} />
                                             <span>{subscriptionNode.name}</span>
-                                            {loadingResourceGroups[subscriptionNode.id] && (
+                                            {loadingResourceGroups[subCacheKey] && (
                                               <span className="tiny-spinner" aria-label="loading resource groups" />
                                             )}
                                           </button>
@@ -869,14 +962,14 @@ export function SidebarProviderSources({
                                         {(collapsed || subExpanded) && (
                                           <div className="aks-tree-children">
                                             {!collapsed &&
-                                              !loadingResourceGroups[subscriptionNode.id] &&
+                                              !loadingResourceGroups[subCacheKey] &&
                                               subscriptionNode.resourceGroups.length === 0 && (
                                                 <div className="sidebar-hint">{uiText.sidebar.noResourceGroups}</div>
                                               )}
                                             {subscriptionNode.resourceGroups.map((resourceGroupNode) => {
-                                              const rgKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}`;
+                                              const rgKey = azureRgTreeKey(accountNode.id, subscriptionNode.id, resourceGroupNode.name);
                                               const rgExpanded = !isGroupCollapsed(rgKey);
-                                              const rgCacheKey = `${subscriptionNode.id}:${resourceGroupNode.name}`;
+                                              const rgCacheKey = clusterCacheKeyFor(accountNode.id, subscriptionNode.id, resourceGroupNode.name);
                                               const clusters = resourceGroupClusters[rgCacheKey] ?? [];
                                               return (
                                                 <div key={rgKey} className="context-root">
@@ -887,7 +980,7 @@ export function SidebarProviderSources({
                                                         const nextExpanded = isGroupCollapsed(rgKey);
                                                         toggleGroup(rgKey);
                                                         if (nextExpanded) {
-                                                          fetchClustersForResourceGroup({
+                                                          fetchClustersForResourceGroup(accountNode.id, {
                                                             subscriptionId: subscriptionNode.id,
                                                             resourceGroup: resourceGroupNode.name,
                                                           }).catch(() => {
@@ -896,7 +989,7 @@ export function SidebarProviderSources({
                                                         }
                                                       }}
                                                     >
-                                                      <span>{rgExpanded ? '▾' : '▸'}</span>
+                                                      <TreeDisclosure collapsed={!rgExpanded} />
                                                       <span>{resourceGroupNode.name}</span>
                                                       {loadingClusters[rgCacheKey] && (
                                                         <span className="tiny-spinner" aria-label="loading clusters" />
@@ -909,11 +1002,17 @@ export function SidebarProviderSources({
                                                         <div className="sidebar-hint">{uiText.sidebar.noClustersFound}</div>
                                                       )}
                                                       {clusters.map((cluster) => {
-                                                        const clusterNodeKey = `azure-sub:${subscriptionNode.id}:rg:${resourceGroupNode.name}:cluster:${cluster.name}`;
+                                                        const clusterNodeKey = azureClusterTreeKey(
+                                                          accountNode.id,
+                                                          subscriptionNode.id,
+                                                          resourceGroupNode.name,
+                                                          cluster.name,
+                                                        );
                                                         const clusterExpanded = !isGroupCollapsed(clusterNodeKey);
                                                         const clusterLoading = !!loadingImportedContexts[clusterNodeKey];
                                                         const matchingContexts = matchContextsForCluster(
                                                           orderedContexts,
+                                                          accountNode.id,
                                                           subscriptionNode.id,
                                                           subscriptionNode.name,
                                                           cluster.name,
@@ -932,7 +1031,7 @@ export function SidebarProviderSources({
                                                                 // two concurrent writes to the same kubeconfig file can race and
                                                                 // leave a duplicated context entry behind.
                                                                 if (clusterLoading) return;
-          
+
                                                                 void (async () => {
                                                                   setLoadingImportedContexts((current) => ({
                                                                     ...current,
@@ -942,6 +1041,7 @@ export function SidebarProviderSources({
                                                                     resourceGroup: resourceGroupNode.name,
                                                                     name: cluster.name,
                                                                     subscription: subscriptionNode.id,
+                                                                    accountId: accountNode.id,
                                                                   });
                                                                   const contextsPayload = await api.getContexts();
                                                                   queryClient.setQueryData(['contexts'], contextsPayload);
@@ -949,6 +1049,7 @@ export function SidebarProviderSources({
                                                                     contextsPayload.active ??
                                                                     matchContextsForCluster(
                                                                       contextsPayload.contexts,
+                                                                      accountNode.id,
                                                                       subscriptionNode.id,
                                                                       subscriptionNode.name,
                                                                       cluster.name,
@@ -971,7 +1072,7 @@ export function SidebarProviderSources({
                                                             >
                                                               <span className="context-label-wrap">
                                                                 {!collapsed && (
-                                                                  <span className="context-caret">{clusterExpanded ? '▾' : '▸'}</span>
+                                                                  <TreeDisclosure collapsed={!clusterExpanded} />
                                                                 )}
                                                                 <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                                               </span>
@@ -1022,7 +1123,7 @@ export function SidebarProviderSources({
             className="k8sexplorer-title k8sexplorer-toggle"
             onClick={() => toggleGroup('awsRoot')}
           >
-            <span>{isGroupCollapsed('awsRoot') ? '▸' : '▾'}</span>
+            <TreeDisclosure collapsed={isGroupCollapsed('awsRoot')} />
             <img src={awsIcon} className="svg-inject" alt="AWS" />
             <span>{uiText.sidebar.awsAccounts}</span>
             {loadingAwsTree && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAwsClusters} />}
@@ -1110,7 +1211,7 @@ export function SidebarProviderSources({
                           className="k8sexplorer-title k8sexplorer-toggle aks-tree-toggle"
                           onClick={() => toggleGroup(regionKey)}
                         >
-                          <span>{regionExpanded ? '▾' : '▸'}</span>
+                          <TreeDisclosure collapsed={!regionExpanded} />
                           <span>{regionNode.name}</span>
                         </button>
                       )}
@@ -1173,7 +1274,7 @@ export function SidebarProviderSources({
                                 >
                                   <span className="context-label-wrap">
                                     {!collapsed && (
-                                      <span className="context-caret">{clusterExpanded ? '▾' : '▸'}</span>
+                                      <TreeDisclosure collapsed={!clusterExpanded} className="context-caret" />
                                     )}
                                     <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                   </span>
@@ -1209,7 +1310,7 @@ export function SidebarProviderSources({
         {!collapsed && (
           <div className="local-kubeconfigs-header-row">
             <button className="k8sexplorer-title k8sexplorer-toggle" onClick={() => toggleGroup('localKubeconfigsRoot')}>
-              <span>{isGroupCollapsed('localKubeconfigsRoot') ? '▸' : '▾'}</span>
+              <TreeDisclosure collapsed={isGroupCollapsed('localKubeconfigsRoot')} />
               <img src={kubeIcon} className="svg-inject" alt="Kubernetes" />
               <span>Local Kubeconfigs</span>
             </button>
@@ -1275,7 +1376,7 @@ export function SidebarProviderSources({
                             toggleGroup(nodeKey);
                           }}
                         >
-                          <span className="context-caret">{expanded ? '▾' : '▸'}</span>
+                          <TreeDisclosure collapsed={!expanded} className="context-caret" />
                         </button>
                       )}
                       <span className="local-kubeconfig-bullet">◍</span>
@@ -1457,26 +1558,26 @@ export function SidebarProviderSources({
             title="Local Minikube"
             onClick={() => toggleGroup('minikubeRoot')}
           >
-            <span>{minikubeExpanded ? '▾' : '▸'}</span>
-            <img src={kubeIcon} className="svg-inject" alt="" />
+            <TreeDisclosure collapsed={!minikubeExpanded} />
+            <img src={minikubeIcon} className="svg-inject" alt="" />
             <span>{collapsed ? 'M' : 'Local Minikube'}</span>
           </button>
         </div>
         {(collapsed || minikubeExpanded) && (
           <div className="k8sexplorer-items">
             <div className="context-root">
-            <div
-              className={`nav-item context-item ${view?.type === 'minikube' ? 'active' : ''}`}
-              title="Cluster Configuration"
-              onClick={() => onSelect({ type: 'minikube' })}
-              onDoubleClick={() => onPin({ type: 'minikube' })}
-            >
-              <span className="context-label-wrap">
-                <span className="context-caret">*</span>
-                <span className="local-kubeconfig-bullet">◍</span>
-                <span>{collapsed ? 'C' : 'Cluster Configuration'}</span>
-              </span>
-            </div>
+              <div
+                className={`nav-item context-item ${view?.type === 'minikube' ? 'active' : ''}`}
+                title="Cluster Configuration"
+                onClick={() => onSelect({ type: 'minikube' })}
+                onDoubleClick={() => onPin({ type: 'minikube' })}
+              >
+                <span className="context-label-wrap">
+                  <span className="context-caret">*</span>
+                  <span className="local-kubeconfig-bullet">◍</span>
+                  <span>{collapsed ? 'C' : 'Cluster Configuration'}</span>
+                </span>
+              </div>
             </div>
             <div className="context-root">
               <div
@@ -1502,20 +1603,20 @@ export function SidebarProviderSources({
                 <span className="context-label-wrap">
                   {!collapsed && (
                     <button
-                        disabled={!isMinikubeRunning}
+                      disabled={!isMinikubeRunning}
                       className="context-caret-button"
-                        title={
-                          isMinikubeRunning
-                            ? (minikubeResourcesExpanded ? 'Collapse minikube resources' : 'Expand minikube resources')
-                            : 'Minikube is not running'
-                        }
+                      title={
+                        isMinikubeRunning
+                          ? (minikubeResourcesExpanded ? 'Collapse minikube resources' : 'Expand minikube resources')
+                          : 'Minikube is not running'
+                      }
                       onClick={(event) => {
                         event.stopPropagation();
-                          if (!isMinikubeRunning) return;
+                        if (!isMinikubeRunning) return;
                         toggleGroup('minikubeResourcesRoot');
                       }}
                     >
-                      <span className="context-caret">{minikubeResourcesExpanded ? '▾' : '▸'}</span>
+                      <TreeDisclosure collapsed={!minikubeResourcesExpanded} className="context-caret" />
                     </button>
                   )}
                   <span className="local-kubeconfig-bullet">◍</span>

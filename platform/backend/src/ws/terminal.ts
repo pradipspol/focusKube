@@ -1,11 +1,11 @@
 import { URL } from 'node:url';
 import { WebSocket } from 'ws';
 import { spawn as spawnPty, type IPty } from 'node-pty';
-import { activeSessionAzureConfigDir, activeSessionKubeconfigPath } from '../auth/session.js';
+import { activeSessionAzureConfigDir, activeSessionKubeconfigPath, resolveSessionAuthContext } from '../auth/session.js';
 import { sessionEnv } from '../auth/session.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
-import { logError, logInfo, logWarn } from '../util/logger.js';
+import { logDebug, logError, logInfo, logWarn } from '../util/logger.js';
 import { resolveExecutablePath } from '../util/run.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
@@ -32,10 +32,10 @@ export async function handleTerminal(ws: WebSocket, req: any) {
   setRequestOperation(req, 'terminal.shell');
   const session = req.userSession;
   const kubeconfigPath = activeSessionKubeconfigPath(session);
-  const azureConfigDir = activeSessionAzureConfigDir(session);
   const request = parseTerminalRequest(req);
   const context = request.context || session.activeContext || undefined;
   const namespace = request.namespace || undefined;
+  const azureConfigDir = await activeSessionAzureConfigDir(session, context);
 
   let currentChild: IPty | undefined;
   let currentExecutable: string | undefined;
@@ -126,14 +126,17 @@ export async function handleTerminal(ws: WebSocket, req: any) {
       return;
     }
 
+    const { scope, identity: commandIdentity } = await resolveSessionAuthContext(session, context);
     try {
       await ensureContextAuthReady({
         context,
         kubeconfigPath,
         fallbackContext: session.activeContext,
         azureConfigDir,
+        source: scope,
         userId: req.authUser?.id,
         azureLogin: session.azureLogin,
+        identity: commandIdentity,
       });
     } catch (err) {
       send({ type: 'ERROR', message: (err as Error).message });
@@ -172,6 +175,11 @@ export async function handleTerminal(ws: WebSocket, req: any) {
       context: context ?? null,
       namespace: namespace ?? null,
     });
+    logDebug('terminal.command.identity', {
+      commandLine: commandLine(currentExecutable ?? executable, args),
+      context: context ?? null,
+      identity: commandIdentity,
+    });
 
     let stdoutBuffer = '';
     const stderrBuffer = '';
@@ -201,6 +209,7 @@ export async function handleTerminal(ws: WebSocket, req: any) {
           namespace: namespace ?? null,
           code,
           commandLine: commandLine(currentExecutable ?? executable, args),
+          identity: commandIdentity,
         }, 'command exited cleanly');
       } else {
         logCommandOutcome('error', 'terminal.command.finish', 'failed', currentExecutable ?? executable, args, {
@@ -211,6 +220,7 @@ export async function handleTerminal(ws: WebSocket, req: any) {
           namespace: namespace ?? null,
           code,
           commandLine: commandLine(currentExecutable ?? executable, args),
+          identity: commandIdentity,
         }, `exit code ${code}${reason ? ` - ${reason.slice(-400)}` : ''}`);
       }
 

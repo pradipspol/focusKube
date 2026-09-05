@@ -108,8 +108,8 @@ export function TerminalDock({
   const computeMaxHeight = () => {
     const workspace = panelRef.current?.closest('.main-workspace') as HTMLElement | null;
     const availableHeight = workspace?.getBoundingClientRect().height ?? window.innerHeight;
-    // Keep enough room above the terminal for the active tab strip and table/header area.
-    return Math.max(220, Math.floor(availableHeight - 120));
+    // Let the dock overlap the workspace instead of reserving a fixed amount of space above it.
+    return Math.max(180, Math.floor(availableHeight - 35));
   };
 
   const startResize = (event: ReactMouseEvent<HTMLDivElement>) => {

@@ -55,15 +55,20 @@ test('contextsService source mapping prefers explicit source docs', () => {
     subscriptionName: 'sub-name',
     resourceGroup: 'rg',
     clusterName: 'real-aks',
+    accountId: 'account-1',
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  // accountId must round-trip to the client just like it already does for eks above -
+  // it's what SidebarProviderSources.tsx's matchContextsForCluster uses to stop one
+  // account's imported cluster from rendering under a different account's tree node.
   assert.deepEqual(aks, {
     provider: 'aks',
     subscriptionId: 'sub',
     subscriptionName: 'sub-name',
     resourceGroup: 'rg',
     clusterName: 'real-aks',
+    accountId: 'account-1',
   });
 });
 

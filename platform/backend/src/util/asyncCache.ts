@@ -44,10 +44,18 @@ export class AsyncRefreshCache<T> {
     }
 
     const refreshPromise = this.refresh(loader, options);
-    const completed = await Promise.race([
-      refreshPromise.then(() => true),
-      delay(waitMs).then(() => false),
-    ]);
+    // Clear the loser's timer: an uncleared setTimeout keeps the event loop alive for the
+    // whole wait window (delaying shutdown) and accumulates one pending timer per cold call.
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), waitMs);
+    });
+    let completed: boolean;
+    try {
+      completed = await Promise.race([refreshPromise.then(() => true), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     if (completed && this.state.hasValue) {
       return this.state.value as T;
@@ -83,6 +91,3 @@ export class AsyncRefreshCache<T> {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

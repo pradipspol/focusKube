@@ -4,8 +4,10 @@ import type { View } from '../App';
 import type { Scope } from '../api/client';
 import type { KubeContext, LocalKubeconfigSummary } from '../api/types';
 import { SidebarProviderSources } from './SidebarProviderSources';
+import { TreeDisclosure } from './TreeDisclosure';
 import kubeCluster from '../../assets/kubernetes.svg';
 import starredIcon from '../../assets/starred.svg';
+import { uiText } from '../text';
 
 interface Props {
   view?: View;
@@ -39,6 +41,8 @@ interface Props {
   onDeleteLocalKubeconfig: (id: string) => Promise<void>;
   onDeleteLocalKubeconfigContext: (id: string, contextName: string) => Promise<void>;
   onAzureSignOut: () => Promise<void> | void;
+  /** One account signed out (not all); `removedContexts` are the imported contexts removed with it. */
+  onAzureAccountSignedOut?: (email: string, removedContexts: string[]) => void;
   onOpenCloudAzureView?: () => void;
   onAwsSignOut: () => Promise<void> | void;
   onOpenCloudAwsView?: () => void;
@@ -63,7 +67,7 @@ const getStarKey = (provider: 'aks' | 'eks' | 'local' | 'minikube', name: string
 // Azure/AWS cloud-tree node keys (accounts, subscriptions, resource groups, regions,
 // clusters) — these should default to collapsed on every load, not remember a stale
 // expand from a previous session.
-function isCloudTreeGroupKey(key: string): boolean {
+function isCloudTreeGroupKey (key: string): boolean {
   return (
     key.startsWith('azure-account:') ||
     key.startsWith('azure-sub:') ||
@@ -187,7 +191,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
 ];
 
-export function Sidebar({
+export function Sidebar ({
   view,
   activeTabOriginContext,
   activeTabOriginSource,
@@ -213,6 +217,7 @@ export function Sidebar({
   onDeleteLocalKubeconfig,
   onDeleteLocalKubeconfigContext,
   onAzureSignOut,
+  onAzureAccountSignedOut,
   onOpenCloudAzureView,
   onAwsSignOut,
   onOpenCloudAwsView,
@@ -458,7 +463,7 @@ export function Sidebar({
           <div key={`${contextName}-${group.title}`} className="k8sexplorer-group nested-group">
             {!collapsed && (
               <button className="k8sexplorer-title k8sexplorer-toggle section-toggle" onClick={() => toggleGroup(`${contextName}:${group.title}`)}>
-                <span>{isGroupCollapsed(`${contextName}:${group.title}`) ? '▸' : '▾'}</span>
+                <TreeDisclosure collapsed={isGroupCollapsed(`${contextName}:${group.title}`)} />
                 <span className="k8sexplorer-title-icon" aria-hidden="true">{group.icon}</span>
                 <span>{group.title}</span>
               </button>
@@ -469,10 +474,10 @@ export function Sidebar({
                   const isContextMatched = activeTabOriginContext === contextName && activeTabOriginKubeconfigId === originKubeconfigId;
                   const itemActive = item.view
                     ? isContextMatched &&
-                      !!view &&
-                      view.type === item.view.type &&
-                      (item.view.type !== 'resource' || (view.type === 'resource' && view.plural === item.view.plural)) &&
-                      (item.view.type !== 'helm' || (view.type === 'helm' && view.mode === item.view.mode))
+                    !!view &&
+                    view.type === item.view.type &&
+                    (item.view.type !== 'resource' || (view.type === 'resource' && view.plural === item.view.plural)) &&
+                    (item.view.type !== 'helm' || (view.type === 'helm' && view.mode === item.view.mode))
                     : isContextMatched && !!item.plural && !consumedActivePlurals.has(item.plural) && isActive(group.title, item.plural);
 
                   if (itemActive && item.plural) {
@@ -482,7 +487,7 @@ export function Sidebar({
                   return (
                     <div
                       key={`${group.title}:${item.label}`}
-                      className={`nav-item ${itemActive ? 'active' : ''} ${item.disabled ? 'disabled' : ''}`}
+                      className={`nav-item resource-nav-item ${itemActive ? 'active' : ''} ${item.disabled ? 'disabled' : ''}`}
                       onClick={() => {
                         if (item.disabled) return;
                         onOpenExplorer();
@@ -535,12 +540,12 @@ export function Sidebar({
     // load, before the user has opened a resource tab or connected anything).
     const isSelectedContext = activeTabOriginContext
       ? activeTabOriginContext === ctx.name &&
-        activeTabOriginSource === resolvedSource &&
-        activeTabOriginKubeconfigId === originKubeconfigId
+      activeTabOriginSource === resolvedSource &&
+      activeTabOriginKubeconfigId === originKubeconfigId
       : !!activeContextOriginSource &&
-        scope.context === ctx.name &&
-        activeContextOriginSource === resolvedSource &&
-        activeContextOriginKubeconfigId === originKubeconfigId;
+      scope.context === ctx.name &&
+      activeContextOriginSource === resolvedSource &&
+      activeContextOriginKubeconfigId === originKubeconfigId;
     const contextExpanded = !isGroupCollapsed(`${nodeKeyPrefix}:${ctx.name}`);
     const isStarred = !!resolvedSource && !!starredContexts[getStarKey(resolvedSource, ctx.name)];
     const isLocalContextNode = resolvedSource === 'local';
@@ -593,7 +598,7 @@ export function Sidebar({
                   toggleGroup(`${nodeKeyPrefix}:${ctx.name}`);
                 }}
               >
-                <span className="context-caret">{contextExpanded ? '▾' : '▸'}</span>
+                <TreeDisclosure collapsed={!contextExpanded} className="context-caret" />
               </button>
             )}
             <img src={kubeCluster} className="svg-inject" alt="Kubernetes" />
@@ -696,29 +701,35 @@ export function Sidebar({
   return (
     <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-root-tree">
-        <div className="k8sexplorer-group root-group">
-          <div className="sidebar-header-row root-header">
-            <button
-              className="root-toggle route-link active"
-              type="button"
-              onClick={() => {
-                setExplorerRootOpen((current) => !current);
-                onOpenExplorer();
-              }}
-            >
-              <span>{explorerRootOpen ? '▾' : '▸'}</span>
-              <img src={kubeCluster} className="svg-inject" alt="Kubernetes" />
-              <span>K8S Cluster</span>
-            </button>
-          </div>
 
+        <div className="sidebar-header-row root-header">
+          <button
+            className="root-toggle route-link active"
+            type="button"
+            onClick={() => {
+              if (collapsed) {
+                setExplorerRootOpen(true);
+                onToggleCollapsed();
+              } else {
+                setExplorerRootOpen((current) => !current);
+              }
+              onOpenExplorer();
+            }}
+          >
+            <TreeDisclosure collapsed={!explorerRootOpen} />
+            <img src={kubeCluster} className="svg-inject" alt="Kubernetes" />
+            <span>{uiText.sidebar.k8sCluster}</span>
+            {/* <TreeDisclosure collapsed={!explorerRootOpen} /> */}
+          </button>
+        </div>
+        <div className="k8sexplorer-group root-group">
           {(collapsed || explorerRootOpen) && !collapsed && (
             <>
               <div className="k8sexplorer-group">
                 <button className="k8sexplorer-title k8sexplorer-toggle" onClick={() => toggleGroup('contextsRoot')}>
-                  <span>{isGroupCollapsed('contextsRoot') ? '▸' : '▾'}</span>
+                  <TreeDisclosure collapsed={isGroupCollapsed('contextsRoot')} />
                   <img src={starredIcon} className="svg-inject" alt="Starred" />
-                  <span>STARRED CONTEXTS</span>
+                  <span>{uiText.sidebar.starredContexts}</span>
                 </button>
                 <div className="k8sexplorer-items">
                   {(collapsed || !isGroupCollapsed('contextsRoot')) && (
@@ -761,6 +772,7 @@ export function Sidebar({
                 onDeleteLocalKubeconfig={onDeleteLocalKubeconfig}
                 onDeleteLocalKubeconfigContext={onDeleteLocalKubeconfigContext}
                 onAzureSignOut={onAzureSignOut}
+                onAzureAccountSignedOut={onAzureAccountSignedOut}
                 onOpenCloudAzureView={onOpenCloudAzureView}
                 awsSignedIn={awsSignedIn}
                 awsRefreshToken={awsRefreshToken}

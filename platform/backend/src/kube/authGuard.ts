@@ -1,8 +1,9 @@
 import { kube } from './client.js';
 import { hasAzureCliLogin } from '../azure/azure.js';
-import { logInfo } from '../util/logger.js';
+import { logDebug, logInfo } from '../util/logger.js';
 import { HttpError } from '../util/httpError.js';
 import type { SessionScope } from '../auth/session.js';
+import type { CallIdentity } from '../util/callIdentity.js';
 import { repairKubeconfig } from './kubeConfigRepair.js';
 import { fetchAndCacheKubeloginToken, getCachedKubeloginToken, resolveContextIdentity } from './kubeloginCache.js';
 
@@ -14,6 +15,12 @@ interface EnsureContextAuthOptions {
   source?: SessionScope;
   userId?: string;
   azureLogin?: any; // Not used in simplified auth, but kept for backward compat
+  /**
+   * Which signed-in account/tenant/subscription this call is actually operating against -
+   * every REST route (via requestContext.ts) and every WS handler resolves this before
+   * calling in, so a cross-account mix-up is visible in the logs on the very first call.
+   */
+  identity?: CallIdentity;
 }
 
 /**
@@ -28,6 +35,12 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
   const context = options.context ?? 'default';
 
   logInfo('kube.auth.start', { context, userId: options.userId ?? null });
+  logDebug('kube.auth.identity', {
+    context,
+    azureConfigDir: options.azureConfigDir ?? null,
+    kubeconfigPath: options.kubeconfigPath ?? null,
+    identity: options.identity ?? null,
+  });
 
   // Normalize kubeconfig auth exec args early (devicecode -> azurecli), so
   // all API/WS code paths avoid interactive kubelogin hangs.

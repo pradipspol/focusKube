@@ -424,9 +424,10 @@ export async function replaceResource(
   manifest: k8s.KubernetesObject,
   context?: string,
   options: KubeAccessOptions = {},
+  dryRun?: boolean,
 ) {
   const api = await objectApi(context, options);
-  const res = await callK8s(() => api.replace(manifest), {
+  const res = await callK8s(() => api.replace(manifest, undefined, dryRun ? 'All' : undefined), {
     action: 'replace',
     plural: `${manifest.kind ?? 'unknown'}`.toLowerCase(),
     context,

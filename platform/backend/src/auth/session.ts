@@ -10,6 +10,10 @@ import { config } from '../config.js';
 import { HttpError } from '../util/httpError.js';
 import { logError, logInfo, logWarn, setLogContext } from '../util/logger.js';
 import { kube } from '../kube/client.js';
+import { getAzureAccountConfigDir, listAzureAccounts } from '../runtime/azureAccountStore.js';
+import { getDesktopContextSource } from '../runtime/desktopStore.js';
+import type { CallIdentity } from '../util/callIdentity.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { type Role } from './rbac.js';
 
 const runtimeByUserId = new Map<string, UserSessionState>();
@@ -35,6 +39,19 @@ export interface UserSessionState {
   azureLogin: AzureLoginManager;
   azureLoginCloud: AzureLoginManager;
   azureLoginLocal: AzureLoginManager;
+  /**
+   * The in-flight "cloud" Azure login attempt, if any. Each attempt targets a fresh candidate
+   * config dir (see runtime/azureAccountStore.ts) since the device-code flow doesn't reveal
+   * which email will complete login until the user finishes in the browser; GET /login/status
+   * reconciles it against the account registry by email once it succeeds, retrying up to
+   * `finalizeAttempts` times rather than discarding a login it can't immediately identify.
+   */
+  azureLoginCloudPending: {
+    manager: AzureLoginManager;
+    configDirName: string;
+    configDir: string;
+    finalizeAttempts: number;
+  } | null;
   contextSourceHints: Record<string, SessionScope>;
   awsConfigFile: string;
   awsCredentialsFile: string;
@@ -104,37 +121,52 @@ type PersistedDesktopAuthState = {
 };
 
 let desktopAuthStateLoaded = false;
+// Caches the in-flight load itself (not just a boolean flag set before the first `await`),
+// so two concurrent callers before the first load finishes both wait for the SAME read
+// instead of the second one observing a still-empty `desktopAuthLastEmail` and racing a
+// redundant load - the same class of race fixed in azureAccountStore.ts/desktopStore.ts.
+let desktopAuthLoadPromise: Promise<void> | null = null;
 let desktopAuthLastEmail: string | null = null;
 
 function desktopAuthStatePath(): string {
   return path.join(config.sessionStorageDir, DESKTOP_AUTH_STATE_FILE);
 }
 
-function loadDesktopAuthState(): void {
+async function ensureDesktopAuthStateLoaded(): Promise<void> {
   if (desktopAuthStateLoaded) return;
-  desktopAuthStateLoaded = true;
-
-  try {
-    const raw = fs.readFileSync(desktopAuthStatePath(), 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw) as PersistedDesktopAuthState;
-    if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
-      desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
-    }
-  } catch (err) {
-    logError('auth.desktop_state.load_failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
+  if (!desktopAuthLoadPromise) {
+    desktopAuthLoadPromise = (async () => {
+      try {
+        const raw = await fsp.readFile(desktopAuthStatePath(), 'utf8');
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as PersistedDesktopAuthState;
+          if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
+            desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
+          }
+        }
+      } catch (err) {
+        logError('auth.desktop_state.load_failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        desktopAuthStateLoaded = true;
+      }
+    })();
   }
+  await desktopAuthLoadPromise;
 }
 
-function persistDesktopAuthState(): void {
-  loadDesktopAuthState();
+async function persistDesktopAuthState(): Promise<void> {
+  await ensureDesktopAuthStateLoaded();
 
   try {
-    fs.mkdirSync(config.sessionStorageDir, { recursive: true });
     const payload: PersistedDesktopAuthState = { lastEmail: desktopAuthLastEmail };
-    fs.writeFileSync(desktopAuthStatePath(), JSON.stringify(payload, null, 2), 'utf8');
+    // This is the one piece of desktop auth state every request's identity resolution reads
+    // (resolveAuthFromHeaders, below) - write it the same locked+atomic way as every other
+    // state file in this app, not a plain writeFileSync that a torn write could corrupt.
+    await withFileLock(desktopAuthStatePath(), () =>
+      writeFileAtomic(desktopAuthStatePath(), JSON.stringify(payload, null, 2)),
+    );
   } catch (err) {
     logError('auth.desktop_state.persist_failed', {
       error: err instanceof Error ? err.message : String(err),
@@ -142,43 +174,23 @@ function persistDesktopAuthState(): void {
   }
 }
 
-function rememberDesktopAuthEmail(email: string): void {
-  loadDesktopAuthState();
+async function rememberDesktopAuthEmail(email: string): Promise<void> {
+  await ensureDesktopAuthStateLoaded();
   const normalized = email.trim().toLowerCase();
   if (!normalized) return;
   if (desktopAuthLastEmail === normalized) return;
   desktopAuthLastEmail = normalized;
-  persistDesktopAuthState();
+  await persistDesktopAuthState();
 }
 
-export function clearDesktopAuthState(): void {
-  loadDesktopAuthState();
+export async function clearDesktopAuthState(): Promise<void> {
+  await ensureDesktopAuthStateLoaded();
   desktopAuthLastEmail = null;
-  persistDesktopAuthState();
-}
-
-function getPersistedDesktopAuthEmail(): string | null {
-  loadDesktopAuthState();
-  return desktopAuthLastEmail;
+  await persistDesktopAuthState();
 }
 
 async function getPersistedDesktopAuthEmailAsync(): Promise<string | null> {
-  if (desktopAuthStateLoaded) {
-    return desktopAuthLastEmail;
-  }
-  desktopAuthStateLoaded = true;
-  try {
-    const raw = await fsp.readFile(desktopAuthStatePath(), 'utf8');
-    if (!raw.trim()) return null;
-    const parsed = JSON.parse(raw) as PersistedDesktopAuthState;
-    if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
-      desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
-    }
-  } catch (err) {
-    logError('auth.desktop_state.load_async_failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  await ensureDesktopAuthStateLoaded();
   return desktopAuthLastEmail;
 }
 
@@ -228,35 +240,40 @@ async function copyIfMissingAsync(sourcePath: string, targetPath: string): Promi
 
 async function ensureSessionKubeconfigAsync(kubeconfigPath: string): Promise<void> {
   try {
-    let exists = false;
-    let isFile = false;
-    let size = 0;
-    try {
-      const stat = await fsp.stat(kubeconfigPath);
-      exists = true;
-      isFile = stat.isFile();
-      size = stat.size;
-    } catch {
-      // Best effort only.
-    }
+    // Runs on every session fetch, and seeds an EMPTY kubeconfig when the file looks missing
+    // or zero-length. Take the same lock the import/removal/repair paths use so it can never
+    // observe another writer's intermediate state and overwrite a real kubeconfig with an
+    // empty one.
+    await withFileLock(kubeconfigPath, async () => {
+      let exists = false;
+      let isFile = false;
+      let size = 0;
+      try {
+        const stat = await fsp.stat(kubeconfigPath);
+        exists = true;
+        isFile = stat.isFile();
+        size = stat.size;
+      } catch {
+        // Best effort only.
+      }
 
-    if (exists && isFile && size > 0) return;
+      if (exists && isFile && size > 0) return;
 
-    await ensureDirAsync(path.dirname(kubeconfigPath));
-    // Keep a syntactically valid empty kubeconfig to avoid noisy parse errors
-    // before a user imports credentials.
-    await fsp.writeFile(
-      kubeconfigPath,
-      [
-        'apiVersion: v1',
-        'kind: Config',
-        'clusters: []',
-        'contexts: []',
-        'users: []',
-        'current-context: ""',
-      ].join('\n') + '\n',
-      { encoding: 'utf8' },
-    );
+      await ensureDirAsync(path.dirname(kubeconfigPath));
+      // Keep a syntactically valid empty kubeconfig to avoid noisy parse errors
+      // before a user imports credentials.
+      await writeFileAtomic(
+        kubeconfigPath,
+        [
+          'apiVersion: v1',
+          'kind: Config',
+          'clusters: []',
+          'contexts: []',
+          'users: []',
+          'current-context: ""',
+        ].join('\n') + '\n',
+      );
+    });
   } catch (err) {
     logError('auth.session.ensure_kubeconfig_failed', {
       kubeconfigPath,
@@ -308,6 +325,7 @@ async function createSessionStateAsync(userId: string): Promise<UserSessionState
     azureLogin: undefined as unknown as AzureLoginManager,
     azureLoginCloud: undefined as unknown as AzureLoginManager,
     azureLoginLocal: undefined as unknown as AzureLoginManager,
+    azureLoginCloudPending: null,
     contextSourceHints: {},
     awsConfigFile: awsPaths.configFile,
     awsCredentialsFile: awsPaths.credentialsFile,
@@ -493,7 +511,7 @@ export async function resolveAuthFromHeaders(
     email = config.defaultAdminEmail;
   }
 
-  rememberDesktopAuthEmail(email);
+  await rememberDesktopAuthEmail(email);
 
   const userId = desktopUserIdForEmail(email);
   setLogContext({
@@ -515,15 +533,7 @@ export function sessionEnv(req: Request): Record<string, string> {
   if (!req.userSession) {
     throw new HttpError(401, 'Authentication required');
   }
-  const source = resolveSessionScope(req.userSession, req.userSession.activeContext);
-  return {
-    KUBECONFIG: kubeconfigPathForSource(req.userSession, source),
-    AZURE_CONFIG_DIR: azureConfigDirForSource(req.userSession, source),
-    AWS_CONFIG_FILE: req.userSession.awsConfigFile,
-    AWS_SHARED_CREDENTIALS_FILE: req.userSession.awsCredentialsFile,
-    AWS_PROFILE: req.userSession.awsProfile,
-    AWS_SDK_LOAD_CONFIG: '1',
-  };
+  return sessionEnvForSource(req, resolveSessionScope(req.userSession, req.userSession.activeContext));
 }
 
 export function normalizeSessionScope(scope: string | null | undefined): SessionScope {
@@ -586,7 +596,7 @@ export async function resolveSessionScopeForContext(
     }
 
     // Strict contract: each scope is read only from its own kubeconfig. Never auto-switch sources.
-    const otherScopes: SessionScope[] = (['local', 'minikube', 'cloud', 'aws'] as SessionScope[]).filter((s) => s !== forced);
+    const otherScopes: SessionScope[] = (['local', 'minikube', 'azure', 'aws'] as SessionScope[]).filter((s) => s !== forced);
     const foundIn = (await Promise.all(otherScopes.map((s) => hasContextInSource(s))))
       .map((found, i) => (found ? otherScopes[i] : null))
       .filter((s): s is SessionScope => s !== null);
@@ -710,6 +720,108 @@ export function activeSessionKubeconfigPath(state: UserSessionState, contextName
   return kubeconfigPathForSource(state, resolveSessionScope(state, contextName));
 }
 
-export function activeSessionAzureConfigDir(state: UserSessionState, contextName?: string | null): string {
-  return azureConfigDirForSource(state, resolveSessionScope(state, contextName));
+/**
+ * Resolves both the isolated Azure config dir AND the call identity for `contextName` off a
+ * single lookup of its persisted context-source doc, for `'azure'`/`'aws'` scope. Both used to
+ * fetch that same doc independently (`azureConfigDirForContext` and `resolveCallIdentity`),
+ * which meant `resolveScopedRequestContext` paid for it twice on every request - merged here,
+ * with `azureConfigDirForContext`/`resolveCallIdentity` kept as thin single-field wrappers for
+ * call sites that only need one half.
+ */
+async function resolveAzureContextInfo(
+  state: UserSessionState,
+  source: SessionScope,
+  contextName?: string | null,
+): Promise<{ dir: string; identity: CallIdentity }> {
+  const identity: CallIdentity = {
+    userId: state.userId,
+    scope: source,
+    context: (contextName ?? '').trim() || undefined,
+  };
+  const fallbackDir = azureConfigDirForSource(state, source);
+  const name = identity.context;
+  if ((source !== 'azure' && source !== 'aws') || !name) {
+    return { dir: fallbackDir, identity };
+  }
+
+  const doc = await getDesktopContextSource(state.userId, source, name);
+  if (!doc) return { dir: fallbackDir, identity };
+
+  identity.accountId = doc.accountId;
+  identity.tenantId = doc.tenantId;
+  identity.tenantName = doc.tenantName;
+  identity.subscriptionId = doc.subscriptionId;
+  identity.subscriptionName = doc.subscriptionName;
+  identity.resourceGroup = doc.resourceGroup;
+  identity.clusterName = doc.clusterName;
+
+  let dir = fallbackDir;
+  if (source === 'azure' && doc.accountId) {
+    const accountDir = await getAzureAccountConfigDir(state.userId, doc.accountId);
+    if (accountDir) dir = accountDir;
+    const accounts = await listAzureAccounts(state.userId);
+    identity.accountEmail = accounts.find((account) => account.accountId === doc.accountId)?.email;
+  }
+
+  return { dir, identity };
+}
+
+/**
+ * Like `azureConfigDirForSource`, but for `'azure'` scope resolves the SPECIFIC account that
+ * owns `contextName` (via its persisted `accountId` tag), instead of the single shared cloud
+ * dir. Falls back to the shared dir when no context is given, or the context predates
+ * per-account tagging (imported before this isolation was added).
+ */
+export async function azureConfigDirForContext(
+  state: UserSessionState,
+  source: SessionScope,
+  contextName?: string | null,
+): Promise<string> {
+  return (await resolveAzureContextInfo(state, source, contextName)).dir;
+}
+
+export async function activeSessionAzureConfigDir(state: UserSessionState, contextName?: string | null): Promise<string> {
+  return azureConfigDirForContext(state, resolveSessionScope(state, contextName), contextName);
+}
+
+/**
+ * Resolves exactly which signed-in account/tenant/subscription owns `contextName`, for
+ * debug logging on every az/kube/helm/kubectl call. Never throws and never affects
+ * which config dir/kubeconfig is actually used - it is read-only, sourced from the same
+ * `accountId` tag `azureConfigDirForContext` already uses, plus the account registry and
+ * the context's persisted tenant/subscription metadata.
+ */
+export async function resolveCallIdentity(
+  state: UserSessionState,
+  source: SessionScope,
+  contextName?: string | null,
+): Promise<CallIdentity> {
+  return (await resolveAzureContextInfo(state, source, contextName)).identity;
+}
+
+/**
+ * Convenience wrapper for the `resolveSessionScope` + `resolveCallIdentity` pair every WS
+ * handler (terminal/logs/exec/port-forward/watch/metrics) needs before calling
+ * `ensureContextAuthReady` - keeps that two-line resolution from being repeated at each call site.
+ */
+export async function resolveSessionAuthContext(
+  state: UserSessionState,
+  contextName?: string | null,
+): Promise<{ scope: SessionScope; identity: CallIdentity }> {
+  const scope = resolveSessionScope(state, contextName);
+  const identity = await resolveCallIdentity(state, scope, contextName);
+  return { scope, identity };
+}
+
+/**
+ * Same merged resolution as `resolveSessionAuthContext`, but also returns the Azure config
+ * dir - for callers (namely `resolveScopedRequestContext`) that need both and would otherwise
+ * fetch the same context-source doc twice.
+ */
+export async function resolveScopedAzureContext(
+  state: UserSessionState,
+  source: SessionScope,
+  contextName?: string | null,
+): Promise<{ dir: string; identity: CallIdentity }> {
+  return resolveAzureContextInfo(state, source, contextName);
 }

@@ -12,25 +12,6 @@ export type MinikubeCluster = {
   memory?: string;
 };
 
-export type DeploymentInfo = {
-  name: string;
-  namespace: string;
-  replicas: number;
-  readyReplicas: number;
-  updatedReplicas: number;
-  availableReplicas: number;
-  age: string;
-};
-
-export type PodInfo = {
-  name: string;
-  namespace: string;
-  status: string;
-  ready: string;
-  restarts: number;
-  age: string;
-};
-
 export type MinikubeSetupScript = {
   id: string;
   title: string;
@@ -107,85 +88,6 @@ export const minikubeApi = {
     if (!res.ok) throw new Error('Failed to delete cluster');
     return res.json();
   },
-
-  async deployManifest(manifest: string, clusterName: string = 'minikube'): Promise<{ success: boolean; output: string }> {
-    const res = await fetch(`${MINIKUBE_API_BASE}/deploy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ manifest, clusterName }),
-    });
-    if (!res.ok) throw new Error('Failed to deploy manifest');
-    return res.json();
-  },
-
-  async getDeployments(
-    clusterName: string = 'minikube',
-    namespace: string = 'default',
-  ): Promise<{ deployments: DeploymentInfo[] }> {
-    const params = new URLSearchParams({ clusterName, namespace });
-    const res = await fetch(`${MINIKUBE_API_BASE}/deployments?${params}`);
-    if (!res.ok) throw new Error('Failed to get deployments');
-    return res.json();
-  },
-
-  async getPods(
-    clusterName: string = 'minikube',
-    namespace: string = 'default',
-  ): Promise<{ pods: PodInfo[] }> {
-    const params = new URLSearchParams({ clusterName, namespace });
-    const res = await fetch(`${MINIKUBE_API_BASE}/pods?${params}`);
-    if (!res.ok) throw new Error('Failed to get pods');
-    return res.json();
-  },
-
-  async getPodLogs(
-    podName: string,
-    clusterName: string = 'minikube',
-    namespace: string = 'default',
-  ): Promise<{ logs: string }> {
-    const params = new URLSearchParams({ clusterName, namespace });
-    const res = await fetch(`${MINIKUBE_API_BASE}/pods/${podName}/logs?${params}`);
-    if (!res.ok) throw new Error('Failed to get pod logs');
-    return res.json();
-  },
-
-  async execInPod(
-    podName: string,
-    command: string[],
-    clusterName: string = 'minikube',
-    namespace: string = 'default',
-  ): Promise<{ output: string }> {
-    const params = new URLSearchParams({ clusterName, namespace });
-    const res = await fetch(`${MINIKUBE_API_BASE}/pods/${podName}/exec?${params}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
-    });
-    if (!res.ok) throw new Error('Failed to execute command in pod');
-    return res.json();
-  },
-
-  async testPod(
-    podName: string,
-    clusterName: string = 'minikube',
-    namespace: string = 'default',
-  ): Promise<{ name: string; status: string; readiness: boolean; logs: string }> {
-    const params = new URLSearchParams({ clusterName, namespace });
-    const res = await fetch(`${MINIKUBE_API_BASE}/pods/${podName}/test?${params}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) throw new Error('Failed to test pod');
-    return res.json();
-  },
-
-  async getNamespaces(clusterName: string = 'minikube'): Promise<{ namespaces: string[] }> {
-    const params = new URLSearchParams({ clusterName });
-    const res = await fetch(`${MINIKUBE_API_BASE}/namespaces?${params}`);
-    if (!res.ok) throw new Error('Failed to get namespaces');
-    return res.json();
-  },
 };
 
 /**
@@ -236,86 +138,6 @@ export const useDeleteCluster = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['minikube'] });
     },
-  });
-};
-
-export const useDeployManifest = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      manifest,
-      clusterName,
-    }: {
-      manifest: string;
-      clusterName?: string;
-    }) => minikubeApi.deployManifest(manifest, clusterName),
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ['minikube', 'deployments', variables.clusterName || 'minikube'],
-      });
-    },
-  });
-};
-
-export const useDeployments = (
-  clusterName: string = 'minikube',
-  namespace: string = 'default',
-  enabled: boolean = true,
-) => {
-  return useQuery({
-    queryKey: ['minikube', 'deployments', clusterName, namespace],
-    queryFn: () => minikubeApi.getDeployments(clusterName, namespace),
-    enabled,
-    refetchInterval: 15000, // 15 seconds
-  });
-};
-
-export const usePods = (
-  clusterName: string = 'minikube',
-  namespace: string = 'default',
-  enabled: boolean = true,
-) => {
-  return useQuery({
-    queryKey: ['minikube', 'pods', clusterName, namespace],
-    queryFn: () => minikubeApi.getPods(clusterName, namespace),
-    enabled,
-    refetchInterval: 15000, // 15 seconds
-  });
-};
-
-export const usePodLogs = (
-  podName: string,
-  clusterName: string = 'minikube',
-  namespace: string = 'default',
-  enabled: boolean = true,
-) => {
-  return useQuery({
-    queryKey: ['minikube', 'pod-logs', podName, clusterName, namespace],
-    queryFn: () => minikubeApi.getPodLogs(podName, clusterName, namespace),
-    enabled: !!podName && enabled,
-  });
-};
-
-export const useTestPod = () => {
-  return useMutation({
-    mutationFn: ({
-      podName,
-      clusterName,
-      namespace,
-    }: {
-      podName: string;
-      clusterName?: string;
-      namespace?: string;
-    }) => minikubeApi.testPod(podName, clusterName, namespace),
-  });
-};
-
-export const useNamespaces = (clusterName: string = 'minikube', enabled: boolean = true) => {
-  return useQuery({
-    queryKey: ['minikube', 'namespaces', clusterName],
-    queryFn: () => minikubeApi.getNamespaces(clusterName),
-    enabled,
-    refetchInterval: 30000, // 30 seconds
   });
 };
 

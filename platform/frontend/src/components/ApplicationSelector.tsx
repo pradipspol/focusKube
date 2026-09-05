@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { uiText } from '../text';
+import { TreeDisclosure } from './TreeDisclosure';
 
 export interface ApplicationOption {
   key: string;
@@ -14,7 +15,7 @@ interface Props {
 
 // Unlike NamespaceSelector, an empty selection here means "show nothing" — the
 // topology graph should stay blank until the user actively opts into an application.
-export function ApplicationSelector({ applications, selected, onChange }: Props) {
+export function ApplicationSelector ({ applications, selected, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,7 +53,7 @@ export function ApplicationSelector({ applications, selected, onChange }: Props)
           onClick={() => setOpen((current) => !current)}
         >
           <span>{label}</span>
-          <span>{open ? '▴' : '▾'}</span>
+          <TreeDisclosure collapsed={!open} />
         </button>
         {open && (
           <div className="namespace-dropdown-menu">

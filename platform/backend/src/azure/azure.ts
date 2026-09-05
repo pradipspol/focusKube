@@ -1,11 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { resolveExecutablePath, run, runOrThrow } from '../util/run.js';
 import { config } from '../config.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
 import { logInfo } from '../util/logger.js';
 import { logError, logWarn } from '../util/logger.js';
+import type { CallIdentity } from '../util/callIdentity.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 
 export type LoginState = 'idle' | 'pending' | 'succeeded' | 'failed';
 
@@ -240,6 +243,7 @@ export async function hasAzureCliLogin(azureConfigDir: string): Promise<boolean>
  */
 export class AzureLoginManager {
   private proc: ChildProcess | null = null;
+  private watchdog: NodeJS.Timeout | null = null;
   private state: LoginState = 'idle';
   private lastMessage = '';
   private deviceInfo: DeviceCodeInfo | null = null;
@@ -260,6 +264,37 @@ export class AzureLoginManager {
       deviceInfo: this.deviceInfo,
       diagnostics: this.diagnostics,
     };
+  }
+
+  /**
+   * Abandon an in-flight login: kill the `az login` child and stop the watchdog.
+   *
+   * Without this, replacing a pending login (e.g. the user clicks "Add Azure account"
+   * twice) leaves the first `az login --use-device-code` polling Azure until its device
+   * code expires. If the user then completes THAT code, the CLI writes credentials into a
+   * config directory nothing references any more - a successful sign-in that never appears
+   * in the app, plus a stray credentialed directory on disk.
+   */
+  cancel(reason = 'Azure login cancelled.'): void {
+    if (this.watchdog) {
+      clearTimeout(this.watchdog);
+      this.watchdog = null;
+    }
+    const proc = this.proc;
+    this.proc = null;
+    if (proc) {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }
+    if (this.state === 'pending') {
+      this.state = 'failed';
+      this.lastMessage = reason;
+    }
+    this.deviceInfo = null;
+    logInfo('azure.login.cancelled', { instanceId: this._instanceId, reason });
   }
 
   /**
@@ -285,7 +320,7 @@ export class AzureLoginManager {
       const azCandidates = buildAzCandidates();
 
       let candidateIndex = 0;
-      let watchdog: NodeJS.Timeout | null = null;
+      this.watchdog = null;
       let sawDeviceCode = false;
       let outputBuffer = '';
 
@@ -296,7 +331,7 @@ export class AzureLoginManager {
           outputBuffer.match(/\bcode\s+([A-Z0-9-]{8,})\b/i);
         if (urlMatch || codeMatch) {
           sawDeviceCode = true;
-          if (watchdog) clearTimeout(watchdog);
+          if (this.watchdog) clearTimeout(this.watchdog);
           this.deviceInfo = {
             message: this.lastMessage || 'Azure device code received.',
             verificationUrl: urlMatch?.[0],
@@ -329,7 +364,7 @@ export class AzureLoginManager {
         if (!cmd) {
           this.state = 'failed';
           this.lastMessage = 'Azure CLI executable not found. Install Azure CLI and ensure az is on PATH.';
-          if (watchdog) clearTimeout(watchdog);
+          if (this.watchdog) clearTimeout(this.watchdog);
           return;
         }
         this.diagnostics.lastAzCandidate = cmd;
@@ -406,14 +441,14 @@ export class AzureLoginManager {
             code: e.code,
             message: e.message,
           }, commandReason(e));
-          if (watchdog) clearTimeout(watchdog);
+          if (this.watchdog) clearTimeout(this.watchdog);
           return;
         }
 
         this.proc = child;
         this.lastMessage = 'Waiting for Azure device code…';
 
-        watchdog = setTimeout(() => {
+        this.watchdog = setTimeout(() => {
           if (this.state !== 'pending') return;
           this.state = 'failed';
           this.lastMessage =
@@ -434,7 +469,7 @@ export class AzureLoginManager {
           this.proc?.kill('SIGKILL');
           this.proc = null;
         }, 30_000);
-        watchdog.unref();
+        this.watchdog.unref();
 
         child.stdout?.on('data', handle);
         child.stderr?.on('data', handle);
@@ -453,7 +488,7 @@ export class AzureLoginManager {
               fallbackExecutablePath: azCandidates[candidateIndex + 1] ?? null,
               code: e.code,
             });
-            if (watchdog) clearTimeout(watchdog);
+            if (this.watchdog) clearTimeout(this.watchdog);
             candidateIndex += 1;
             trySpawn();
             return;
@@ -472,7 +507,7 @@ export class AzureLoginManager {
             code: e.code,
             message: err.message,
           }, commandReason(err));
-          if (watchdog) clearTimeout(watchdog);
+          if (this.watchdog) clearTimeout(this.watchdog);
         });
 
         child.on('close', (code) => {
@@ -483,7 +518,7 @@ export class AzureLoginManager {
             currentState: this.state,
             sawDeviceCode,
           });
-          if (this.state !== 'pending' && watchdog) clearTimeout(watchdog);
+          if (this.state !== 'pending' && this.watchdog) clearTimeout(this.watchdog);
           if (code === 0) {
             this.state = 'succeeded';
             this.lastMessage = 'Azure login succeeded.';
@@ -510,12 +545,12 @@ export class AzureLoginManager {
           } else if (this.state !== 'succeeded') {
             if (code === -4058) {
               if (candidateIndex < azCandidates.length - 1) {
-                if (watchdog) clearTimeout(watchdog);
+                if (this.watchdog) clearTimeout(this.watchdog);
                 candidateIndex += 1;
                 trySpawn();
                 return;
               }
-              if (watchdog) clearTimeout(watchdog);
+              if (this.watchdog) clearTimeout(this.watchdog);
               this.state = 'failed';
               this.lastMessage =
                 'Azure CLI executable not found for backend process (Windows ENOENT). ' +
@@ -532,11 +567,11 @@ export class AzureLoginManager {
                 code,
               }, 'Azure CLI executable not found');
             } else if (!sawDeviceCode && this.state === 'pending') {
-              // Keep status as pending; watchdog will mark timeout/failure if no
+              // Keep status as pending; the watchdog will mark timeout/failure if no
               // device code appears within the allowed window.
               this.lastMessage = 'Waiting for Azure device code…';
             } else {
-              if (watchdog) clearTimeout(watchdog);
+              if (this.watchdog) clearTimeout(this.watchdog);
               this.state = 'failed';
               if (!this.lastMessage || this.lastMessage === 'Starting Azure login…' || isAzureDeviceCodeNoise(this.lastMessage)) {
                 this.lastMessage = `az login exited with code ${code}`;
@@ -567,11 +602,21 @@ export class AzureLoginManager {
 
 interface AzureExecOptions {
   env?: Record<string, string>;
+  /** Which signed-in account/tenant/subscription this call is operating against, for debug logging. */
+  identity?: CallIdentity;
+}
+
+/** Every `az` invocation in this file needs the same candidate-executable resolution. */
+function runAz(args: string[], options: AzureExecOptions = {}) {
+  return run('az', args, { ...options, candidates: buildAzCandidates() });
+}
+
+function runAzOrThrow(args: string[], options: AzureExecOptions = {}) {
+  return runOrThrow('az', args, { ...options, candidates: buildAzCandidates() });
 }
 
 export async function azAccountShow(options: AzureExecOptions = {}): Promise<unknown | null> {
-  const candidates = buildAzCandidates();
-  const res = await run('az', ['account', 'show', '--output', 'json'], { ...options, candidates });
+  const res = await runAz(['account', 'show', '--output', 'json'], options);
   if (res.code !== 0) return null;
   try {
     return JSON.parse(res.stdout);
@@ -580,9 +625,14 @@ export async function azAccountShow(options: AzureExecOptions = {}): Promise<unk
   }
 }
 
-export async function azListSubscriptions(options: AzureExecOptions = {}): Promise<unknown[]> {
-  const candidates = buildAzCandidates();
-  const res = await run('az', ['account', 'list', '--all', '--output', 'json'], { ...options, candidates });
+export async function azListSubscriptions(options: AzureExecOptions & { refresh?: boolean } = {}): Promise<unknown[]> {
+  // Without --refresh, `az account list` reads the local on-disk profile cache, which is only
+  // as fresh as the last `az login`/list call - it can miss subscriptions granted (directly or
+  // via Azure Lighthouse delegation) since then, even though the Azure Portal already shows
+  // them live. --refresh forces a real round trip to re-enumerate from the server.
+  const args = ['account', 'list', '--all', '--output', 'json'];
+  if (options.refresh) args.push('--refresh');
+  const res = await runAz(args, options);
   if (res.code !== 0) {
     logWarn('azure.account_list.failed', {
       code: res.code,
@@ -604,11 +654,9 @@ export async function azListSubscriptions(options: AzureExecOptions = {}): Promi
  * built-in core command, so hit the ARM Tenants API directly instead.
  */
 export async function azListTenants(options: AzureExecOptions = {}): Promise<unknown[]> {
-  const candidates = buildAzCandidates();
-  const res = await run(
-    'az',
+  const res = await runAz(
     ['rest', '--method', 'get', '--url', 'https://management.azure.com/tenants?api-version=2022-12-01', '--output', 'json'],
-    { ...options, candidates },
+    options,
   );
   if (res.code !== 0) {
     logWarn('azure.tenant_list.failed', {
@@ -637,8 +685,7 @@ export async function azLogout(
   // config dir can hold multiple accounts at once.
   const args = ['logout'];
   if (options.username) args.push('--username', options.username);
-  const candidates = buildAzCandidates();
-  const res = await run('az', args, { ...options, candidates });
+  const res = await runAz(args, options);
   if (res.code !== 0) {
     const msg = `${res.stderr || res.stdout}`.toLowerCase();
     if (!msg.includes('not logged in') && !msg.includes('no subscriptions')) {
@@ -648,8 +695,7 @@ export async function azLogout(
 }
 
 export async function azSetSubscription(id: string, options: AzureExecOptions = {}): Promise<void> {
-  const candidates = buildAzCandidates();
-  await runOrThrow('az', ['account', 'set', '--subscription', id], { ...options, candidates });
+  await runAzOrThrow(['account', 'set', '--subscription', id], options);
 }
 
 export async function azListAks(
@@ -658,8 +704,7 @@ export async function azListAks(
 ): Promise<unknown[]> {
   const args = ['aks', 'list', '--output', 'json'];
   if (subscription) args.push('--subscription', subscription);
-  const candidates = buildAzCandidates();
-  const { stdout } = await runOrThrow('az', args, { ...options, candidates });
+  const { stdout } = await runAzOrThrow(args, options);
   return JSON.parse(stdout || '[]');
 }
 
@@ -670,6 +715,7 @@ export async function azGetAksCredentials(opts: {
   admin?: boolean;
   kubeconfigPath?: string;
   env?: Record<string, string>;
+  identity?: CallIdentity;
 }): Promise<void> {
   const args = [
     'aks',
@@ -683,25 +729,27 @@ export async function azGetAksCredentials(opts: {
   if (opts.subscription) args.push('--subscription', opts.subscription);
   if (opts.admin) args.push('--admin');
   if (opts.kubeconfigPath || config.kubeconfigPath) args.push('--file', opts.kubeconfigPath ?? config.kubeconfigPath!);
-  const candidates = buildAzCandidates();
-  await runOrThrow('az', args, { env: opts.env, candidates });
-  
+  await runAzOrThrow(args, { env: opts.env, identity: opts.identity });
+
   // Post-process the kubeconfig to use azurecli method instead of devicecode
   // to avoid interactive hangs when kubelogin is invoked by the Kubernetes client
   const kubeconfigPath = opts.kubeconfigPath ?? config.kubeconfigPath;
   if (kubeconfigPath) {
     try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const kubeconfigContent = fs.readFileSync(kubeconfigPath, 'utf-8');
-      // Replace devicecode login method with azurecli to use cached Azure CLI credentials
-      const patchedContent = kubeconfigContent.replace(
-        /(\s+- )devicecode/g,
-        '$1azurecli'
-      );
-      if (patchedContent !== kubeconfigContent) {
-        fs.writeFileSync(kubeconfigPath, patchedContent, 'utf-8');
-      }
+      // Normally this is the caller's private scratch file, but it falls back to the SHARED
+      // kubeconfig when no path is given - so take the lock and write atomically rather than
+      // relying on which path happened to be passed.
+      await withFileLock(kubeconfigPath, async () => {
+        const kubeconfigContent = await fsp.readFile(kubeconfigPath, 'utf-8');
+        // Replace devicecode login method with azurecli to use cached Azure CLI credentials
+        const patchedContent = kubeconfigContent.replace(
+          /(\s+- )devicecode/g,
+          '$1azurecli'
+        );
+        if (patchedContent !== kubeconfigContent) {
+          await writeFileAtomic(kubeconfigPath, patchedContent);
+        }
+      });
     } catch (err) {
       // Log but don't fail if kubeconfig patching fails
       logError('azure.get_aks_credentials.patch_kubeconfig_failed', {

@@ -20,6 +20,7 @@ import type {
   LogLevelSettingsResponse,
   LogLevel,
   PodMetricsSnapshot,
+  ClusterOverviewResponse,
   ResourceKindMeta,
 } from './types';
 
@@ -149,8 +150,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ yaml }),
     }),
+  /** Dry-runs an edit to an existing resource against the cluster - same checks a save would hit, nothing persisted. */
+  validateResourceYamlUpdate: (plural: string, name: string, yaml: string, scope: Scope = {}) =>
+    request<{ apiVersion: string; kind: string; name: string; namespace?: string }>(
+      `/resources/${plural}/${name}/yaml/_validate${qs(scope)}`,
+      { method: 'POST', body: JSON.stringify({ yaml }) },
+    ),
   listResource: (plural: string, scope: Scope) =>
     request<{ items: K8sObject[] }>(`/resources/${plural}${qs(scope)}`),
+  clusterOverview: (scope: Scope, namespaces: string[] = []) => {
+    const params = new URLSearchParams();
+    if (scope.context) params.set('context', scope.context);
+    if (scope.source) params.set('source', scope.source);
+    namespaces.forEach((namespace) => params.append('namespace', namespace));
+    const search = params.toString();
+    return request<ClusterOverviewResponse>(`/resources/overview${search ? `?${search}` : ''}`);
+  },
   listResourcePage: (plural: string, scope: Scope, page?: { limit?: number; continue?: string }) => {
     const params = new URLSearchParams();
     if (scope.context) params.set('context', scope.context);
@@ -256,8 +271,15 @@ export const api = {
   // Azure
   azureAccount: (source?: AzureScope) =>
     request<{ account: AzureAccount | null }>(withQuery('/azure/account', { source })),
-  azureAccounts: (source?: AzureScope) =>
-    request<{ accounts: AzureAccountGroup[] }>(withQuery('/azure/accounts', { source })),
+  /**
+   * `refresh` forces `az account list --refresh` (a real round trip per account) instead of
+   * reading each account's local profile - only worth paying for on an explicit user action,
+   * to pick up access granted since that account signed in.
+   */
+  azureAccounts: (source?: AzureScope, refresh?: boolean) =>
+    request<{ accounts: AzureAccountGroup[] }>(
+      withQuery('/azure/accounts', { source, ...(refresh ? { refresh: '1' } : {}) }),
+    ),
   azureLogin: (source?: AzureScope, tenantId?: string) =>
     request<DeviceCodeInfo>(withQuery('/azure/login', { source }), {
       method: 'POST',
@@ -265,8 +287,16 @@ export const api = {
     }),
   azureLoginStatus: (source?: AzureScope) =>
     request<AzureLoginStatus>(withQuery('/azure/login/status', { source })),
+  /** Abandons an in-flight device-code login without starting a new one. */
+  azureLoginCancel: (source?: AzureScope) =>
+    request<{ ok: boolean }>(withQuery('/azure/login/cancel', { source }), { method: 'POST' }),
+  /**
+   * Signs one account out when `username` is given, otherwise every account in the scope.
+   * `removed` lists the imported contexts dropped as a result - they can't authenticate once
+   * their account is signed out.
+   */
   azureLogout: (username?: string, source?: AzureScope) =>
-    request<{ ok: boolean }>(withQuery('/azure/logout', { source }), {
+    request<{ ok: boolean; removed?: string[] }>(withQuery('/azure/logout', { source }), {
       method: 'POST',
       body: JSON.stringify({ ...(username ? { username } : {}), ...(source ? { source } : {}) }),
     }),
@@ -275,16 +305,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email }),
     }),
-  azureSubscriptions: (source?: AzureScope) =>
-    request<{ subscriptions: AzureSubscription[] }>(withQuery('/azure/subscriptions', { source })),
-  azureSetSubscription: (id: string, source?: AzureScope) =>
+  azureSubscriptions: (source?: AzureScope, accountId?: string) =>
+    request<{ subscriptions: AzureSubscription[] }>(withQuery('/azure/subscriptions', { source, accountId })),
+  azureSetSubscription: (id: string, source?: AzureScope, accountId?: string) =>
     request<{ ok: boolean }>(withQuery('/azure/subscription', { source }), {
       method: 'POST',
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, ...(accountId ? { accountId } : {}) }),
     }),
-  azureAks: (subscription?: string, source?: AzureScope) =>
-    request<{ clusters: AksCluster[] }>(withQuery('/azure/aks', { subscription, source })),
-  azureAksCredentials: (body: { resourceGroup: string; name: string; subscription?: string; admin?: boolean }) =>
+  azureAks: (subscription?: string, source?: AzureScope, accountId?: string) =>
+    request<{ clusters: AksCluster[] }>(withQuery('/azure/aks', { subscription, source, accountId })),
+  azureAksCredentials: (body: { resourceGroup: string; name: string; subscription?: string; admin?: boolean; accountId?: string }) =>
     request<ContextsResponse>('/azure/aks/credentials', {
       method: 'POST',
       body: JSON.stringify(body),

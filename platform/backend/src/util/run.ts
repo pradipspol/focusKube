@@ -4,7 +4,8 @@ import path from 'node:path';
 import { HttpError } from './httpError.js';
 import { config } from '../config.js';
 import { commandLine, commandReason, logCommandOutcome } from './commandLog.js';
-import { logWarn, logError, logInfo } from './logger.js';
+import { logWarn, logError, logInfo, logDebug } from './logger.js';
+import type { CallIdentity } from './callIdentity.js';
 
 export interface RunResult {
   stdout: string;
@@ -21,6 +22,12 @@ export interface RunOptions {
   timeoutMs?: number;
   /** Custom executable candidates to try. If provided, overrides auto-discovery. */
   candidates?: string[];
+  /**
+   * Which signed-in account/tenant/subscription/context this call is operating against.
+   * Every az/helm invocation should supply this so a cross-account mix-up shows up in the
+   * logs immediately instead of silently mixing data.
+   */
+  identity?: CallIdentity;
 }
 
 /**
@@ -30,6 +37,14 @@ export interface RunOptions {
  */
 export function run(cmd: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
   logInfo('exec.run.run', { cmd, args, options });
+  logDebug('exec.call_identity', {
+    cmd,
+    args,
+    commandLine: commandLine(cmd, args),
+    kubeconfigPath: options.env?.KUBECONFIG ?? null,
+    azureConfigDir: options.env?.AZURE_CONFIG_DIR ?? null,
+    identity: options.identity ?? null,
+  });
   const candidates = options.candidates ?? executableCandidates(cmd);
   return runWithCandidates(candidates, args, options);
 }

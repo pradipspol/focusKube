@@ -5,6 +5,7 @@ import { Modal } from './Modal';
 import { api, type Scope } from '../api/client';
 import type { ToastMessage } from './ToastViewport';
 import { uiText } from '../text';
+import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 
 /**
  * Sample manifests keyed by resource plural. When the Add-resource dialog is
@@ -329,15 +330,14 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
           <button onClick={onClose} disabled={apply.isPending}>
             {uiText.common.cancel}
           </button>
-          <button
-            onClick={() => {
+          <ValidateYamlButton
+            onValidate={() => {
               setError('');
               validate.mutate();
             }}
-            disabled={apply.isPending || validate.isPending || !draft.trim()}
-          >
-            {validate.isPending ? 'Validating...' : uiText.common.validate}
-          </button>
+            isPending={validate.isPending}
+            disabled={apply.isPending || !draft.trim()}
+          />
           <button
             className="primary"
             onClick={() => {
@@ -389,16 +389,16 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
         </div>
       </div>
       <div className="create-resource-impact" aria-live="polite">
-        {validate.isError ? (
-          <span className="notice error">{validate.error instanceof Error ? validate.error.message : 'YAML validation failed.'}</span>
-        ) : validate.data ? (
-          <span className="notice success">
-            YAML is valid. Applying will create <span className="mono">{validate.data.kind} {validate.data.name}</span> in{' '}
-            <span className="mono">{validate.data.namespace ?? 'cluster scope'}</span>, or update it if it already exists.
-          </span>
-        ) : (
-          <span className="dim">Validate the manifest to preview the resource and target namespace before applying it.</span>
-        )}
+        <YamlValidationNotice
+          isError={validate.isError}
+          errorMessage={validate.error instanceof Error ? validate.error.message : undefined}
+          successMessage={
+            validate.data
+              ? `YAML is valid. Applying will create ${validate.data.kind} ${validate.data.name} in ${validate.data.namespace ?? 'cluster scope'}, or update it if it already exists.`
+              : undefined
+          }
+          idleMessage="Validate the manifest to preview the resource and target namespace before applying it."
+        />
       </div>
       <div className="yaml-editor-host">
         <Editor

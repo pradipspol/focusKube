@@ -4,6 +4,7 @@ import request from 'supertest';
 import 'express-async-errors';
 import { resourcesService } from '../services/resourcesService.js';
 import { buildTestApp, makeTestAuthUser } from '../testUtils/testApp.js';
+import { badRequest } from '../util/httpError.js';
 
 const scoped = {
   requestedContext: 'ctx-active',
@@ -123,11 +124,46 @@ test('PUT /api/resources/:plural/:name/yaml requires yaml body', async (t) => {
 });
 
 test('PUT /api/resources/:plural/:name/yaml replaces from yaml', async (t) => {
-  t.mock.method(resourcesService, 'replaceFromYaml', async () => ({ metadata: { name: 'a' } }));
+  const calls: unknown[][] = [];
+  t.mock.method(resourcesService, 'replaceFromYaml', async (...args: unknown[]) => {
+    calls.push(args);
+    return { metadata: { name: 'a' } };
+  });
 
   const res = await request(app()).put('/api/resources/pods/a/yaml').send({ yaml: 'kind: Pod' });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { metadata: { name: 'a' } });
+  // A real save must never pass dryRun - that's the whole difference from the _validate route below.
+  assert.equal(calls[0]?.[5], undefined);
+});
+
+test('POST /api/resources/:plural/:name/yaml/_validate requires yaml body', async (t) => {
+  const res = await request(app()).post('/api/resources/pods/a/yaml/_validate').send({});
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/resources/:plural/:name/yaml/_validate dry-runs the update against the cluster without saving', async (t) => {
+  const calls: unknown[][] = [];
+  t.mock.method(resourcesService, 'replaceFromYaml', async (...args: unknown[]) => {
+    calls.push(args);
+    return { apiVersion: 'v1', kind: 'Pod', metadata: { name: 'a', namespace: 'default' } };
+  });
+
+  const res = await request(app()).post('/api/resources/pods/a/yaml/_validate').send({ yaml: 'kind: Pod' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { apiVersion: 'v1', kind: 'Pod', name: 'a', namespace: 'default' });
+  // dryRun must reach the service call - this is what stops the "validate" click from persisting anything.
+  assert.equal(calls[0]?.[5], true);
+});
+
+test('POST /api/resources/:plural/:name/yaml/_validate surfaces the same rejection a real save would hit', async (t) => {
+  t.mock.method(resourcesService, 'replaceFromYaml', async () => {
+    throw badRequest('Service "svc" is invalid: spec.clusterIPs[0]: Invalid value: may not change once set');
+  });
+
+  const res = await request(app()).post('/api/resources/services/svc/yaml/_validate').send({ yaml: 'kind: Service' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /may not change once set/);
 });
 
 test('DELETE /api/resources/:plural/:name deletes a resource', async (t) => {

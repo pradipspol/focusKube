@@ -2,7 +2,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { UserSessionState } from '../auth/session.js';
-import { azureConfigDirForSource, kubeconfigPathForSource, resolveSessionScope, sessionEnvForSource, type SessionScope } from '../auth/session.js';
+import { azureConfigDirForContext, kubeconfigPathForSource, resolveSessionScope, type SessionScope } from '../auth/session.js';
 import { kube } from './client.js';
 
 export interface CliKubeconfigOptions {
@@ -22,11 +22,11 @@ export interface PreparedCliKubeconfig {
 export async function prepareCliKubeconfig(options: CliKubeconfigOptions): Promise<PreparedCliKubeconfig> {
   const source = options.source ?? resolveSessionScope(options.session, options.context ?? options.session.activeContext);
   const kubeconfigPath = kubeconfigPathForSource(options.session, source);
-  const azureConfigDir = azureConfigDirForSource(options.session, source);
   const context = await kube.resolveContextName(options.context, {
     kubeconfigPath,
     fallbackContext: options.session.activeContext,
   });
+  const azureConfigDir = await azureConfigDirForContext(options.session, source, context);
   const kubeConfig = await kube.rawConfig(context, {
     kubeconfigPath,
     fallbackContext: options.session.activeContext,
@@ -58,8 +58,4 @@ export async function withCliKubeconfig<T>(
   } finally {
     await prepared.cleanup();
   }
-}
-
-export function sessionEnvForCliSource(req: any, source: SessionScope): Record<string, string> {
-  return sessionEnvForSource(req, source);
 }

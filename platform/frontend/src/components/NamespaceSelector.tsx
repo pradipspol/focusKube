@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { uiText } from '../text';
+import { TreeDisclosure } from './TreeDisclosure';
 
 interface Props {
   namespaces: string[];
@@ -40,7 +41,7 @@ export function NamespaceSelector({ namespaces, selectedNamespaces, onChange }: 
           onClick={() => setOpen((current) => !current)}
         >
           <span>{label}</span>
-          <span>{open ? '▴' : '▾'}</span>
+          <TreeDisclosure collapsed={!open} />
         </button>
         {open && (
           <div className="namespace-dropdown-menu">

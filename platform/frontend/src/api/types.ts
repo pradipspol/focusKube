@@ -107,6 +107,7 @@ export interface AzureSubscription {
 
 /** A signed-in Azure identity grouped with the subscriptions it owns. */
 export interface AzureAccountGroup {
+  id: string;
   email: string;
   userType?: string;
   subscriptions: AzureSubscription[];
@@ -222,6 +223,20 @@ export interface PodMetricsBatchItem {
 
 export interface PodMetricsBatchResponse {
   items: PodMetricsBatchItem[];
+}
+
+export interface ClusterOverviewResponse {
+  resources: Record<string, K8sObject[]>;
+  nodes: K8sObject[];
+  nodesForbidden: boolean;
+  metrics: { cpuMillicores: number; memoryBytes: number; at: number };
+  events: Array<{
+    type?: string;
+    reason?: string;
+    message?: string;
+    involvedObject?: { kind?: string; name?: string; namespace?: string };
+    timestamp?: string;
+  }>;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

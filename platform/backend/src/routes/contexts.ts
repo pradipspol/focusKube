@@ -8,6 +8,7 @@ import { kube } from '../kube/client.js';
 import { removeContextsFromKubeconfigFile } from '../kube/kubeconfigFile.js';
 import { repairKubeconfigContent } from '../kube/kubeConfigRepair.js';
 import { badRequest, notFound } from '../util/httpError.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { config } from '../config.js';
 import {
@@ -294,7 +295,7 @@ contextsRouter.post('/active', withRouteErrorLogging('contexts', 'POST /active',
           repairedLength: repairedContent.length,
           changed: match.content !== repairedContent,
         });
-        await fsp.writeFile(selectedKubeconfigPath, repairedContent, { encoding: 'utf8' });
+        await withFileLock(selectedKubeconfigPath, () => writeFileAtomic(selectedKubeconfigPath, repairedContent));
         kube.invalidateLoadConfigCache(selectedKubeconfigPath);
         logInfo('contexts.active.restored_local_kubeconfig', {
           reqId: req.logRequestId ?? null,
@@ -377,9 +378,14 @@ contextsRouter.post('/local-kubeconfigs/:id/connect', withRouteErrorLogging('con
     contextCount: local.contexts.length,
   });
 
-  const existingContent = await fsp.readFile(req.userSession.localKubeconfigPath, 'utf8').catch(() => '');
-  const mergedContent = mergeKubeconfigContent(existingContent, local.content);
-  await fsp.writeFile(req.userSession.localKubeconfigPath, mergedContent, { encoding: 'utf8' });
+  // Read-modify-write: take the lock across BOTH the read and the write, or a concurrent
+  // writer's change is silently dropped by the merge.
+  const localKubeconfigPath = req.userSession.localKubeconfigPath;
+  await withFileLock(localKubeconfigPath, async () => {
+    const existingContent = await fsp.readFile(localKubeconfigPath, 'utf8').catch(() => '');
+    const mergedContent = mergeKubeconfigContent(existingContent, local.content);
+    await writeFileAtomic(localKubeconfigPath, mergedContent);
+  });
   kube.invalidateLoadConfigCache(req.userSession.localKubeconfigPath);
 
   logInfo('contexts.connect.step', {

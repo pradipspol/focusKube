@@ -10,6 +10,7 @@ import { EKSClient, ListClustersCommand, DescribeClusterCommand } from '@aws-sdk
 import { fromIni } from '@aws-sdk/credential-providers';
 import { config } from '../config.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { logError, logInfo, logWarn } from '../util/logger.js';
 import { resolveExecutablePath, run, runOrThrow } from '../util/run.js';
 
@@ -924,40 +925,44 @@ async function pinAwsExecEnv(kubeconfigPath: string, clusterName: string, env?: 
   const awsProfile = env?.AWS_PROFILE || process.env.AWS_PROFILE;
   if (!awsConfigFile && !awsCredentialsFile) return;
 
-  let doc: any;
-  try {
-    doc = yaml.load(await fsp.readFile(kubeconfigPath, 'utf8'));
-  } catch (err) {
-    logWarn('aws.eks.kubeconfig.pin_env_read_failed', { kubeconfigPath, error: err instanceof Error ? err.message : String(err) });
-    return;
-  }
-  if (!doc || !Array.isArray(doc.users)) return;
+  // Read-modify-write on a shared kubeconfig: hold the same lock the AKS import, context
+  // removal and repair paths use, across both the read and the write.
+  await withFileLock(kubeconfigPath, async () => {
+    let doc: any;
+    try {
+      doc = yaml.load(await fsp.readFile(kubeconfigPath, 'utf8'));
+    } catch (err) {
+      logWarn('aws.eks.kubeconfig.pin_env_read_failed', { kubeconfigPath, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    if (!doc || !Array.isArray(doc.users)) return;
 
-  let changed = false;
-  for (const userEntry of doc.users) {
-    const exec = userEntry?.user?.exec;
-    if (!exec || String(exec.command).toLowerCase() !== 'aws') continue;
-    const args: string[] = Array.isArray(exec.args) ? exec.args.map(String) : [];
-    const clusterIdx = args.indexOf('--cluster-name');
-    if (clusterIdx === -1 || args[clusterIdx + 1] !== clusterName) continue;
+    let changed = false;
+    for (const userEntry of doc.users) {
+      const exec = userEntry?.user?.exec;
+      if (!exec || String(exec.command).toLowerCase() !== 'aws') continue;
+      const args: string[] = Array.isArray(exec.args) ? exec.args.map(String) : [];
+      const clusterIdx = args.indexOf('--cluster-name');
+      if (clusterIdx === -1 || args[clusterIdx + 1] !== clusterName) continue;
 
-    const execEnv: { name: string; value: string }[] = Array.isArray(exec.env) ? exec.env : [];
-    const setVar = (name: string, value?: string) => {
-      if (!value) return;
-      const existing = execEnv.find((e) => e.name === name);
-      if (existing) existing.value = value;
-      else execEnv.push({ name, value });
-    };
-    setVar('AWS_CONFIG_FILE', awsConfigFile);
-    setVar('AWS_SHARED_CREDENTIALS_FILE', awsCredentialsFile);
-    setVar('AWS_PROFILE', awsProfile);
-    setVar('AWS_SDK_LOAD_CONFIG', '1');
-    exec.env = execEnv;
-    changed = true;
-  }
+      const execEnv: { name: string; value: string }[] = Array.isArray(exec.env) ? exec.env : [];
+      const setVar = (name: string, value?: string) => {
+        if (!value) return;
+        const existing = execEnv.find((e) => e.name === name);
+        if (existing) existing.value = value;
+        else execEnv.push({ name, value });
+      };
+      setVar('AWS_CONFIG_FILE', awsConfigFile);
+      setVar('AWS_SHARED_CREDENTIALS_FILE', awsCredentialsFile);
+      setVar('AWS_PROFILE', awsProfile);
+      setVar('AWS_SDK_LOAD_CONFIG', '1');
+      exec.env = execEnv;
+      changed = true;
+    }
 
-  if (!changed) return;
-  await fsp.writeFile(kubeconfigPath, yaml.dump(doc), { encoding: 'utf8' });
+    if (!changed) return;
+    await writeFileAtomic(kubeconfigPath, yaml.dump(doc));
+  });
 }
 
 export async function awsUpdateEksKubeconfig(opts: {

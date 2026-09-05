@@ -53,7 +53,7 @@ async function runHelm(
   args: string[],
   options: Omit<RunOptions, 'env'> = {},
 ): Promise<RunResult> {
-  return withHelmKubeconfig(req, scoped, (env) => run('helm', args, { ...options, env }));
+  return withHelmKubeconfig(req, scoped, (env) => run('helm', args, { identity: scoped.identity, ...options, env }));
 }
 
 async function runHelmOrThrow(
@@ -62,7 +62,7 @@ async function runHelmOrThrow(
   args: string[],
   options: Omit<RunOptions, 'env'> = {},
 ): Promise<RunResult> {
-  return withHelmKubeconfig(req, scoped, (env) => runOrThrow('helm', args, { ...options, env }));
+  return withHelmKubeconfig(req, scoped, (env) => runOrThrow('helm', args, { identity: scoped.identity, ...options, env }));
 }
 
 /** List releases. Without a namespace, lists across all namespaces. */

@@ -91,6 +91,7 @@ export class ContextsService {
         subscriptionName: sourceDoc.subscriptionName,
         resourceGroup: sourceDoc.resourceGroup,
         clusterName: sourceDoc.clusterName,
+        accountId: sourceDoc.accountId,
       };
     }
 

@@ -1,11 +1,12 @@
 import type { Request } from 'express';
 import {
-  azureConfigDirForSource,
   kubeconfigPathForSource,
+  resolveScopedAzureContext,
   resolveSessionScopeForContext,
   type SessionScope,
 } from '../auth/session.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
+import type { CallIdentity } from '../util/callIdentity.js';
 
 export interface ScopedRequestContext {
   requestedContext: string | undefined;
@@ -13,6 +14,7 @@ export interface ScopedRequestContext {
   selectedScope: SessionScope;
   selectedKubeconfigPath: string;
   selectedAzureConfigDir: string;
+  identity: CallIdentity;
 }
 
 export function requestedContextFromQuery(req: Request): string | undefined {
@@ -33,7 +35,7 @@ export async function resolveScopedRequestContext(
   const requestedSource = overrides.source ?? requestedSourceFromQuery(req);
   const selectedScope = await resolveSessionScopeForContext(req.userSession, requestedContext, requestedSource);
   const selectedKubeconfigPath = kubeconfigPathForSource(req.userSession, selectedScope);
-  const selectedAzureConfigDir = azureConfigDirForSource(req.userSession, selectedScope);
+  const { dir: selectedAzureConfigDir, identity } = await resolveScopedAzureContext(req.userSession, selectedScope, requestedContext);
 
   return {
     requestedContext,
@@ -41,6 +43,7 @@ export async function resolveScopedRequestContext(
     selectedScope,
     selectedKubeconfigPath,
     selectedAzureConfigDir,
+    identity,
   };
 }
 
@@ -61,5 +64,6 @@ export async function ensureScopedContextAuth(req: Request, scoped: ScopedReques
     source: scoped.selectedScope,
     userId: req.authUser?.id,
     azureLogin: req.userSession.azureLogin,
+    identity: scoped.identity,
   });
 }

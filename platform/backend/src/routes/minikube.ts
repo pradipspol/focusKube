@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { promises as fs } from 'node:fs';
 import { z } from 'zod';
 import { minikubeService } from '../services/minikubeService.js';
 import { badRequest } from '../util/httpError.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { logInfo } from '../util/logger.js';
 import { withRouteErrorLogging } from '../util/httpError.js';
@@ -18,18 +18,8 @@ const StartClusterSchema = z.object({
   kubernetesVersion: z.string().optional(),
 });
 
-const DeployManifestSchema = z.object({
-  manifest: z.string().min(1),
-  clusterName: z.string().default('minikube'),
-});
-
 const ClusterSchema = z.object({
   clusterName: z.string().default('minikube'),
-});
-
-const NamespaceSchema = z.object({
-  clusterName: z.string().default('minikube'),
-  namespace: z.string().default('default'),
 });
 
 // Health check endpoint
@@ -48,7 +38,8 @@ minikubeRouter.post(
     setRequestOperation(req, 'minikubeConnect');
     if (!req.userSession) throw badRequest('Session not found');
     const { clusterName, kubeconfig } = await minikubeService.exportKubeconfig('minikube');
-    await fs.writeFile(req.userSession.minikubeKubeconfigPath, kubeconfig, 'utf8');
+    const minikubeKubeconfigPath = req.userSession.minikubeKubeconfigPath;
+    await withFileLock(minikubeKubeconfigPath, () => writeFileAtomic(minikubeKubeconfigPath, kubeconfig));
     req.userSession.activeContext = clusterName;
     req.userSession.activeContextSource = 'minikube';
     res.json({ contextName: clusterName });
@@ -120,115 +111,7 @@ minikubeRouter.post(
   }),
 );
 
-// Deploy manifest
-minikubeRouter.post(
-  '/deploy',
-  withRouteErrorLogging('minikube', 'POST /deploy', async (req, res) => {
-    setRequestOperation(req, 'minikubeDeploy');
-    const body = DeployManifestSchema.safeParse(req.body);
-    if (!body.success) throw badRequest('Manifest is required');
-    const { manifest, clusterName } = body.data;
-    logInfo(`Deploying manifest to ${clusterName}`);
-    const result = await minikubeService.deployManifest(manifest, clusterName);
-    res.json(result);
-  }),
-);
-
-// Get deployments
-minikubeRouter.get(
-  '/deployments',
-  withRouteErrorLogging('minikube', 'GET /deployments', async (req, res) => {
-    setRequestOperation(req, 'minikubeGetDeployments');
-    const { clusterName, namespace } = NamespaceSchema.parse(req.query);
-    const deployments = await minikubeService.getDeployments(clusterName, namespace);
-    res.json({ deployments });
-  }),
-);
-
-// Get pods
-minikubeRouter.get(
-  '/pods',
-  withRouteErrorLogging('minikube', 'GET /pods', async (req, res) => {
-    setRequestOperation(req, 'minikubeGetPods');
-    const { clusterName, namespace } = NamespaceSchema.parse(req.query);
-    const pods = await minikubeService.getPods(clusterName, namespace);
-    res.json({ pods });
-  }),
-);
-
-// Get pod logs
-minikubeRouter.get(
-  '/pods/:podName/logs',
-  withRouteErrorLogging('minikube', 'GET /pods/:podName/logs', async (req, res) => {
-    setRequestOperation(req, 'minikubeGetPodLogs');
-    const { podName } = req.params;
-    const { clusterName, namespace } = NamespaceSchema.parse(req.query);
-
-    if (!podName) {
-      throw badRequest('Pod name is required');
-    }
-
-    const logs = await minikubeService.getPodLogs(podName, clusterName, namespace);
-    res.json({ logs });
-  }),
-);
-
-// Execute command in pod
-minikubeRouter.post(
-  '/pods/:podName/exec',
-  withRouteErrorLogging('minikube', 'POST /pods/:podName/exec', async (req, res) => {
-    setRequestOperation(req, 'minikubeExecPod');
-    const { podName } = req.params;
-    const { command, clusterName, namespace } = z
-      .object({
-        command: z.array(z.string()),
-        clusterName: z.string().default('minikube'),
-        namespace: z.string().default('default'),
-      })
-      .parse({ ...req.body, clusterName: req.query.clusterName, namespace: req.query.namespace });
-
-    if (!podName) {
-      throw badRequest('Pod name is required');
-    }
-
-    if (!command || command.length === 0) {
-      throw badRequest('Command is required');
-    }
-
-    const output = await minikubeService.execInPod(podName, command, clusterName, namespace);
-    res.json({ output });
-  }),
-);
-
-// Test pod
-minikubeRouter.post(
-  '/pods/:podName/test',
-  withRouteErrorLogging('minikube', 'POST /pods/:podName/test', async (req, res) => {
-    setRequestOperation(req, 'minikubeTestPod');
-    const { podName } = req.params;
-    const { clusterName, namespace } = z
-      .object({
-        clusterName: z.string().default('minikube'),
-        namespace: z.string().default('default'),
-      })
-      .parse({ ...req.body, clusterName: req.query.clusterName, namespace: req.query.namespace });
-
-    if (!podName) {
-      throw badRequest('Pod name is required');
-    }
-
-    const result = await minikubeService.testPod(podName, clusterName, namespace);
-    res.json(result);
-  }),
-);
-
-// Get namespaces
-minikubeRouter.get(
-  '/namespaces',
-  withRouteErrorLogging('minikube', 'GET /namespaces', async (req, res) => {
-    setRequestOperation(req, 'minikubeGetNamespaces');
-    const { clusterName } = ClusterSchema.parse(req.query);
-    const namespaces = await minikubeService.getNamespaces(clusterName);
-    res.json({ namespaces });
-  }),
-);
+// Note: pod/deployment/namespace browsing, logs, exec, and manifest apply for a connected
+// Minikube cluster go through the generic Resource Explorer (ws-watch backed, session-scoped
+// kubeconfig) via `POST /connect`, not through dedicated Minikube routes — see
+// `openMinikubeResourceExplorer` in the frontend.

@@ -124,7 +124,7 @@ export function TopBar({
     <>
     {!hideBar && (
     <div className="topbar">
-      <span className="brand">⎈ {uiText.brand.appName}</span>
+      <span className="brand">{uiText.brand.appName}</span>
 
       {/* <button onClick={() => reload.mutate()} title="Reload kubeconfig">
         ⟳ Refresh

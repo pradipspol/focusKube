@@ -6,12 +6,6 @@ import {
   useStartCluster,
   useStopCluster,
   useDeleteCluster,
-  usePods,
-  useDeployments,
-  useNamespaces,
-  usePodLogs,
-  useTestPod,
-  useDeployManifest,
 } from '../api/minikubeApi';
 import './MinikubePanel.css';
 
@@ -25,10 +19,6 @@ type MinikubePanelProps = {
 
 export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) => {
   const [clusterName, setClusterName] = useState('minikube');
-  const [namespace, setNamespace] = useState('default');
-  const [selectedPod, setSelectedPod] = useState<string | null>(null);
-  const [showDeployForm, setShowDeployForm] = useState(false);
-  const [manifestInput, setManifestInput] = useState('');
   const [openingExplorer, setOpeningExplorer] = useState(false);
   const [clusterConfig, setClusterConfig] = useState({
     driver: 'docker',
@@ -39,28 +29,18 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
   // Queries
   const { data: health, isLoading: healthLoading } = useMinikubeHealth();
   const { data: statusData, isLoading: statusLoading } = useMinikubeStatus(clusterName);
-  const isClusterRunning = statusData?.status === 'running';
-  const { data: podsData, isLoading: podsLoading } = usePods(clusterName, namespace, isClusterRunning);
-  const { data: deploymentsData, isLoading: deploymentsLoading } = useDeployments(
-    clusterName,
-    namespace,
-    isClusterRunning,
-  );
-  const { data: namespacesData } = useNamespaces(clusterName, isClusterRunning);
-  const { data: logsData } = usePodLogs(selectedPod || '', clusterName, namespace, isClusterRunning);
   const { data: setupScriptsData } = useMinikubeSetupScripts();
 
   // Mutations
   const startCluster = useStartCluster();
   const stopCluster = useStopCluster();
   const deleteCluster = useDeleteCluster();
-  const testPod = useTestPod();
-  const deployManifest = useDeployManifest();
 
   const status = statusData?.status || 'checking';
-  const pods = podsData?.pods || [];
-  const deployments = deploymentsData?.deployments || [];
-  const namespaces = namespacesData?.namespaces || [];
+  // `minikube status` reports 'not-installed' both when the binary is genuinely missing and
+  // when it's installed but the cluster isn't running. Split those apart for display so the
+  // badge text and its colour agree (there is a distinct .status-stopped style).
+  const displayStatus = status === 'not-installed' && health?.installed ? 'stopped' : status;
   const setupScripts = setupScriptsData?.scripts || [];
 
   const downloadScript = (content: string, filename: string) => {
@@ -98,25 +78,6 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
       await deleteCluster.mutateAsync(clusterName);
     } catch (err) {
       console.error('Failed to delete cluster:', err);
-    }
-  };
-
-  const handleTestPod = async (podName: string) => {
-    try {
-      await testPod.mutateAsync({ podName, clusterName, namespace });
-    } catch (err) {
-      console.error('Failed to test pod:', err);
-    }
-  };
-
-  const handleDeployManifest = async () => {
-    if (!manifestInput.trim()) return;
-    try {
-      await deployManifest.mutateAsync({ manifest: manifestInput, clusterName });
-      setManifestInput('');
-      setShowDeployForm(false);
-    } catch (err) {
-      console.error('Failed to deploy manifest:', err);
     }
   };
 
@@ -158,9 +119,13 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
           <div className="info-row">
             <label>Status:</label>
             <span
-              className={`status-badge status-${status}`}
+              className={`status-badge status-${displayStatus}`}
             >
-              {status === 'not-installed' ? 'Not Installed: Setup Minikube. Steps Below' : status.charAt(0).toUpperCase() + status.slice(1)}
+              {health?.installed
+                ? displayStatus === 'stopped'
+                  ? 'Cluster Stopped'
+                  : displayStatus.charAt(0).toUpperCase() + displayStatus.slice(1)
+                : 'Not Installed: Setup Minikube. Steps Below'}
             </span>
           </div>
           {statusData?.kubernetesVersion && (

@@ -17,6 +17,7 @@ mock.module('../runtime/desktopStore.js', {
     deleteDesktopLocalKubeconfig: async () => undefined,
     replaceDesktopLocalKubeconfigContexts: async () => undefined,
     listDesktopContextSources: async () => [],
+    getDesktopContextSource: async () => undefined,
     upsertDesktopContextSource: async () => undefined,
     deleteDesktopContextSourcesForNames: async () => undefined,
   },

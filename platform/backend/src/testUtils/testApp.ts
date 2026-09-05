@@ -18,6 +18,7 @@ export function makeTestSession(overrides: Partial<UserSessionState> = {}): User
     azureLogin: {} as any,
     azureLoginCloud: {} as any,
     azureLoginLocal: {} as any,
+    azureLoginCloudPending: null,
     contextSourceHints: {},
     awsConfigFile: '/tmp/aws-config',
     awsCredentialsFile: '/tmp/aws-credentials',

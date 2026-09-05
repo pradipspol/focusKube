@@ -3,6 +3,7 @@ import path from 'node:path';
 import * as k8s from '@kubernetes/client-node';
 import { run } from '../util/run.js';
 import { logInfo, logError, logWarn } from '../util/logger.js';
+import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 
 interface SharedTokenEntry {
   token: string;
@@ -60,9 +61,27 @@ async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
   }
 }
 
-async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, JSON.stringify(data, null, 2));
+/**
+ * Read-modify-write a JSON file under its file lock, so two concurrent updates to DIFFERENT
+ * keys (e.g. pins for two different contexts, or cached tokens for two different
+ * tenant/server-id pairs) in the same file can't both read the same base snapshot and have
+ * the second write silently clobber the first's change - the read has to be inside the lock
+ * too, not just the write. `mutate` returns `null` to skip the write entirely (e.g.
+ * invalidating a key that was never cached), and its return value indicates whether a write
+ * happened.
+ */
+async function updateJsonFile<T extends object>(
+  filePath: string,
+  fallback: T,
+  mutate: (current: T) => T | null,
+): Promise<boolean> {
+  return withFileLock(filePath, async () => {
+    const current = await readJsonFile<T>(filePath, fallback);
+    const next = mutate(current);
+    if (next === null) return false;
+    await writeFileAtomic(filePath, JSON.stringify(next, null, 2));
+    return true;
+  });
 }
 
 function tokenKey(tenantId: string, serverId: string): string {
@@ -166,9 +185,10 @@ export async function getContextPin(azureConfigDir: string, context: string): Pr
 
 async function updateContextPin(azureConfigDir: string, context: string, patch: ContextPin): Promise<void> {
   try {
-    const pins = await readJsonFile<ContextPinFile>(pinsFilePath(azureConfigDir), {});
-    pins[context] = { ...pins[context], ...patch };
-    await writeJsonFile(pinsFilePath(azureConfigDir), pins);
+    await updateJsonFile<ContextPinFile>(pinsFilePath(azureConfigDir), {}, (pins) => ({
+      ...pins,
+      [context]: { ...pins[context], ...patch },
+    }));
   } catch (err) {
     logWarn('kubelogin.pin.write_failed', {
       context,
@@ -261,9 +281,10 @@ async function cacheKubeloginToken(
   token: string,
   expiresAt: number,
 ): Promise<void> {
-  const tokens = await readJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {});
-  tokens[tokenKey(tenantId, serverId)] = { token, expiresAt };
-  await writeJsonFile(tokensFilePath(azureConfigDir), tokens);
+  await updateJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {}, (tokens) => ({
+    ...tokens,
+    [tokenKey(tenantId, serverId)]: { token, expiresAt },
+  }));
 }
 
 /**
@@ -276,12 +297,16 @@ async function cacheKubeloginToken(
  */
 export async function invalidateKubeloginToken(azureConfigDir: string, tenantId: string, serverId: string): Promise<void> {
   try {
-    const tokens = await readJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {});
     const key = tokenKey(tenantId, serverId);
-    if (!(key in tokens)) return;
-    delete tokens[key];
-    await writeJsonFile(tokensFilePath(azureConfigDir), tokens);
-    logInfo('kubelogin.cache.invalidated', { tenantId, serverId, azureConfigDir });
+    const changed = await updateJsonFile<SharedTokenFile>(tokensFilePath(azureConfigDir), {}, (tokens) => {
+      if (!(key in tokens)) return null;
+      const next = { ...tokens };
+      delete next[key];
+      return next;
+    });
+    if (changed) {
+      logInfo('kubelogin.cache.invalidated', { tenantId, serverId, azureConfigDir });
+    }
   } catch (err) {
     logWarn('kubelogin.cache.invalidate_failed', {
       tenantId,

@@ -11,6 +11,14 @@ interface Props {
   onPickContext: (name: string) => Promise<void> | void;
   /** Called when the set of signed-in Azure accounts changes (login/logout). */
   onAccountsChanged?: (account: AzureAccount | null, scope?: AzureScope) => void;
+  /**
+   * Called whenever the sidebar's own Azure account tree needs to catch up with this panel -
+   * after signing one account out (so its sidebar entry disappears) or on an explicit refresh
+   * (so an account this panel already sees, but the sidebar's own probe missed, appears there).
+   */
+  onAzureAccountsRefresh?: (scope: AzureScope) => void;
+  /** One account signed out; `removedContexts` are the imported contexts removed with it. */
+  onAzureAccountSignedOut?: (email: string, removedContexts: string[]) => void;
 }
 
 export function AzurePanel({
@@ -18,10 +26,12 @@ export function AzurePanel({
   onContextsChanged,
   onPickContext,
   onAccountsChanged,
+  onAzureAccountsRefresh,
+  onAzureAccountSignedOut,
 }: Props) {
   const qc = useQueryClient();
   const [subscription, setSubscription] = useState<string>('');
-  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string>('');
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [polling, setPolling] = useState(false);
   const [watchLoginStatus, setWatchLoginStatus] = useState(true);
   const [awaitingAzureAccount, setAwaitingAzureAccount] = useState(false);
@@ -40,7 +50,12 @@ export function AzurePanel({
     enabled: true,
     refetchInterval: awaitingAzureAccount ? 1500 : false,
   });
-  const loggedIn = !!account.data?.account;
+  // `account` (GET /azure/account) is a single-account probe - in a multi-account world it
+  // can only ever report one arbitrarily-picked signed-in identity. `accounts` (GET
+  // /azure/accounts) is the authoritative multi-account source and already covers the
+  // legacy pre-registration fallback too, so prefer it; `account` stays as a secondary
+  // signal only to avoid narrowing `loggedIn` while `accounts` is still loading.
+  const loggedIn = !!account.data?.account || (accounts.data?.accounts?.length ?? 0) > 0;
 
   const login = useMutation({
     mutationFn: () => api.azureLogin(azureSource),
@@ -51,8 +66,15 @@ export function AzurePanel({
       setWatchLoginStatus(true);
       setPolling(true);
       qc.removeQueries({ queryKey: ['azure-login-status'] });
-      qc.invalidateQueries({ queryKey: ['azure', 'account'] });
-      qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
+      // Deliberately does NOT invalidate ['azure','account']/['azure','accounts'] here.
+      // Starting a new device-code login (whether "Add Azure account" or reconnecting) never
+      // changes any ALREADY-registered account's data until it actually succeeds - the
+      // 'succeeded' effect below already refetches both at that point. Invalidating this early
+      // used to force an immediate real `az account list`/`az account show` refetch for the
+      // existing account(s) at the exact moment the backend also spawns `az login
+      // --use-device-code` for the new attempt; under real CLI process load that refetch could
+      // time out and silently fall back to empty, making an already-signed-in account flash
+      // "0 subscriptions, no sign out button" for no reason connected to its actual state.
     },
     onSuccess: () => setPolling(true),
     onError: (e) => {
@@ -62,8 +84,46 @@ export function AzurePanel({
     },
   });
 
+  // Lets the user back out of a device-code prompt they don't want to finish, instead of it
+  // sitting there (or the backend continuing to poll `az login`) until it times out on its own.
+  const cancelLogin = useMutation({
+    mutationFn: () => api.azureLoginCancel(azureSource),
+    onSuccess: () => {
+      setPolling(false);
+      setWatchLoginStatus(false);
+      setAwaitingAzureAccount(false);
+      setMessage('');
+      setMessageIsError(false);
+      qc.removeQueries({ queryKey: ['azure-login-status'] });
+    },
+    onError: (e) => {
+      setMessage((e as Error).message);
+      setMessageIsError(true);
+    },
+  });
+
+  // Signs out one specific account (email) - or, with no email, every account
+  // registered for this scope. The backend only tears down the config dir(s) for
+  // whatever was targeted, so signing one account out never touches the others.
+  // Which row is mid-sign-out, so only that row's button shows busy/disabled state.
+  const [signingOutEmail, setSigningOutEmail] = useState<string | undefined>();
+
+  // Explicit re-sync from Azure (as opposed to the polled read the `accounts` query does).
+  const refreshAccounts = useMutation({
+    mutationFn: () => api.azureAccounts(azureSource, true),
+    onSuccess: (data) => qc.setQueryData(['azure', 'accounts', azureSource], data),
+    onError: (e) => {
+      setMessage((e as Error).message);
+      setMessageIsError(true);
+    },
+  });
+
   const logout = useMutation({
-    mutationFn: () => api.azureLogout(undefined, azureSource),
+    mutationFn: (email?: string) => {
+      setSigningOutEmail(email);
+      return api.azureLogout(email, azureSource);
+    },
+    onSettled: () => setSigningOutEmail(undefined),
     onSuccess: () => {
       setMessage(uiText.azure.signedOut);
       setMessageIsError(false);
@@ -75,7 +135,6 @@ export function AzurePanel({
       qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
       qc.invalidateQueries({ queryKey: ['azure', 'subscriptions'] });
       qc.invalidateQueries({ queryKey: ['azure', 'aks'] });
-      onAccountsChanged?.(null, azureSource);
     },
     onError: (e) => {
       setMessage((e as Error).message);
@@ -137,17 +196,17 @@ export function AzurePanel({
   const accountGroups = accounts.data?.accounts ?? [];
   const selectedAccount = useMemo<AzureAccountGroup | undefined>(() => {
     if (accountGroups.length === 0) return undefined;
-    return accountGroups.find((group) => group.email === selectedAccountEmail) ?? accountGroups[0];
-  }, [accountGroups, selectedAccountEmail]);
+    return accountGroups.find((group) => group.id === selectedAccountId) ?? accountGroups[0];
+  }, [accountGroups, selectedAccountId]);
 
   useEffect(() => {
     if (accountGroups.length === 0) {
-      if (selectedAccountEmail) setSelectedAccountEmail('');
+      if (selectedAccountId) setSelectedAccountId('');
       return;
     }
-    const nextEmail = selectedAccount?.email ?? accountGroups[0].email;
-    if (nextEmail !== selectedAccountEmail) setSelectedAccountEmail(nextEmail);
-  }, [accountGroups, selectedAccount, selectedAccountEmail]);
+    const nextId = selectedAccount?.id ?? accountGroups[0].id;
+    if (nextId !== selectedAccountId) setSelectedAccountId(nextId);
+  }, [accountGroups, selectedAccount, selectedAccountId]);
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -160,19 +219,19 @@ export function AzurePanel({
   }, [loggedIn, selectedAccount, subs.data, subscription]);
 
   const setSub = useMutation({
-    mutationFn: (id: string) => api.azureSetSubscription(id, azureSource),
+    mutationFn: (id: string) => api.azureSetSubscription(id, azureSource, selectedAccount?.id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['azure', 'aks'] }),
   });
 
   const aks = useQuery({
-    queryKey: ['azure', 'aks', azureSource, subscription],
-    queryFn: () => api.azureAks(subscription, azureSource),
+    queryKey: ['azure', 'aks', azureSource, subscription, selectedAccount?.id],
+    queryFn: () => api.azureAks(subscription, azureSource, selectedAccount?.id),
     enabled: loggedIn && !!subscription,
   });
 
   const getCreds = useMutation({
     mutationFn: (c: AksCluster) =>
-      api.azureAksCredentials({ resourceGroup: c.resourceGroup, name: c.name, subscription }),
+      api.azureAksCredentials({ resourceGroup: c.resourceGroup, name: c.name, subscription, accountId: selectedAccount?.id }),
     onSuccess: async (_res, c) => {
       setMessage(`${uiText.azure.importCredsPrefix} ${c.name}.`);
       setMessageIsError(false);
@@ -225,8 +284,13 @@ export function AzurePanel({
       {loginPending && (
         <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
           <span className="azure-login-spinner" aria-label="Azure sign-in in progress" />
-          <div>
-            <div>{uiText.azure.signInProgress}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <span>{uiText.azure.signInProgress}</span>
+              <button onClick={() => cancelLogin.mutate()} disabled={cancelLogin.isPending}>
+                {cancelLogin.isPending ? uiText.azure.cancellingSignIn : uiText.azure.cancelSignIn}
+              </button>
+            </div>
             {device ? (
               <div style={{ marginTop: 6 }}>
                 Open{' '}
@@ -277,43 +341,59 @@ export function AzurePanel({
                       </div>
                     </div>
                   )}
-                  {accountGroups.map((group) => {
-                    const selected = group.email === selectedAccount?.email;
-                    return (
-                      <div
-                        key={group.email}
-                        className="notice"
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px' }}
-                      >
+                  {accountGroups.map((group) => (
+                    <div
+                      key={group.id}
+                      className="notice"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px' }}
+                    >
+                      <div>
                         <div>
-                          <div>
-                            <b>{group.email}</b>
-                            {group.userType ? <span className="dim"> ({group.userType})</span> : null}
-                          </div>
-                          <div className="dim" style={{ marginTop: 4 }}>
-                            {group.subscriptions.length} subscription{group.subscriptions.length === 1 ? '' : 's'}
-                          </div>
+                          <b>{group.email}</b>
+                          {group.userType ? <span className="dim"> ({group.userType})</span> : null}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-                          <button
-                            className={selected ? 'primary' : ''}
-                            onClick={() => {
-                              setSelectedAccountEmail(group.email);
-                              const firstSubscription = group.subscriptions[0];
-                              if (firstSubscription) setSubscription(firstSubscription.id);
-                            }}
-                          >
-                            {selected ? 'Selected' : 'Load'}
-                          </button>
-                          {selected && (
-                            <button className="danger" onClick={() => logout.mutate()} disabled={logout.isPending}>
-                              {uiText.azure.signOut}
-                            </button>
-                          )}
+                        <div className="dim" style={{ marginTop: 4 }}>
+                          {group.subscriptions.length} subscription{group.subscriptions.length === 1 ? '' : 's'}
                         </div>
                       </div>
-                    );
-                  })}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                        <button
+                          title="Re-sync from Azure and reload this account into the sidebar"
+                          onClick={() => {
+                            void qc.invalidateQueries({ queryKey: ['azure', 'accounts'] });
+                            void qc.invalidateQueries({ queryKey: ['azure', 'account'] });
+                            // Explicit user action, so pay for a real --refresh round trip to
+                            // pick up subscriptions granted since this account signed in.
+                            void refreshAccounts.mutateAsync();
+                            onAzureAccountsRefresh?.(azureSource);
+                          }}
+                          disabled={refreshAccounts.isPending}
+                        >
+                          {refreshAccounts.isPending ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                        <button
+                          className="danger"
+                          onClick={() => {
+                            const wasLastAccount = accountGroups.length <= 1;
+                            logout.mutate(group.email, {
+                              onSuccess: (result) => {
+                                if (wasLastAccount) onAccountsChanged?.(null, azureSource);
+                                // Only this account's contexts went away, so close just their
+                                // tabs rather than every AKS tab.
+                                onAzureAccountSignedOut?.(group.email, result.removed ?? []);
+                                onAzureAccountsRefresh?.(azureSource);
+                              },
+                            });
+                          }}
+                          // Only the row being signed out is disabled, so a slow sign-out
+                          // doesn't lock the other accounts' buttons.
+                          disabled={logout.isPending && signingOutEmail === group.email}
+                        >
+                          {logout.isPending && signingOutEmail === group.email ? 'Signing out...' : uiText.azure.signOut}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -12,6 +12,8 @@ import { DeploymentActions } from './DeploymentActions';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './ToastViewport';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
+import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
+import { TreeDisclosure } from './TreeDisclosure';
 import { uiText } from '../text';
 
 // Kinds without a hand-built Overview tab (pods/deployments/workload controllers,
@@ -439,7 +441,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
           ))}
           <div className="pod-property-row expandable" onClick={() => toggle('labels')}>
             <div className="pod-property-label">{uiText.resourceDetail.labels}</div>
-            <div className="pod-property-value linkish">{uiText.resourceDetail.labelsCount(Object.keys(labels).length)} {expanded.labels ? '▾' : '▸'}</div>
+            <div className="pod-property-value linkish">{uiText.resourceDetail.labelsCount(Object.keys(labels).length)} <TreeDisclosure collapsed={!expanded.labels} className="inline-disclosure" /></div>
           </div>
           {expanded.labels && (
             <div className="pod-detail-list">
@@ -448,7 +450,7 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
           )}
           <div className="pod-property-row expandable" onClick={() => toggle('annotations')}>
             <div className="pod-property-label">{uiText.resourceDetail.annotations}</div>
-            <div className="pod-property-value linkish">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)} {expanded.annotations ? '▾' : '▸'}</div>
+            <div className="pod-property-value linkish">{uiText.resourceDetail.annotationsCount(Object.keys(annotations).length)} <TreeDisclosure collapsed={!expanded.annotations} className="inline-disclosure" /></div>
           </div>
           {expanded.annotations && (
             <div className="pod-detail-list">
@@ -495,13 +497,13 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.status}</div><div className="pod-property-value status-running">{uiText.resourceDetail.runningReady}</div></div>
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.image}</div><div className="pod-property-value"><span className="inline-chip mono">{container.image ?? uiText.resourceDetail.dash}</span></div></div>
                   <div className="pod-property-row"><div className="pod-property-label">{uiText.resourceDetail.ports}</div><div className="pod-property-value">{ports.length ? ports.map((p: any) => `${p.name ? `${p.name}: ` : ''}${p.containerPort}/${p.protocol ?? uiText.resourceDetail.tcp}`).join(', ') : uiText.resourceDetail.dash}</div></div>
-                  <div className="pod-property-row expandable" onClick={() => toggle(`env-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.environment}</div><div className="pod-property-value linkish">{uiText.resourceDetail.environmentalVariablesCount(envs.length)} {expanded[`env-${container.name}`] ? '▾' : '▸'}</div></div>
+                  <div className="pod-property-row expandable" onClick={() => toggle(`env-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.environment}</div><div className="pod-property-value linkish">{uiText.resourceDetail.environmentalVariablesCount(envs.length)} <TreeDisclosure collapsed={!expanded[`env-${container.name}`]} className="inline-disclosure" /></div></div>
                   {expanded[`env-${container.name}`] && (
                     <div className="pod-detail-list">
                       {envs.map((env: any, index: number) => <span key={`${container.name}-env-${index}`} className="inline-chip mono">{env.name}{env.value !== undefined ? `=${env.value}` : '=valueFrom'}</span>)}
                     </div>
                   )}
-                  <div className="pod-property-row expandable" onClick={() => toggle(`mounts-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.mounts}</div><div className="pod-property-value linkish">{uiText.resourceDetail.mountsCount(mounts.length)} {expanded[`mounts-${container.name}`] ? '▾' : '▸'}</div></div>
+                  <div className="pod-property-row expandable" onClick={() => toggle(`mounts-${container.name}`)}><div className="pod-property-label">{uiText.resourceDetail.mounts}</div><div className="pod-property-value linkish">{uiText.resourceDetail.mountsCount(mounts.length)} <TreeDisclosure collapsed={!expanded[`mounts-${container.name}`]} className="inline-disclosure" /></div></div>
                   {expanded[`mounts-${container.name}`] && (
                     <div className="pod-detail-list">
                       {mounts.map((m: any, index: number) => <span key={`${container.name}-mount-${index}`} className="inline-chip mono">{uiText.resourceDetail.mountFrom(m.mountPath, m.name)}{m.readOnly ? uiText.resourceDetail.readOnlySuffix : ''}</span>)}
@@ -1738,6 +1740,10 @@ function YamlTab({
 
   const value = draft || yamlQuery.data?.yaml || '';
 
+  const validate = useMutation({
+    mutationFn: () => api.validateResourceYamlUpdate(plural, name, value, scope),
+  });
+
   const save = useMutation({
     mutationFn: () => api.putResourceYaml(plural, name, value, scope),
     onSuccess: () => {
@@ -1755,19 +1761,38 @@ function YamlTab({
             <button className="primary" onClick={() => save.mutate()} disabled={save.isPending || yamlQuery.isLoading}>
               {`💾 ${uiText.common.save}`}
             </button>
-            <button onClick={() => { setDraft(''); yamlQuery.refetch(); }}>{uiText.resourceDetail.revert}</button>
+            <ValidateYamlButton
+              onValidate={() => validate.mutate()}
+              isPending={validate.isPending}
+              disabled={save.isPending || yamlQuery.isLoading}
+            />
+            <button onClick={() => { setDraft(''); yamlQuery.refetch(); validate.reset(); }}>{uiText.resourceDetail.revert}</button>
           </>
         ) : (
           <span className="dim">{uiText.resourceDetail.readOnlyNotice}</span>
         )}
       </div>
+      {canWrite && (
+        <div className="actions-bar" aria-live="polite">
+          <YamlValidationNotice
+            isError={validate.isError}
+            errorMessage={validate.error instanceof Error ? validate.error.message : undefined}
+            successMessage={
+              validate.data
+                ? uiText.resourceDetail.yamlValidUpdate(validate.data.kind, validate.data.name, validate.data.namespace)
+                : undefined
+            }
+            idleMessage={uiText.resourceDetail.yamlValidateHint}
+          />
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Editor
           height="100%"
           language="yaml"
           theme="vs-dark"
           value={value}
-          onChange={(v) => setDraft(v ?? '')}
+          onChange={(v) => { setDraft(v ?? ''); validate.reset(); }}
           options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false, readOnly: !canWrite }}
         />
       </div>
