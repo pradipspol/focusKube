@@ -27,6 +27,7 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
     cpus: 4,
     memory: '4096m',
   });
+  const [notice, setNotice] = useState<{ text: string } | null>(null);
 
   // Queries
   const { data: health, isLoading: healthLoading } = useMinikubeHealth();
@@ -65,6 +66,7 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
   };
 
   const handleStartCluster = async () => {
+    setNotice(null);
     try {
       await startCluster.mutateAsync({
         name: clusterName,
@@ -72,23 +74,28 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
       });
     } catch (err) {
       console.error('Failed to start cluster:', err);
+      setNotice({ text: err instanceof Error ? err.message : 'Failed to start cluster' });
     }
   };
 
   const handleStopCluster = async () => {
+    setNotice(null);
     try {
       await stopCluster.mutateAsync(clusterName);
     } catch (err) {
       console.error('Failed to stop cluster:', err);
+      setNotice({ text: err instanceof Error ? err.message : 'Failed to stop cluster' });
     }
   };
 
   const handleDeleteCluster = async () => {
     if (!window.confirm(`Are you sure you want to delete cluster "${clusterName}"?`)) return;
+    setNotice(null);
     try {
       await deleteCluster.mutateAsync(clusterName);
     } catch (err) {
       console.error('Failed to delete cluster:', err);
+      setNotice({ text: err instanceof Error ? err.message : 'Failed to delete cluster' });
     }
   };
 
@@ -98,6 +105,7 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
       await onOpenExplorer();
     } catch (err) {
       console.error('Failed to open Minikube resource explorer:', err);
+      setNotice({ text: err instanceof Error ? err.message : 'Failed to open Minikube resource explorer' });
     } finally {
       setOpeningExplorer(false);
     }
@@ -106,6 +114,7 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
   return (
     <div className="minikube-panel">
       {loadingMessage && <LoadingOverlay message={loadingMessage} />}
+      {notice && <div className="notice error">{notice.text}</div>}
       <div className="minikube-header">
         <h2>{uiText.minikube.title}</h2>
         {health?.installed ? (

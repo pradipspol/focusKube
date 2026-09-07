@@ -24,32 +24,50 @@ export type MinikubeSetupScript = {
 
 const MINIKUBE_API_BASE = '/api/minikube';
 
+// The backend returns `{ error, details }` with the actual reason a minikube
+// operation failed (e.g. "you cannot change the memory of an existing cluster").
+// Fall back to a generic message only when the body isn't JSON/doesn't have one,
+// so callers can show the user something they can actually act on.
+async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body?.error) {
+      return body.details
+        ? `${body.error}: ${typeof body.details === 'string' ? body.details : JSON.stringify(body.details)}`
+        : body.error;
+    }
+  } catch {
+    // response body wasn't JSON - use the fallback below
+  }
+  return fallback;
+}
+
 /**
  * API client for Minikube operations
  */
 export const minikubeApi = {
   async getHealth(): Promise<{ installed: boolean }> {
     const res = await fetch(`${MINIKUBE_API_BASE}/health`);
-    if (!res.ok) throw new Error('Failed to check minikube health');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to check minikube health'));
     return res.json();
   },
 
   async getStatus(clusterName: string = 'minikube'): Promise<MinikubeCluster> {
     const res = await fetch(`${MINIKUBE_API_BASE}/status?clusterName=${clusterName}`);
-    if (!res.ok) throw new Error('Failed to get cluster status');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to get cluster status'));
     return res.json();
   },
 
   async getKubeconfig(clusterName: string = 'minikube'): Promise<{ clusterName: string; kubeconfig: string }> {
     const params = new URLSearchParams({ clusterName });
     const res = await fetch(`${MINIKUBE_API_BASE}/kubeconfig?${params}`);
-    if (!res.ok) throw new Error('Failed to export the Minikube kubeconfig');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to export the Minikube kubeconfig'));
     return res.json();
   },
 
   async getSetupScripts(): Promise<{ scripts: MinikubeSetupScript[] }> {
     const res = await fetch(`${MINIKUBE_API_BASE}/setup-scripts`);
-    if (!res.ok) throw new Error('Failed to load Minikube setup scripts');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to load Minikube setup scripts'));
     return res.json();
   },
 
@@ -65,7 +83,7 @@ export const minikubeApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(options),
     });
-    if (!res.ok) throw new Error('Failed to start cluster');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to start cluster'));
     return res.json();
   },
 
@@ -75,7 +93,7 @@ export const minikubeApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clusterName }),
     });
-    if (!res.ok) throw new Error('Failed to stop cluster');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to stop cluster'));
     return res.json();
   },
 
@@ -85,7 +103,7 @@ export const minikubeApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clusterName }),
     });
-    if (!res.ok) throw new Error('Failed to delete cluster');
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to delete cluster'));
     return res.json();
   },
 };
