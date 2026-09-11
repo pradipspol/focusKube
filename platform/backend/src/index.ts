@@ -15,6 +15,7 @@ import { authRouter } from './routes/auth.js';
 import { settingsRouter } from './routes/settings.js';
 import { observabilityRouter, getRecordingLifecycle } from './routes/observability.js';
 import { minikubeRouter } from './routes/minikube.js';
+import { aiRouter } from './routes/ai.js';
 import { routeUpgrade } from './ws/streams.js';
 import { attachUserSession } from './auth/session.js';
 import { guardByMethod } from './auth/rbac.js';
@@ -144,6 +145,7 @@ app.use('/api/aws', awsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/observability', observabilityRouter);
 app.use('/api/minikube', minikubeRouter);
+app.use('/api/ai', aiRouter);
 
 // 404 for unknown API routes.
 app.use('/api', (req, res) => {

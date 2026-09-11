@@ -691,6 +691,194 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* AI assistant */
+.ai-gate-loading {
+  padding: var(--space-lg);
+  color: var(--text-muted);
+}
+.ai-gate-shell {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.ai-gate-card {
+  width: min(520px, 100%);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-auth);
+  border-radius: var(--radius-2xl);
+  box-shadow: 0 24px 48px var(--shadow-color-strong);
+  padding: 24px;
+}
+.ai-gate-card h2 {
+  margin: 0 0 10px;
+  font-size: var(--fs-2xl);
+  color: var(--text-heading);
+}
+.ai-gate-copy {
+  margin: 0 0 16px;
+  color: var(--auth-copy);
+}
+.ai-gate-disclosure {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--surface-raised);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.ai-gate-disclosure strong {
+  display: block;
+  color: var(--text-heading);
+  margin-bottom: 4px;
+}
+.ai-gate-disclosure p {
+  margin: 0;
+}
+.ai-gate-error {
+  border: 1px solid var(--auth-error-border);
+  color: var(--danger-text);
+  background: var(--auth-error-bg);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.ai-gate-form {
+  display: grid;
+  gap: 14px;
+}
+.ai-gate-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--auth-label);
+  font-size: var(--fs-base);
+}
+.ai-gate-enabled {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.ai-gate-enabled-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.ai-gate-disable-button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+}
+.ai-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 8px 12px;
+}
+.ai-panel-focus-chip {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 2px 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.ai-panel-focus-chip-empty {
+  color: var(--accent-bright);
+  border-style: dashed;
+}
+.ai-panel-picker {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 0 12px 8px;
+}
+.ai-panel-picker input,
+.ai-panel-picker select {
+  flex: 1;
+}
+.ai-panel-error {
+  margin: 0 12px 8px;
+  border: 1px solid var(--auth-error-border);
+  color: var(--danger-text);
+  background: var(--auth-error-bg);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+}
+.ai-panel-empty,
+.ai-panel-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+.ai-panel-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  text-align: center;
+}
+.ai-panel-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.ai-panel-message {
+  display: flex;
+}
+.ai-panel-message-user {
+  justify-content: flex-end;
+}
+.ai-panel-message-assistant {
+  justify-content: flex-start;
+}
+.ai-panel-message-bubble {
+  max-width: 80%;
+  white-space: pre-wrap;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
+.ai-panel-message-user .ai-panel-message-bubble {
+  background: var(--accent-dim);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+.ai-panel-message-assistant .ai-panel-message-bubble {
+  background: var(--surface-raised);
+}
+.ai-panel-thinking {
+  padding: 0 12px 8px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.ai-panel-input-row {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.ai-panel-input {
+  flex: 1;
+  resize: none;
+  font-family: inherit;
+  font-size: var(--fs-base);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: inherit;
+  padding: 8px 10px;
+}
 .svg-inject {
   width: 15px;
   height: 15px;

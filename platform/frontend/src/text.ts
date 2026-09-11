@@ -911,7 +911,35 @@
     allLines: 'all lines',
     previous: 'Prev',
     next: 'Next',
-  }
+  },
+  aiAssistant: {
+    title: 'AI Assistant',
+    lockedTitle: 'AI Assistant is a paid feature',
+    lockedCopy:
+      'Diagnose issues and get suggested fixes for the resources in this cluster, powered by Claude. Enter your license key to enable it.',
+    disclosureTitle: 'Before you enable this',
+    disclosureCopy:
+      'Unlike the rest of focusKube, the AI assistant sends data off this machine: the resource YAML, related pods, and recent events/logs for whatever you ask about are sent to the focusKube relay service to generate a response. Nothing else in focusKube does this.',
+    licenseKeyLabel: 'License key',
+    licenseKeyPlaceholder: 'fk_live_...',
+    enableButton: 'Enable AI Assistant',
+    enabling: 'Enabling…',
+    licenseKeyRequired: 'License key is required.',
+    disableButton: 'Disable',
+    planLabel: 'Plan',
+    statusLabel: 'Status',
+    quotaRemainingLabel: 'Quota remaining',
+    checkingEntitlement: 'Checking license…',
+    inputPlaceholder: 'Ask about this resource…',
+    send: 'Send',
+    thinking: 'Thinking…',
+    emptyState: 'Select a resource, then ask what might be wrong with it or how to fix it.',
+    connected: 'connected',
+    disconnected: 'disconnected',
+    noLicenseError: 'AI feature not enabled — add a license key in Settings.',
+    connectionError: 'Lost connection to the AI assistant.',
+    focusedResourceLabel: (kind: string, name: string) => `Focused on ${kind}/${name}`,
+  },
 } as const;
 
 export const uiText = englishText;

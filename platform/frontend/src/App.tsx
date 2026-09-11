@@ -16,6 +16,7 @@ import { ClusterOverviewPanel } from './components/ClusterOverviewPanel';
 import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { MinikubePanel } from './components/MinikubePanel';
+import { AiAssistantPanel } from './components/AiAssistantPanel';
 import { AuthGate } from './components/AuthGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
@@ -43,7 +44,8 @@ export type View =
   | { type: 'topology' }
   | { type: 'minikube' }
   | { type: 'azure' }
-  | { type: 'aws' };
+  | { type: 'aws' }
+  | { type: 'aiAssistant' };
 
 type UiRoute = 'login' | 'focusKube';
 
@@ -121,6 +123,7 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   if (view.type === 'minikube') return 'minikube';
   if (view.type === 'azure') return `azure:${azureSource ?? 'cloud'}`;
   if (view.type === 'aws') return 'aws';
+  if (view.type === 'aiAssistant') return `aiAssistant:${sourceKey}:${contextKey}${suffix}`;
   return view.type;
 }
 
@@ -148,6 +151,8 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
         ? 'Azure / AKS Connections'
       : view.type === 'aws'
         ? 'AWS / EKS Connections'
+      : view.type === 'aiAssistant'
+        ? 'AI Assistant'
       : 'Unknown';
   // Azure and logs views aren't context-scoped, so don't append the context name.
   if (view.type === 'azure' || view.type === 'logs' ) return base;
@@ -1427,6 +1432,9 @@ export default function App() {
                   )}
                   {activeTab?.view.type === 'minikube' && (
                     <MinikubePanel onOpenExplorer={openMinikubeResourceExplorer} />
+                  )}
+                  {activeTab?.view.type === 'aiAssistant' && (
+                    <AiAssistantPanel scope={activeTabScope} />
                   )}
                 </div>
               </div>

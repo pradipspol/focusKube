@@ -30,4 +30,9 @@ export const config = {
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://localhost:5173',
   // Default local identity used for the desktop session when no email header is sent.
   defaultAdminEmail: (process.env.DEFAULT_ADMIN_EMAIL ?? 'user@desktop.com').trim().toLowerCase(),
+
+  // AI assistant feature configuration
+  aiRelayBaseUrl: process.env.AI_RELAY_BASE_URL ?? 'http://localhost:4001',
+  aiLicenseCheckCacheMs: parseInt(process.env.AI_LICENSE_CHECK_CACHE_MS ?? '15000', 10),
+  aiLicenseCheckNegativeCacheMs: parseInt(process.env.AI_LICENSE_CHECK_NEGATIVE_CACHE_MS ?? '2000', 10),
 };

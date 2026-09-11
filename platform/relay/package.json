@@ -1,0 +1,41 @@
+{
+  "name": "focusKube-ai-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendor-hosted relay for focusKube's AI assistant. Holds the real Anthropic API key, customer accounts, and license issuance — never ships in the desktop app or a self-host bundle. See README.md before deploying.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('./dist', { recursive: true, force: true })\"",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^8.7.0",
+    "google-auth-library": "^11.0.2",
+    "nodemailer": "^10.0.1",
+    "stripe": "^22.6.1",
+    "twilio": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "^8.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

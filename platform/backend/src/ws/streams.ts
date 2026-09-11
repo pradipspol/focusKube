@@ -15,6 +15,9 @@ import { logError, logInfo, logWarn } from '../util/logger.js';
 import { handleTerminal } from './terminal.js';
 import { observabilityWss, handleObservabilityUpgrade } from './observability.js';
 import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
+import { aiService } from '../services/aiService.js';
+import { aiContextService } from '../services/aiContextService.js';
+import { getLicenseKey } from '../runtime/aiLicenseStore.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
 const execWss = new WebSocketServer({ noServer: true });
@@ -22,6 +25,7 @@ const portForwardWss = new WebSocketServer({ noServer: true });
 const terminalWss = new WebSocketServer({ noServer: true });
 const watchWss = new WebSocketServer({ noServer: true });
 const metricsWss = new WebSocketServer({ noServer: true });
+const aiWss = new WebSocketServer({ noServer: true });
 
 /** Decide which WS server should handle an HTTP upgrade based on the path. */
 export async function routeUpgrade(req: any, socket: any, head: Buffer): Promise<boolean> {
@@ -96,6 +100,10 @@ export async function routeUpgrade(req: any, socket: any, head: Buffer): Promise
           }
         });
       });
+      return true;
+    }
+    if (pathname === '/ws/ai') {
+      aiWss.handleUpgrade(req, socket, head, (ws) => handleAiChat(ws, req));
       return true;
     }
     socket.destroy();
@@ -945,6 +953,102 @@ async function handleMetrics(ws: WebSocket, req: any) {
   // Then poll every 5 seconds
   if (!closed && ws.readyState === WebSocket.OPEN) {
     intervalId = setInterval(fetchMetrics, 5000);
+  }
+}
+
+function aiChatParams(req: any) {
+  const url = new URL(req.url, 'http://localhost');
+  const q = url.searchParams;
+  return {
+    context: q.get('context') || undefined,
+  };
+}
+
+async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
+  const session = req.userSession;
+  if (!session) {
+    ws.send(JSON.stringify({ type: 'error', message: 'No session' }));
+    ws.close();
+    return;
+  }
+
+  const requestedContext = aiChatParams(req).context;
+
+  const licenseKey = await getLicenseKey();
+  if (!licenseKey) {
+    ws.send(JSON.stringify({ type: 'error', message: 'AI feature not enabled' }));
+    ws.close();
+    return;
+  }
+
+  try {
+    // Listen for messages from the client
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    let currentAssistantToken = '';
+
+    ws.on('message', async (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === 'user_message') {
+          const userText = msg.text;
+          messages.push({ role: 'user', content: userText });
+
+          // Reassemble context each turn so it reflects whatever resource the
+          // user currently has focused, not just what was open when the socket connected.
+          const focusedResource = msg.focusedResource
+            ? {
+                kind: String(msg.focusedResource.kind ?? ''),
+                namespace: String(msg.focusedResource.namespace ?? ''),
+                name: String(msg.focusedResource.name ?? ''),
+              }
+            : undefined;
+          const turnContext = await aiContextService.assembleContext(session, focusedResource, requestedContext);
+
+          // Stream the response
+          await aiService.sendChatToRelay(turnContext, messages, (chunk) => {
+            if (chunk.type === 'token') {
+              currentAssistantToken += chunk.data.token || '';
+              ws.send(JSON.stringify({ type: 'token', token: chunk.data.token }));
+            } else if (chunk.type === 'tool_use') {
+              ws.send(JSON.stringify({ type: 'tool_use', ...chunk.data }));
+            } else if (chunk.type === 'stop') {
+              messages.push({ role: 'assistant', content: currentAssistantToken });
+              currentAssistantToken = '';
+              ws.send(JSON.stringify({ type: 'stop' }));
+            } else if (chunk.type === 'error') {
+              // Discard the partial reply rather than recording it as a completed assistant
+              // turn — a cut-off answer isn't something later turns should build on.
+              currentAssistantToken = '';
+              ws.send(JSON.stringify({ type: 'error', message: chunk.data.message }));
+            }
+          });
+        }
+      } catch (err) {
+        logError('ai_chat.message_error', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: err instanceof Error ? err.message : 'Unknown error',
+        }));
+      }
+    });
+
+    ws.on('error', (err) => {
+      logError('ai_chat.ws_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  } catch (err) {
+    logError('ai_chat.handler_error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    }));
+    ws.close();
   }
 }
 
