@@ -327,7 +327,7 @@ test('POST /api/azure/aks/credentials reuses the same name when the SAME account
 
 test('GET /api/azure/subscriptions does not leak one desktop user\'s cache to another', async () => {
   // The backend serves multiple desktop identities out of one process (see
-  // desktopUserIdForEmail/runtimeByUserId in session.ts), so the subscriptions cache key must
+  // runtimeByUserId in session.ts), so the subscriptions cache key must
   // include userId - not just scope + accountId - or two different users' 'local'-scope (no
   // accountId) requests collide on the same cache bucket and one sees the other's data.
   subscriptionsByConfigDir = {

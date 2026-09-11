@@ -2,7 +2,6 @@ type StartPayload = {
   context?: string;
   namespace?: string;
   plural: string;
-  email?: string;
 };
 
 type InboundMessage =
@@ -59,7 +58,6 @@ function clearPendingStop() {
 function wsUrl(payload: StartPayload): string {
   const proto = self.location.protocol === 'https:' ? 'wss' : 'ws';
   const search = new URLSearchParams();
-  if (payload.email) search.set('email', payload.email);
   if (payload.context) search.set('context', payload.context);
   if (payload.namespace) search.set('namespace', payload.namespace);
   search.set('plural', payload.plural);

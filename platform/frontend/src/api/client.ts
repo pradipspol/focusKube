@@ -37,8 +37,6 @@ export interface Scope {
 /** Azure-only scope — AWS calls never take a source, they always use the session's AWS files. */
 export type AzureScope = 'local' | 'cloud';
 
-const DESKTOP_EMAIL_STORAGE_KEY = 'k8sExplorer.desktopEmail';
-
 export class ApiError extends Error {
   details?: unknown;
 
@@ -54,12 +52,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const desktopEmail = typeof window !== 'undefined' ? localStorage.getItem(DESKTOP_EMAIL_STORAGE_KEY) : null;
   const headers = new Headers(init?.headers ?? undefined);
   headers.set('Content-Type', 'application/json');
-  if (desktopEmail) {
-    headers.set('x-focusKube-email', desktopEmail);
-  }
   const res = await fetch(`/api${path}`, {
     headers,
     credentials: 'include',
@@ -104,9 +98,20 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 
 export const api = {
   // Auth
-  authConfig: () => request<{ mode: 'desktop' }>('/auth/config'),
+  authConfig: () => request<{ mode: 'account'; signedIn: boolean }>('/auth/config'),
   authMe: () => request<{ user: AuthUser | null }>('/auth/me'),
   authSignOut: () => request<{ ok: boolean }>('/auth/signout', { method: 'POST' }),
+  authSignup: (email: string, password: string) =>
+    request<{ ok: boolean }>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  authLogin: (email: string, password: string) =>
+    request<{ ok: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  authOtpRequest: (destination: string, channel: 'email' | 'sms') =>
+    request<{ ok: boolean }>('/auth/otp/request', { method: 'POST', body: JSON.stringify({ destination, channel }) }),
+  authOtpVerify: (destination: string, channel: 'email' | 'sms', code: string) =>
+    request<{ ok: boolean }>('/auth/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ destination, channel, code }),
+    }),
 
   // Contexts
   getContexts: () => request<ContextsResponse>('/contexts'),
@@ -366,24 +371,12 @@ export const api = {
     ),
 };
 
-export function getDesktopEmail(): string {
-  return localStorage.getItem(DESKTOP_EMAIL_STORAGE_KEY) ?? '';
-}
-
-export function setDesktopEmail(email: string): void {
-  localStorage.setItem(DESKTOP_EMAIL_STORAGE_KEY, email.trim().toLowerCase());
-}
-
-export function clearDesktopEmail(): void {
-  localStorage.removeItem(DESKTOP_EMAIL_STORAGE_KEY);
-}
-
-/** Build a WebSocket URL for logs/exec via the same origin (proxied in dev). */
+/** Build a WebSocket URL for logs/exec via the same origin (proxied in dev). No identity to
+ * attach here: the backend resolves the one signed-in account from its own local state
+ * (see auth/session.ts), the same way it does for every plain HTTP request. */
 export function wsUrl(path: string, params: Record<string, string | undefined>): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const search = new URLSearchParams();
-  const desktopEmail = typeof window !== 'undefined' ? localStorage.getItem(DESKTOP_EMAIL_STORAGE_KEY) : null;
-  if (desktopEmail) search.set('email', desktopEmail);
   for (const [k, v] of Object.entries(params)) if (v) search.set(k, v);
   return `${proto}://${window.location.host}${path}?${search.toString()}`;
 }

@@ -21,10 +21,15 @@ async function fetchGithub(url, parseJson = false) {
   return parseJson ? JSON.parse(body) : body;
 }
 
+// github.com: "Documents"/release-notes links. checkout.stripe.com: AI assistant licensing
+// checkout (see AiEntitlementGate.tsx) — Stripe Checkout always redirects through this exact
+// hostname regardless of account/price, so no broader allowance is needed.
+const ALLOWED_EXTERNAL_HOSTNAMES = ['github.com', 'checkout.stripe.com'];
+
 ipcMain.handle('open-external', async (_event, url) => {
   const parsed = new URL(url);
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
-    throw new Error('Only approved HTTPS GitHub links can be opened.');
+  if (parsed.protocol !== 'https:' || !ALLOWED_EXTERNAL_HOSTNAMES.includes(parsed.hostname)) {
+    throw new Error('Only approved HTTPS links can be opened.');
   }
   await shell.openExternal(parsed.toString());
 });

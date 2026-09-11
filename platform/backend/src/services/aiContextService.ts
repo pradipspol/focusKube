@@ -13,6 +13,10 @@ export interface ClusterContext {
   cluster: {
     context: string;
   };
+  /** Cluster-wide counts, always included (not gated on a focused resource) so the
+   * assistant can answer basic overview questions ("how many pods/deployments do I have")
+   * without anything selected in the UI. */
+  clusterSummary?: Array<{ kind: string; count: number }>;
   focusedResource?: {
     kind: string;
     namespace: string;
@@ -63,6 +67,40 @@ export class AiContextService {
       return result;
     }
 
+    let kubeOptions: { kubeconfigPath: string; fallbackContext: string | null; azureConfigDir: string };
+    try {
+      const kubeconfigPath = activeSessionKubeconfigPath(userSession, context);
+      const azureConfigDir = await activeSessionAzureConfigDir(userSession, context);
+      const { scope, identity } = await resolveSessionAuthContext(userSession, context);
+      kubeOptions = {
+        kubeconfigPath,
+        fallbackContext: userSession.activeContext,
+        azureConfigDir,
+      };
+
+      await ensureContextAuthReady({
+        context,
+        kubeconfigPath,
+        fallbackContext: userSession.activeContext,
+        azureConfigDir,
+        source: scope,
+        userId: userSession.userId,
+        azureLogin: userSession.azureLogin,
+        identity,
+      });
+    } catch (err) {
+      logWarn('ai_context.assemble_partial', {
+        context,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Can't reach the cluster at all this turn — bare cluster context only.
+      return result;
+    }
+
+    // Cluster-wide counts, fetched regardless of whether a resource is focused — otherwise
+    // basic overview questions ("how many pods/deployments") have nothing to answer from.
+    result.clusterSummary = await buildClusterSummary(context, kubeOptions);
+
     if (!focusedResource) {
       return result;
     }
@@ -80,108 +118,106 @@ export class AiContextService {
       name: focusedResource.name,
     };
 
+    // Fetch the resource YAML
     try {
-      const kubeconfigPath = activeSessionKubeconfigPath(userSession, context);
-      const azureConfigDir = await activeSessionAzureConfigDir(userSession, context);
-      const { scope, identity } = await resolveSessionAuthContext(userSession, context);
-      const kubeOptions = {
-        kubeconfigPath,
-        fallbackContext: userSession.activeContext,
-        azureConfigDir,
-      };
+      const resource = await callK8s(() =>
+        getResource(plural, focusedResource.name, context, focusedResource.namespace, kubeOptions),
+      );
+      if (resource) {
+        result.focusedResource.yaml = JSON.stringify(resource, null, 2);
+      }
+    } catch {
+      // Continue without the resource YAML
+    }
 
-      await ensureContextAuthReady({
-        context,
-        kubeconfigPath,
-        fallbackContext: userSession.activeContext,
-        azureConfigDir,
-        source: scope,
-        userId: userSession.userId,
-        azureLogin: userSession.azureLogin,
-        identity,
-      });
-
-      // Fetch the resource YAML
+    // Fetch related resources (for a Deployment, fetch its Pods)
+    if (focusedResource.kind === 'Deployment') {
       try {
-        const resource = await callK8s(() =>
-          getResource(plural, focusedResource.name, context, focusedResource.namespace, kubeOptions),
+        // listResource resolves to the items array directly, not a wrapper object.
+        const pods = await callK8s(() =>
+          listResource('pods', context, focusedResource.namespace, kubeOptions),
         );
-        if (resource) {
-          result.focusedResource.yaml = JSON.stringify(resource, null, 2);
+        if (Array.isArray(pods)) {
+          result.relatedResources = pods
+            .filter((pod: any) => {
+              const ownerRefs = pod.metadata?.ownerReferences || [];
+              return ownerRefs.some(
+                (ref: any) => ref.kind === 'Deployment' && ref.name === focusedResource.name,
+              );
+            })
+            .map((pod: any) => ({
+              kind: 'Pod',
+              namespace: pod.metadata?.namespace,
+              name: pod.metadata?.name,
+            }))
+            .slice(0, 10); // Limit to 10 related resources
         }
       } catch {
-        // Continue without the resource YAML
+        // Continue without related resources
       }
+    }
 
-      // Fetch related resources (for a Deployment, fetch its Pods)
-      if (focusedResource.kind === 'Deployment') {
-        try {
-          const pods = await callK8s(() =>
-            listResource('pods', context, focusedResource.namespace, kubeOptions),
-          );
-          if (Array.isArray(pods?.items)) {
-            result.relatedResources = pods.items
-              .filter((pod: any) => {
-                const ownerRefs = pod.metadata?.ownerReferences || [];
-                return ownerRefs.some(
-                  (ref: any) => ref.kind === 'Deployment' && ref.name === focusedResource.name,
-                );
-              })
-              .map((pod: any) => ({
-                kind: 'Pod',
-                namespace: pod.metadata?.namespace,
-                name: pod.metadata?.name,
-              }))
-              .slice(0, 10); // Limit to 10 related resources
-          }
-        } catch {
-          // Continue without related resources
-        }
+    // Fetch recent events involving the focused resource
+    try {
+      // listResource resolves to the items array directly, not a wrapper object.
+      const events = await callK8s(() =>
+        listResource('events', context, focusedResource.namespace, kubeOptions),
+      );
+      if (Array.isArray(events)) {
+        result.recentEvents = events
+          .filter((event: any) => {
+            const involved = event.involvedObject || {};
+            return involved.kind === focusedResource.kind && involved.name === focusedResource.name;
+          })
+          .sort((a: any, b: any) => {
+            const aTime = new Date(a.lastTimestamp || a.firstTimestamp || 0).getTime();
+            const bTime = new Date(b.lastTimestamp || b.firstTimestamp || 0).getTime();
+            return bTime - aTime;
+          })
+          .slice(0, 10) // Limit to 10 recent events
+          .map((event: any) => ({
+            type: event.type,
+            reason: event.reason,
+            message: event.message,
+            involvedObject: {
+              kind: event.involvedObject?.kind,
+              name: event.involvedObject?.name,
+              namespace: event.involvedObject?.namespace,
+            },
+            firstTimestamp: event.firstTimestamp,
+            lastTimestamp: event.lastTimestamp,
+          }));
       }
-
-      // Fetch recent events involving the focused resource
-      try {
-        const events = await callK8s(() =>
-          listResource('events', context, focusedResource.namespace, kubeOptions),
-        );
-        if (Array.isArray(events?.items)) {
-          result.recentEvents = events.items
-            .filter((event: any) => {
-              const involved = event.involvedObject || {};
-              return involved.kind === focusedResource.kind && involved.name === focusedResource.name;
-            })
-            .sort((a: any, b: any) => {
-              const aTime = new Date(a.lastTimestamp || a.firstTimestamp || 0).getTime();
-              const bTime = new Date(b.lastTimestamp || b.firstTimestamp || 0).getTime();
-              return bTime - aTime;
-            })
-            .slice(0, 10) // Limit to 10 recent events
-            .map((event: any) => ({
-              type: event.type,
-              reason: event.reason,
-              message: event.message,
-              involvedObject: {
-                kind: event.involvedObject?.kind,
-                name: event.involvedObject?.name,
-                namespace: event.involvedObject?.namespace,
-              },
-              firstTimestamp: event.firstTimestamp,
-              lastTimestamp: event.lastTimestamp,
-            }));
-        }
-      } catch {
-        // Continue without events
-      }
-    } catch (err) {
-      logWarn('ai_context.assemble_partial', {
-        context,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Continue with partial context (cluster + focusedResource identity, no live data)
+    } catch {
+      // Continue without events
     }
 
     return result;
   }
+}
+
+/** Common kinds a "how many X do I have" question is likely to ask about. Counts only (not
+ * full listings) to keep the context payload small — kinds we can't list are simply omitted
+ * rather than failing the whole turn. */
+const SUMMARY_KINDS = ['pods', 'deployments', 'services', 'namespaces'];
+
+async function buildClusterSummary(
+  context: string,
+  kubeOptions: { kubeconfigPath: string; fallbackContext: string | null; azureConfigDir: string },
+): Promise<Array<{ kind: string; count: number }>> {
+  const summary: Array<{ kind: string; count: number }> = [];
+  for (const plural of SUMMARY_KINDS) {
+    try {
+      // listResource resolves to the items array directly, not a wrapper object.
+      const list = await callK8s(() => listResource(plural, context, undefined, kubeOptions));
+      if (Array.isArray(list)) {
+        summary.push({ kind: plural, count: list.length });
+      }
+    } catch {
+      // Skip kinds we couldn't list rather than failing the whole turn.
+    }
+  }
+  return summary;
 }
 
 export const aiContextService = new AiContextService();

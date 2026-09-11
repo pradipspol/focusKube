@@ -104,11 +104,6 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
     items: [{ label: 'Topology', view: { type: 'topology' } }],
   },
   {
-    title: 'AI Assistant',
-    icon: '✦',
-    items: [{ label: 'AI Assistant', view: { type: 'aiAssistant' } }],
-  },
-  {
     title: 'Workloads',
     icon: '◉',
     items: [

@@ -31,13 +31,9 @@ const aiWss = new WebSocketServer({ noServer: true });
 export async function routeUpgrade(req: any, socket: any, head: Buffer): Promise<boolean> {
   const url = new URL(req.url, 'http://localhost');
   const { pathname } = url;
-  const upgradeHeaders = {
-    ...req.headers,
-    'x-focusKube-email': url.searchParams.get('email') ?? undefined,
-  };
 
   try {
-    const { user, state } = await resolveAuthFromHeaders(upgradeHeaders);
+    const { user, state } = await resolveAuthFromHeaders();
     if (!state || !user) {
       logWarn('ws.auth.failed', {
         pathname,

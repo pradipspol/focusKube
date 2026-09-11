@@ -3,7 +3,6 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Request, Response, NextFunction } from 'express';
-import type { IncomingHttpHeaders } from 'node:http';
 import { AzureLoginManager } from '../azure/azure.js';
 import { AwsLoginManager } from '../aws/aws.js';
 import { config } from '../config.js';
@@ -12,13 +11,20 @@ import { logError, logInfo, logWarn, setLogContext } from '../util/logger.js';
 import { kube } from '../kube/client.js';
 import { getAzureAccountConfigDir, listAzureAccounts } from '../runtime/azureAccountStore.js';
 import { getDesktopContextSource } from '../runtime/desktopStore.js';
+import {
+  clearSessionToken,
+  getCacheAge as getAccountCacheAge,
+  getCachedUser,
+  getSessionToken,
+  setCachedUser,
+  type CachedAccountUser,
+} from '../runtime/accountStore.js';
 import type { CallIdentity } from '../util/callIdentity.js';
 import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { type Role } from './rbac.js';
 
 const runtimeByUserId = new Map<string, UserSessionState>();
-const DESKTOP_EMAIL_HEADER = 'x-focusKube-email';
-const DESKTOP_AUTH_STATE_FILE = 'desktop-auth.json';
+const ANONYMOUS_RUNTIME_USER_ID = 'anonymous';
 
 export interface AuthUser {
   id: string;
@@ -116,84 +122,6 @@ function defaultAwsConfigPathsFor(userId: string): { configFile: string; credent
   };
 }
 
-type PersistedDesktopAuthState = {
-  lastEmail?: string | null;
-};
-
-let desktopAuthStateLoaded = false;
-// Caches the in-flight load itself (not just a boolean flag set before the first `await`),
-// so two concurrent callers before the first load finishes both wait for the SAME read
-// instead of the second one observing a still-empty `desktopAuthLastEmail` and racing a
-// redundant load - the same class of race fixed in azureAccountStore.ts/desktopStore.ts.
-let desktopAuthLoadPromise: Promise<void> | null = null;
-let desktopAuthLastEmail: string | null = null;
-
-function desktopAuthStatePath(): string {
-  return path.join(config.sessionStorageDir, DESKTOP_AUTH_STATE_FILE);
-}
-
-async function ensureDesktopAuthStateLoaded(): Promise<void> {
-  if (desktopAuthStateLoaded) return;
-  if (!desktopAuthLoadPromise) {
-    desktopAuthLoadPromise = (async () => {
-      try {
-        const raw = await fsp.readFile(desktopAuthStatePath(), 'utf8');
-        if (raw.trim()) {
-          const parsed = JSON.parse(raw) as PersistedDesktopAuthState;
-          if (parsed && typeof parsed.lastEmail === 'string' && parsed.lastEmail.trim()) {
-            desktopAuthLastEmail = parsed.lastEmail.trim().toLowerCase();
-          }
-        }
-      } catch (err) {
-        logError('auth.desktop_state.load_failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        desktopAuthStateLoaded = true;
-      }
-    })();
-  }
-  await desktopAuthLoadPromise;
-}
-
-async function persistDesktopAuthState(): Promise<void> {
-  await ensureDesktopAuthStateLoaded();
-
-  try {
-    const payload: PersistedDesktopAuthState = { lastEmail: desktopAuthLastEmail };
-    // This is the one piece of desktop auth state every request's identity resolution reads
-    // (resolveAuthFromHeaders, below) - write it the same locked+atomic way as every other
-    // state file in this app, not a plain writeFileSync that a torn write could corrupt.
-    await withFileLock(desktopAuthStatePath(), () =>
-      writeFileAtomic(desktopAuthStatePath(), JSON.stringify(payload, null, 2)),
-    );
-  } catch (err) {
-    logError('auth.desktop_state.persist_failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-async function rememberDesktopAuthEmail(email: string): Promise<void> {
-  await ensureDesktopAuthStateLoaded();
-  const normalized = email.trim().toLowerCase();
-  if (!normalized) return;
-  if (desktopAuthLastEmail === normalized) return;
-  desktopAuthLastEmail = normalized;
-  await persistDesktopAuthState();
-}
-
-export async function clearDesktopAuthState(): Promise<void> {
-  await ensureDesktopAuthStateLoaded();
-  desktopAuthLastEmail = null;
-  await persistDesktopAuthState();
-}
-
-async function getPersistedDesktopAuthEmailAsync(): Promise<string | null> {
-  await ensureDesktopAuthStateLoaded();
-  return desktopAuthLastEmail;
-}
-
 async function ensureFileAsync(filePath: string): Promise<void> {
   await ensureDirAsync(path.dirname(filePath));
   try {
@@ -285,10 +213,6 @@ async function ensureSessionKubeconfigAsync(kubeconfigPath: string): Promise<voi
 function normalizeUserId(raw: string): string {
   // Keep IDs filesystem-safe for temp session folders.
   return raw.replace(/[^a-zA-Z0-9_.-]/g, '_');
-}
-
-function desktopUserIdForEmail(email: string): string {
-  return `desktop_${normalizeUserId(email.toLowerCase())}`;
 }
 
 async function createSessionStateAsync(userId: string): Promise<UserSessionState> {
@@ -441,7 +365,7 @@ export async function attachUserSession(req: Request, _res: Response, next: Next
     activeContextSource: req.userSession?.activeContextSource ?? null,
   });
   
-  const resolved = await resolveAuthFromHeaders(req.headers);
+  const resolved = await resolveAuthFromHeaders();
   setSessionLogContext('session.attach.after_resolve', {
     path: req.path,
     userId: resolved.state?.userId ?? resolved.user?.id ?? null,
@@ -456,7 +380,10 @@ export async function attachUserSession(req: Request, _res: Response, next: Next
   });
 
   req.authUser = resolved.user;
-  req.userSession = resolved.state as UserSessionState;
+  // Not signed in → a shared placeholder runtime state, purely so this field's type stays
+  // non-nullable. It's never read for real: `requireAccountSignIn` (index.ts) 401s every
+  // request except /api/auth/*+/api/health before any handler that would use it runs.
+  req.userSession = resolved.state ?? (await getRuntimeSessionAsync(ANONYMOUS_RUNTIME_USER_ID));
 
   setLogContext({
     userId: resolved.user?.id ?? resolved.state?.userId ?? null,
@@ -464,7 +391,7 @@ export async function attachUserSession(req: Request, _res: Response, next: Next
     userRole: resolved.user?.role ?? null,
   });
 
-  if (req.userSession) {
+  if (resolved.user && req.userSession) {
     void restoreImportedContextsIfNeeded(req.userSession).catch((err) => {
       setSessionLogContext('session.runtime.kubeconfig.restore_failed', {
         userId: req.userSession.userId,
@@ -499,34 +426,76 @@ export async function attachUserSession(req: Request, _res: Response, next: Next
   next();
 }
 
-export async function resolveAuthFromHeaders(
-  headers: IncomingHttpHeaders,
-): Promise<{ user: AuthUser | null; state: UserSessionState | null }> {
-  const headerValue = headers[DESKTOP_EMAIL_HEADER];
-  const rawEmail = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  let email = rawEmail?.trim().toLowerCase() || (await getPersistedDesktopAuthEmailAsync());
-
-  // Default to the seeded local identity if no email is provided.
-  if (!email) {
-    email = config.defaultAdminEmail;
+/**
+ * Resolves the locally signed-in relay account (if any) into `{user, state}` - the one
+ * function both the HTTP middleware (attachUserSession) and the WS upgrade path
+ * (ws/streams.ts routeUpgrade) call to establish identity. No longer reads anything from
+ * the request itself: there's exactly one signed-in account per backend instance (single-
+ * user desktop/self-host semantics), persisted via runtime/accountStore.ts.
+ */
+export async function resolveAuthFromHeaders(): Promise<{ user: AuthUser | null; state: UserSessionState | null }> {
+  const account = await resolveSignedInAccount();
+  if (!account) {
+    return { user: null, state: null };
   }
 
-  await rememberDesktopAuthEmail(email);
-
-  const userId = desktopUserIdForEmail(email);
+  const userId = `desktop_${normalizeUserId(account.id)}`;
   setLogContext({
     userId,
-    userEmail: email,
+    userEmail: account.email,
     userRole: 'admin',
   });
   return {
     user: {
       id: userId,
-      email,
+      email: account.email ?? '',
       role: 'admin',
     },
     state: await getRuntimeSessionAsync(userId),
   };
+}
+
+/**
+ * Fresh cache → return it immediately. Stale cache → revalidate against the relay's
+ * GET /v1/auth/me (same TTL/offline-fallback shape already used for Azure auth checks and
+ * AI license entitlement - see config.ts/routes/ai.ts). An explicit 401 from the relay means
+ * the session was actually revoked/expired, so the local copy is cleared; any other error
+ * (including the relay being unreachable) falls back to the cached account so a previously
+ * signed-in install keeps working offline.
+ */
+async function resolveSignedInAccount(): Promise<CachedAccountUser | null> {
+  const token = await getSessionToken();
+  if (!token) return null;
+
+  const cached = await getCachedUser();
+  const cacheAge = await getAccountCacheAge();
+  if (cached && cacheAge <= config.accountSessionCheckCacheMs) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(`${config.aiRelayBaseUrl}/v1/auth/me`, {
+      headers: { Cookie: `${config.accountSessionCookieName}=${token}` },
+    });
+
+    if (response.status === 401) {
+      await clearSessionToken();
+      return null;
+    }
+    if (!response.ok) {
+      logError('account_session.relay_error', { status: response.status });
+      return cached;
+    }
+
+    const body = (await response.json()) as { user: CachedAccountUser };
+    await setCachedUser(body.user);
+    return body.user;
+  } catch (err) {
+    logError('account_session.relay_unreachable', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return cached;
+  }
 }
 
 export function sessionEnv(req: Request): Record<string, string> {

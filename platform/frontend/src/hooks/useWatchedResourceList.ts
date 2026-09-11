@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { api, getDesktopEmail, type Scope } from '../api/client';
+import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { getWatchWorker, releaseWatchWorker } from '../utils/workerRuntime';
 
@@ -97,7 +97,7 @@ export function useWatchedResourceList(watchKeyPrefix: string, plural: string, s
 
     const startMsg: WatchWorkerInbound = {
       type: 'start',
-      payload: { email: getDesktopEmail(), context: scope.context, namespace: scope.namespace, plural },
+      payload: { context: scope.context, namespace: scope.namespace, plural },
     };
     worker.postMessage(startMsg);
 

@@ -3,13 +3,18 @@ import { uiText } from '../text';
 
 interface Props {
     active: 'explorer' | 'search' | 'settings';
+    /** Sidebar is fully hidden (VSCode-style) — drops the Explorer button's active highlight
+     * even though it's still conceptually the selected activity. */
+    explorerHidden: boolean;
     onSelect: (activity: Props['active']) => void;
+    aiActive: boolean;
+    onToggleAi: () => void;
 }
 
-export function ActivityBar ({ active, onSelect }: Props) {
+export function ActivityBar ({ active, explorerHidden, onSelect, aiActive, onToggleAi }: Props) {
     return (
         <nav className="activity-bar" aria-label={uiText.activityBar.label}>
-            <button className={`activity-bar-button ${active === 'explorer' ? 'active' : ''}`} title={uiText.activityBar.explorer} aria-label={uiText.activityBar.explorer} onClick={() => onSelect('explorer')}>
+            <button className={`activity-bar-button ${active === 'explorer' && !explorerHidden ? 'active' : ''}`} title={uiText.activityBar.explorer} aria-label={uiText.activityBar.explorer} aria-pressed={active === 'explorer' && !explorerHidden} onClick={() => onSelect('explorer')}>
                 <svg className="activity-bar-icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2h5.5A2.5 2.5 0 0 1 20 9.5v8A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-10Z" />
                     <path d="M4 9h16" />
@@ -23,6 +28,16 @@ export function ActivityBar ({ active, onSelect }: Props) {
                     <path d="M12 8a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm0 6a2 2 0 1 1 2-2 2 2 0 0 1-2 2zm0-10a8 8 0 0 0-8 8 8 8 0 0 0 8 8 8 8 0 0 0 8-8 8 8 0 0 0-8-8zm0 14a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6z" />
                 </svg>
             </button> */}
+            <div className="activity-bar-spacer" />
+            <button
+                className={`activity-bar-button ${aiActive ? 'active' : ''}`}
+                title={uiText.activityBar.aiAssistant}
+                aria-label={uiText.activityBar.aiAssistant}
+                aria-pressed={aiActive}
+                onClick={onToggleAi}
+            >
+                <span aria-hidden="true">✦</span>
+            </button>
         </nav>
     );
 }

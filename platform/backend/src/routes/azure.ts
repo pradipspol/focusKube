@@ -213,7 +213,7 @@ function baseIdentity(req: any, source: SessionScope, extra: Partial<CallIdentit
 function azureSubscriptionsCacheFor(req: any): AsyncRefreshCache<{ subscriptions: unknown[] }> {
   const source = requestedSource(req);
   // Must include userId - the backend serves multiple desktop identities out of one process
-  // (see desktopUserIdForEmail/runtimeByUserId in session.ts), so a key without it would let
+  // (see runtimeByUserId in session.ts), so a key without it would let
   // two different users' 'local'-scope (or accountId-less 'azure'-scope) requests collide on
   // the same "__default__" bucket and see each other's cached subscriptions.
   const cacheKey = `${source}::${req.userSession.userId}::${accountIdFromRequest(req) ?? '__default__'}`;

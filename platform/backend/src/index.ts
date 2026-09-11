@@ -133,6 +133,19 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toIS
 
 app.use('/api/auth', authRouter);
 
+// Everything past this point requires a real signed-in relay account — replaces the old
+// desktop-email pseudo-auth, which trusted any client-supplied identity unconditionally.
+// The WS upgrade path (ws/streams.ts routeUpgrade) enforces the equivalent check itself,
+// since WS connections never pass through this Express middleware chain.
+app.use((req, res, next) => {
+  if (!req.authUser) {
+    setRequestOperation(req, 'auth.required');
+    res.status(401).json({ error: 'Not signed in' });
+    return;
+  }
+  next();
+});
+
 // Per-session context & Azure operations are available to any authenticated
 // user (needed even to view a cluster). Cluster-mutating routers enforce
 // write/delete capability based on the HTTP method.

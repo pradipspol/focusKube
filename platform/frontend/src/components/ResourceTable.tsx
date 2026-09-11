@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, getDesktopEmail, type Scope } from '../api/client';
+import { api, ApiError, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { age, statusOf } from '../utils/format';
@@ -867,7 +867,6 @@ export function ResourceTable({
     const startMsg: WatchWorkerInbound = {
       type: 'start',
       payload: {
-        email: getDesktopEmail(),
         context: scope.context,
         namespace: effectiveScope.namespace,
         plural,

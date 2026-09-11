@@ -26,13 +26,24 @@ export const config = {
   azureAuthCheckNegativeCacheMs: parseInt(process.env.AZURE_AUTH_CHECK_NEGATIVE_CACHE_MS ?? '2000', 10),
   logRetentionDays: parseInt(process.env.LOG_RETENTION_DAYS ?? '5', 10),
 
-  // Base URL of the frontend app, used for post-login/redirect targets.
+  // Base URL of the frontend app — used as a fallback Google-OAuth return target when a
+  // request has no Referer header to detect it from (see routes/auth.ts's /google/start).
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://localhost:5173',
-  // Default local identity used for the desktop session when no email header is sent.
-  defaultAdminEmail: (process.env.DEFAULT_ADMIN_EMAIL ?? 'user@desktop.com').trim().toLowerCase(),
 
   // AI assistant feature configuration
   aiRelayBaseUrl: process.env.AI_RELAY_BASE_URL ?? 'http://localhost:4001',
   aiLicenseCheckCacheMs: parseInt(process.env.AI_LICENSE_CHECK_CACHE_MS ?? '15000', 10),
   aiLicenseCheckNegativeCacheMs: parseInt(process.env.AI_LICENSE_CHECK_NEGATIVE_CACHE_MS ?? '2000', 10),
+
+  // Local-development-only escape hatch: set to a license key the relay already recognizes
+  // as active (e.g. its seeded dev key — relay's AI_RELAY_DEV_LICENSE_KEY, default
+  // 'fk_dev_local_testing') to always report an active AI entitlement and use that key for
+  // chat, skipping the relay account/license lookup entirely. Leave unset in any real
+  // deployment — this bypasses licensing, not sign-in.
+  aiLicenseDevBypassKey: process.env.AI_LICENSE_DEV_BYPASS_KEY || undefined,
+
+  // Real account sign-in (replaces the old desktop-email pseudo-auth), backed by the relay's
+  // account system. Must match the relay's own SESSION_COOKIE_NAME default.
+  accountSessionCookieName: process.env.ACCOUNT_SESSION_COOKIE_NAME ?? 'fk_session',
+  accountSessionCheckCacheMs: parseInt(process.env.ACCOUNT_SESSION_CHECK_CACHE_MS ?? '15000', 10),
 };

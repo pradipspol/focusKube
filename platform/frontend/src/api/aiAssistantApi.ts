@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { wsUrl } from './client';
 
 export interface AiEntitlement {
@@ -61,19 +61,11 @@ export const aiAssistantApi = {
     return res.json();
   },
 
-  async submitLicenseKey(key: string): Promise<{ success: boolean }> {
-    const res = await fetch(`${AI_API_BASE}/license`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
-    });
-    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to save license key'));
-    return res.json();
-  },
-
-  async clearLicenseKey(): Promise<{ success: boolean }> {
-    const res = await fetch(`${AI_API_BASE}/license`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to clear license key'));
+  /** `url` to open when Stripe is configured; `trialGranted` when it isn't yet (see relay's
+   * billing/routes.ts) — the caller should just refetch entitlement in that case. */
+  async requestCheckout(): Promise<{ url?: string; trialGranted?: boolean }> {
+    const res = await fetch(`${AI_API_BASE}/checkout`, { method: 'POST' });
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to start checkout'));
     return res.json();
   },
 };
@@ -83,33 +75,23 @@ export const aiAssistantApi = {
  */
 
 // Polls at the same cadence as the backend's positive-entitlement cache TTL, so a
-// revoked/expired license is reflected in the UI without a page reload.
-export const useAiEntitlement = () => {
+// revoked/expired license is reflected in the UI without a page reload. `enabled` defaults
+// to true for AiEntitlementGate's own call; App.tsx passes `!!user` so the check starts
+// right after sign-in (same query key, so the tab reuses the already-warm cache) instead of
+// waiting until the AI Assistant tab is actually opened.
+export const useAiEntitlement = (enabled = true) => {
   return useQuery({
     queryKey: ['ai', 'entitlement'],
     queryFn: () => aiAssistantApi.getEntitlement(),
     refetchInterval: 15000,
     retry: false,
+    enabled,
   });
 };
 
-export const useSubmitLicenseKey = () => {
-  const queryClient = useQueryClient();
+export const useRequestCheckout = () => {
   return useMutation({
-    mutationFn: (key: string) => aiAssistantApi.submitLicenseKey(key),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ai', 'entitlement'] });
-    },
-  });
-};
-
-export const useClearLicenseKey = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => aiAssistantApi.clearLicenseKey(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ai', 'entitlement'] });
-    },
+    mutationFn: () => aiAssistantApi.requestCheckout(),
   });
 };
 

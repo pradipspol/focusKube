@@ -3,16 +3,16 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import 'express-async-errors';
-import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
 import { decrementQuota, devLicenseKey, licenseFromAuthHeader, lookupLicense } from './licenseStore.js';
+import { streamChatTurn } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
 import { billingRouter, handleStripeWebhook } from './billing/routes.js';
 import { webRouter } from './web/pages.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
-const DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_MAX_TOKENS = 12048;
 
 const app = express();
 app.use(cors());
@@ -25,9 +25,9 @@ app.post('/v1/billing/webhook', express.raw({ type: 'application/json' }), handl
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
-// The real Anthropic API key lives only here — this process is the one place in the whole
-// system allowed to hold it. `new Anthropic()` reads it from ANTHROPIC_API_KEY.
-const anthropic = new Anthropic();
+// The real LLM provider credentials (ANTHROPIC_API_KEY, or AZURE_OPENAI_API_KEY when
+// AI_PROVIDER=azure-openai) live only here — this process is the one place in the whole
+// system allowed to hold them. See llm/chatProvider.ts for the actual client(s).
 
 interface ChatRequestBody {
   context?: unknown;
@@ -96,16 +96,13 @@ app.post('/v1/ai/chat', async (req, res) => {
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
   try {
-    const stream = anthropic.messages.stream({
-      model: model || DEFAULT_MODEL,
-      max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
-      system: buildSystemPrompt(context),
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    });
-
-    stream.on('text', (token) => send({ type: 'token', token }));
-
-    await stream.finalMessage();
+    await streamChatTurn(
+      buildSystemPrompt(context),
+      messages.map((m) => ({ role: m.role, content: m.content })),
+      model || DEFAULT_MODEL,
+      maxTokens ?? DEFAULT_MAX_TOKENS,
+      (event) => send(event),
+    );
     decrementQuota(key!);
     res.write('data: [DONE]\n\n');
   } catch (err) {
@@ -119,7 +116,14 @@ const server = http.createServer(app);
 server.listen(config.port, () => {
   console.log(`focusKube AI relay listening on :${config.port}`);
   console.log(`Dev license key: ${devLicenseKey()}`);
-  if (!process.env.ANTHROPIC_API_KEY) {
+  console.log(`AI provider: ${config.aiProvider}`);
+  if (config.aiProvider === 'azure-openai') {
+    if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.deployment) {
+      console.warn(
+        'AI_PROVIDER=azure-openai but AZURE_OPENAI_API_KEY/ENDPOINT/DEPLOYMENT are not all set — /v1/ai/chat will fail until they are.',
+      );
+    }
+  } else if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY is not set — /v1/ai/chat will fail until it is.');
   }
 });

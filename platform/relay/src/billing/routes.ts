@@ -14,9 +14,18 @@ export const billingRouter = router;
 const PAID_PLAN = 'pro';
 const PAID_PLAN_QUOTA = 1000;
 
+// Granted in place of a real subscription whenever Stripe isn't configured yet — lets AI
+// assistant access ship before billing is wired up, without a separate "is billing enabled"
+// flag anywhere else. Once Stripe is configured, a real checkout.session.completed webhook
+// simply replaces this trial license the same way it replaces any other (createLicenseForUser
+// upserts by user_id).
+const TRIAL_PLAN = 'trial';
+const TRIAL_PLAN_QUOTA = 100;
+
 router.post('/checkout', requireSession, async (req, res) => {
   if (!isStripeConfigured() || !config.stripe.priceId) {
-    res.status(503).json({ error: 'Billing is not configured on this server' });
+    createLicenseForUser(req.user!.id, { plan: TRIAL_PLAN, quotaRemaining: TRIAL_PLAN_QUOTA });
+    res.json({ trialGranted: true });
     return;
   }
   // A phone-only (mobile OTP) account has no email for Stripe to send receipts to —

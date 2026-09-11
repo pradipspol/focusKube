@@ -12,6 +12,7 @@ import { clearSessionCookie, createSession, requireSession, revokeSession, setSe
 import {
   createUser,
   findUserByEmail,
+  findUserById,
   findUserByGoogleSub,
   findUserByPhone,
   linkGoogleSub,
@@ -47,8 +48,12 @@ router.post('/signup', authLimiter, async (req, res) => {
   }
   const passwordHash = await hashPassword(password);
   const user = createUser({ email: normalizedEmail, password_hash: passwordHash });
-  setSessionCookie(res, createSession(user.id));
-  res.json({ ok: true });
+  const token = createSession(user.id);
+  setSessionCookie(res, token);
+  // sessionToken lets a server-to-server caller (a self-hosted focusKube backend proxying
+  // this call on a user's behalf) capture the token directly instead of parsing Set-Cookie
+  // off the fetch response. The relay's own browser-facing web pages just ignore this field.
+  res.json({ ok: true, sessionToken: token });
 });
 
 router.post('/login', authLimiter, async (req, res) => {
@@ -62,8 +67,9 @@ router.post('/login', authLimiter, async (req, res) => {
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
-  setSessionCookie(res, createSession(user.id));
-  res.json({ ok: true });
+  const token = createSession(user.id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, sessionToken: token });
 });
 
 router.post('/logout', (req, res) => {
@@ -176,13 +182,44 @@ router.post('/otp/verify', authLimiter, (req, res) => {
     markPhoneVerified(user.id);
   }
 
-  setSessionCookie(res, createSession(user.id));
-  res.json({ ok: true });
+  const token = createSession(user.id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, sessionToken: token });
 });
 
 const OAUTH_STATE_COOKIE = 'fk_oauth_state';
+const OAUTH_REDIRECT_COOKIE = 'fk_oauth_app_redirect';
 
-router.get('/google/start', (_req, res) => {
+/**
+ * Exact-origin match against the configured allowlist — never a prefix/substring check, to
+ * close off open-redirect abuse — OR any loopback origin (any port). The loopback carve-out
+ * matters because a desktop install's local static server picks its port dynamically
+ * (falling back across a wide range if its preferred port is taken), so it can't always be
+ * enumerated in advance; only locally-running software can ever bind a loopback port on the
+ * user's own machine, so trusting "any localhost/127.0.0.1 port" is the same reasoning
+ * native-app OAuth (RFC 8252) already relies on for loopback redirect URIs.
+ */
+function validatedAppRedirect(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+      return url.toString();
+    }
+    const allowed = config.allowedAppRedirects.some((entry) => {
+      try {
+        return new URL(entry).origin === url.origin;
+      } catch {
+        return false;
+      }
+    });
+    return allowed ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+router.get('/google/start', (req, res) => {
   if (!isGoogleConfigured()) {
     res.status(503).send('Google sign-in is not configured on this server.');
     return;
@@ -195,13 +232,34 @@ router.get('/google/start', (_req, res) => {
     maxAge: 10 * 60 * 1000,
     path: '/v1/auth/google',
   });
+
+  // Present when a self-hosted focusKube backend (not this relay's own web pages) kicked off
+  // the flow — carries the browser back to that backend's own callback route once we're done,
+  // instead of to this relay's /dashboard.
+  const appRedirect = validatedAppRedirect(
+    typeof req.query.app_redirect === 'string' ? req.query.app_redirect : undefined,
+  );
+  if (appRedirect) {
+    res.cookie(OAUTH_REDIRECT_COOKIE, appRedirect, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: config.isProduction,
+      maxAge: 10 * 60 * 1000,
+      path: '/v1/auth/google',
+    });
+  } else {
+    res.clearCookie(OAUTH_REDIRECT_COOKIE, { path: '/v1/auth/google' });
+  }
+
   res.redirect(googleAuthUrl(state));
 });
 
 router.get('/google/callback', async (req, res) => {
   const { code, state } = req.query as { code?: string; state?: string };
   const cookieState = req.cookies?.[OAUTH_STATE_COOKIE];
+  const appRedirect = req.cookies?.[OAUTH_REDIRECT_COOKIE];
   res.clearCookie(OAUTH_STATE_COOKIE, { path: '/v1/auth/google' });
+  res.clearCookie(OAUTH_REDIRECT_COOKIE, { path: '/v1/auth/google' });
 
   if (!code || !state || !cookieState || state !== cookieState) {
     res.status(400).send('Invalid or expired sign-in attempt. Please try again.');
@@ -231,9 +289,62 @@ router.get('/google/callback', async (req, res) => {
       });
     }
 
+    if (appRedirect) {
+      // App-initiated flow: hand back a short-lived, single-use code instead of putting the
+      // real session token in the browser's address bar/history — the backend exchanges it
+      // server-to-server via POST /session/exchange.
+      const handoff = randomToken();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
+      db.prepare(
+        `INSERT INTO oauth_handoffs (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
+      ).run(sha256(handoff), user.id, now.toISOString(), expiresAt.toISOString());
+      const redirectUrl = new URL(appRedirect);
+      redirectUrl.searchParams.set('handoff', handoff);
+      res.redirect(redirectUrl.toString());
+      return;
+    }
+
     setSessionCookie(res, createSession(user.id));
     res.redirect('/dashboard');
   } catch (err) {
     res.status(400).send(`Google sign-in failed: ${err instanceof Error ? err.message : 'unknown error'}`);
   }
+});
+
+router.post('/session/exchange', (req, res) => {
+  const { handoff } = req.body as { handoff?: string };
+  if (!handoff) {
+    res.status(400).json({ error: 'handoff is required' });
+    return;
+  }
+  const tokenHash = sha256(handoff);
+  const row = db
+    .prepare(`SELECT user_id, expires_at, consumed_at FROM oauth_handoffs WHERE token_hash = ?`)
+    .get(tokenHash) as { user_id: string; expires_at: string; consumed_at: string | null } | undefined;
+  if (!row || row.consumed_at || new Date(row.expires_at).getTime() < Date.now()) {
+    res.status(400).json({ error: 'This sign-in attempt is invalid or has expired' });
+    return;
+  }
+  db.prepare(`UPDATE oauth_handoffs SET consumed_at = ? WHERE token_hash = ?`).run(
+    new Date().toISOString(),
+    tokenHash,
+  );
+
+  const user = findUserById(row.user_id);
+  if (!user) {
+    res.status(400).json({ error: 'Account no longer exists' });
+    return;
+  }
+  const sessionToken = createSession(user.id);
+  res.json({
+    sessionToken,
+    user: {
+      id: user.id,
+      email: user.email,
+      phone: user.phone,
+      emailVerified: !!user.email_verified,
+      phoneVerified: !!user.phone_verified,
+    },
+  });
 });

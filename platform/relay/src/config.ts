@@ -22,6 +22,16 @@ export const config = {
 
   devLicenseKey: process.env.AI_RELAY_DEV_LICENSE_KEY ?? 'fk_dev_local_testing',
 
+  // Non-loopback origins a self-hosted focusKube backend is allowed to ask the Google OAuth
+  // flow to hand control back to (see auth/routes.ts's `app_redirect` handling) — e.g. a
+  // team's real self-hosted domain. Any http://localhost or http://127.0.0.1 origin (any
+  // port) is always allowed regardless of this list, since only local software can bind a
+  // loopback port on the user's own machine.
+  allowedAppRedirects: (process.env.ALLOWED_APP_REDIRECTS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
@@ -43,5 +53,21 @@ export const config = {
     secretKey: process.env.STRIPE_SECRET_KEY ?? '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
     priceId: process.env.STRIPE_PRICE_ID ?? '',
+  },
+
+  // Which LLM backs /v1/ai/chat (see llm/chatProvider.ts). 'anthropic' (default) talks to
+  // Anthropic directly; 'azure-openai' talks to an Azure OpenAI deployment instead. Either
+  // way, /v1/ai/chat's wire protocol to platform/backend is unchanged — only which model
+  // actually answers changes.
+  aiProvider: (process.env.AI_PROVIDER === 'azure-openai' ? 'azure-openai' : 'anthropic') as
+    | 'anthropic'
+    | 'azure-openai',
+
+  azureOpenai: {
+    apiKey: process.env.AZURE_OPENAI_API_KEY ?? '',
+    // e.g. https://<resource>.openai.azure.com — chatProvider.ts appends /openai/v1/ itself.
+    endpoint: process.env.AZURE_OPENAI_ENDPOINT ?? '',
+    // Azure addresses models by deployment name, not the underlying model name.
+    deployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? '',
   },
 };

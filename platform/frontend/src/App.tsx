@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, setDesktopEmail } from './api/client';
+import { api, ApiError } from './api/client';
+import { useAiEntitlement } from './api/aiAssistantApi';
 import type { AzureScope, ContextScope } from './api/client';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
@@ -17,7 +18,7 @@ import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { MinikubePanel } from './components/MinikubePanel';
 import { AiAssistantPanel } from './components/AiAssistantPanel';
-import { AuthGate } from './components/AuthGate';
+import { SignInGate } from './components/SignInGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
 import { uiText } from './text';
@@ -44,8 +45,7 @@ export type View =
   | { type: 'topology' }
   | { type: 'minikube' }
   | { type: 'azure' }
-  | { type: 'aws' }
-  | { type: 'aiAssistant' };
+  | { type: 'aws' };
 
 type UiRoute = 'login' | 'focusKube';
 
@@ -123,7 +123,6 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
   if (view.type === 'minikube') return 'minikube';
   if (view.type === 'azure') return `azure:${azureSource ?? 'cloud'}`;
   if (view.type === 'aws') return 'aws';
-  if (view.type === 'aiAssistant') return `aiAssistant:${sourceKey}:${contextKey}${suffix}`;
   return view.type;
 }
 
@@ -151,8 +150,6 @@ function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 
         ? 'Azure / AKS Connections'
       : view.type === 'aws'
         ? 'AWS / EKS Connections'
-      : view.type === 'aiAssistant'
-        ? 'AI Assistant'
       : 'Unknown';
   // Azure and logs views aren't context-scoped, so don't append the context name.
   if (view.type === 'azure' || view.type === 'logs' ) return base;
@@ -338,6 +335,12 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('k8sExplorer.sidebarCollapsed') === 'true';
   });
+  // Fully hides the sidebar column and its resizer (VSCode-style: clicking the already-active
+  // Explorer icon in the activity bar toggles this) — distinct from sidebarCollapsed, which
+  // narrows the sidebar to an icon-only rail but still keeps it present.
+  const [sidebarHidden, setSidebarHidden] = useState<boolean>(() => {
+    return localStorage.getItem('k8sExplorer.sidebarHidden') === 'true';
+  });
   const [sidebarActivity, setSidebarActivity] = useState<'explorer' | 'search' | 'settings'>('explorer');
   const [sidebarWidthVw, setSidebarWidthVw] = useState<number>(() => {
     const rawVw = Number(localStorage.getItem('k8sExplorer.sidebarWidthVw'));
@@ -354,6 +357,21 @@ export default function App() {
 
     return SIDEBAR_DEFAULT_WIDTH_VW;
   });
+
+  const AI_PANEL_DEFAULT_WIDTH_VW = 24;
+  const AI_PANEL_MIN_WIDTH_VW = 18;
+  const AI_PANEL_MAX_WIDTH_VW = 40;
+  const [aiPanelOpen, setAiPanelOpen] = useState<boolean>(() => {
+    return localStorage.getItem('k8sExplorer.aiPanelOpen') === 'true';
+  });
+  const [aiPanelWidthVw, setAiPanelWidthVw] = useState<number>(() => {
+    const rawVw = Number(localStorage.getItem('k8sExplorer.aiPanelWidthVw'));
+    if (Number.isFinite(rawVw)) {
+      return Math.min(AI_PANEL_MAX_WIDTH_VW, Math.max(AI_PANEL_MIN_WIDTH_VW, rawVw));
+    }
+    return AI_PANEL_DEFAULT_WIDTH_VW;
+  });
+
   const [createResourceOpen, setCreateResourceOpen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
@@ -425,9 +443,6 @@ export default function App() {
     queryFn: async () => {
       try {
         const response = await api.authMe();
-        if (response.user?.email) {
-          setDesktopEmail(response.user.email);
-        }
         return response.user;
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -453,6 +468,11 @@ export default function App() {
     refetchOnReconnect: false,
     enabled: !!user,
   });
+
+  // Warms the AI entitlement check right after sign-in rather than waiting for the user to
+  // open the AI Assistant tab — AiEntitlementGate's own useAiEntitlement() call shares this
+  // same query, so the tab renders from an already-fresh cache instead of a loading flash.
+  useAiEntitlement(!!user);
 
   const [azureCloudAccount, setAzureCloudAccount] = useState<AzureAccount | null>(null);
   const [awsIdentity, setAwsIdentity] = useState<AwsIdentity | null>(null);
@@ -536,8 +556,20 @@ export default function App() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    localStorage.setItem('k8sExplorer.sidebarHidden', String(sidebarHidden));
+  }, [sidebarHidden]);
+
+  useEffect(() => {
     localStorage.setItem('k8sExplorer.sidebarWidthVw', String(sidebarWidthVw));
   }, [sidebarWidthVw]);
+
+  useEffect(() => {
+    localStorage.setItem('k8sExplorer.aiPanelOpen', String(aiPanelOpen));
+  }, [aiPanelOpen]);
+
+  useEffect(() => {
+    localStorage.setItem('k8sExplorer.aiPanelWidthVw', String(aiPanelWidthVw));
+  }, [aiPanelWidthVw]);
 
   useEffect(() => {
     localStorage.setItem('k8sExplorer.terminalHeightPx', String(terminalHeightPx));
@@ -1028,7 +1060,6 @@ export default function App() {
 
   const handleSignOut = async () => {
     await api.authSignOut();
-    localStorage.removeItem('k8sExplorer.desktopEmail');
     setContext(undefined);
     setContextInitialized(false);
     queryClient.setQueryData(['auth', 'me'], null);
@@ -1136,12 +1167,34 @@ export default function App() {
     window.addEventListener('mouseup', onUp);
   };
 
+  const startAiPanelResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidthVw = aiPanelWidthVw;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const viewportWidth = Math.max(window.innerWidth, 1);
+      // Anchored to the right edge — dragging left (negative deltaX) widens it.
+      const deltaVw = ((moveEvent.clientX - startX) / viewportWidth) * 100;
+      const nextWidthVw = startWidthVw - deltaVw;
+      setAiPanelWidthVw(Math.min(AI_PANEL_MAX_WIDTH_VW, Math.max(AI_PANEL_MIN_WIDTH_VW, nextWidthVw)));
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   if (authQuery.isLoading) {
     return <div className="auth-loading">Loading...</div>;
   }
 
   if (!user) {
-    return <AuthGate onSignedIn={activateExplorerRoute} />;
+    return <SignInGate onSignedIn={activateExplorerRoute} />;
   }
 
   const permissions = capabilitiesFor(user.role);
@@ -1155,21 +1208,34 @@ export default function App() {
         theme={theme}
         onThemeChange={setTheme}
         hideBar={isDesktopBuild}
-        // onContextsRefetch={() => contextsQuery.refetch()}
-        // onSignOut={handleSignOut}
+        onSignOut={handleSignOut}
       />
       <div
-        className={`body ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
-        style={{ ['--sidebar-width' as any]: `${sidebarWidthVw}vw` }}
+        className={`body ${sidebarHidden ? 'sidebar-hidden' : sidebarCollapsed ? 'sidebar-collapsed' : ''} ${aiPanelOpen ? 'ai-panel-open' : ''}`}
+        style={{
+          ['--sidebar-width' as any]: `${sidebarWidthVw}vw`,
+          ['--ai-panel-width' as any]: `${aiPanelWidthVw}vw`,
+        }}
       >
         <ActivityBar
           active={sidebarActivity}
+          explorerHidden={sidebarHidden}
           onSelect={(activity) => {
+            if (activity === 'explorer' && sidebarActivity === 'explorer') {
+              // Clicking the already-active Explorer icon toggles the whole sidebar,
+              // VSCode-style, rather than switching views (there's nothing else to switch to
+              // today since search/settings aren't wired up yet).
+              setSidebarHidden((current) => !current);
+              return;
+            }
             setSidebarActivity(activity);
+            setSidebarHidden(false);
             if (activity === 'explorer' && sidebarCollapsed) setSidebarCollapsed(false);
           }}
+          aiActive={aiPanelOpen}
+          onToggleAi={() => setAiPanelOpen((current) => !current)}
         />
-        {sidebarActivity === 'explorer' ? <Sidebar
+        {!sidebarHidden && (sidebarActivity === 'explorer' ? <Sidebar
           view={activeTab?.view}
           activeTabOriginContext={activeTab?.originContext}
           activeTabOriginSource={activeTab?.originSource}
@@ -1199,15 +1265,17 @@ export default function App() {
           onOpenCloudAzureView={openCloudAzureView}
           onAwsSignOut={handleAwsSignOut}
           onOpenCloudAwsView={openCloudAwsView}
-        /> : <ActivityPanel contexts={contexts} onContextChange={(name) => { void handleContextChange(name); }} onOpenExplorer={activateExplorerRoute} />}
-        <div
-          className="sidebar-resizer"
-          onMouseDown={startSidebarResize}
-          title={uiText.common.resizeSidebar}
-          role="separator"
-          aria-orientation="vertical"
+        /> : <ActivityPanel contexts={contexts} onContextChange={(name) => { void handleContextChange(name); }} onOpenExplorer={activateExplorerRoute} />)}
+        {!sidebarHidden && (
+          <div
+            className="sidebar-resizer"
+            onMouseDown={startSidebarResize}
+            title={uiText.common.resizeSidebar}
+            role="separator"
+            aria-orientation="vertical"
             aria-label={uiText.common.resizeSidebar}
-        />
+          />
+        )}
         <div className={`main ${tabs.length === 0 ? 'main-empty' : ''}`}>
             <div className="main-workspace">
               <div className="main-content">
@@ -1433,9 +1501,6 @@ export default function App() {
                   {activeTab?.view.type === 'minikube' && (
                     <MinikubePanel onOpenExplorer={openMinikubeResourceExplorer} />
                   )}
-                  {activeTab?.view.type === 'aiAssistant' && (
-                    <AiAssistantPanel scope={activeTabScope} />
-                  )}
                 </div>
               </div>
 
@@ -1453,6 +1518,21 @@ export default function App() {
               />
             </div>
         </div>
+        {aiPanelOpen && (
+          <>
+            <div
+              className="ai-panel-resizer"
+              onMouseDown={startAiPanelResize}
+              title={uiText.common.resizeSidebar}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={uiText.common.resizeSidebar}
+            />
+            <div className="ai-panel-dock">
+              <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} />
+            </div>
+          </>
+        )}
       </div>
       <footer className="app-footer">
         <a

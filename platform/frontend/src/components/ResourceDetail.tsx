@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Editor from '@monaco-editor/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, getDesktopEmail, type Scope } from '../api/client';
+import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { getMetricsWorker } from '../utils/workerRuntime';
@@ -301,7 +301,6 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
     const startMsg = {
       type: 'start',
       payload: {
-        email: getDesktopEmail(),
         context: scope.context,
         namespace: pod.metadata.namespace,
         pod: pod.metadata.name,

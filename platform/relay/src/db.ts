@@ -54,6 +54,18 @@ db.exec(`
     consumed_at TEXT
   );
 
+  -- Short-lived, single-use codes that hand a session off to a self-hosted focusKube
+  -- backend after an app-initiated Google OAuth flow, without ever putting the real
+  -- session token in a URL/browser history (see auth/routes.ts's /google/callback and
+  -- /session/exchange).
+  CREATE TABLE IF NOT EXISTS oauth_handoffs (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT
+  );
+
   -- License keys stay plaintext at rest (unlike sessions/OTP codes): the dashboard
   -- needs to re-display a customer's key indefinitely, the way a product key or API
   -- key is normally re-viewable in an account portal — this isn't a one-time-reveal secret.

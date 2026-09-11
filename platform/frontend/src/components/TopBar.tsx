@@ -15,8 +15,7 @@ interface Props {
   // Hides the visual bar (used in desktop builds) while keeping the
   // menu-action listener and Preferences modal mounted.
   hideBar?: boolean;
-  // onContextsRefetch: () => void;
-  // onSignOut: () => Promise<void>;
+  onSignOut: () => Promise<void>;
 }
 
 export function TopBar({
@@ -25,8 +24,7 @@ export function TopBar({
   onThemeChange,
   onOpenSettings,
   hideBar,
-  // onContextsRefetch,
-  // onSignOut,
+  onSignOut,
 }: Props) {
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -35,17 +33,10 @@ export function TopBar({
   const [selectedTheme, setSelectedTheme] = useState<Theme>(theme);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const authConfigQuery = useQuery({
-    queryKey: ['auth', 'config'],
-    queryFn: () => api.authConfig(),
-    staleTime: 60_000,
-  });
-  const isDesktopMode = authConfigQuery.data?.mode === 'desktop';
-
   const logLevelQuery = useQuery({
     queryKey: ['settings', 'log-level'],
     queryFn: () => api.getLogLevel(),
-    enabled: settingsOpen && isDesktopMode,
+    enabled: settingsOpen,
   });
 
   useEffect(() => {
@@ -160,7 +151,7 @@ export function TopBar({
         </button>
         {menuOpen && (
           <div className="topbar-menu-popup" role="menu" aria-label={uiText.topbar.userMenu}>
-            {/* <button
+            <button
               type="button"
               className="topbar-menu-item"
               role="menuitem"
@@ -169,20 +160,18 @@ export function TopBar({
                 void onSignOut();
               }}
             >
-              Logout
-            </button> */}
-            {isDesktopMode && (
-              <button
-                type="button"
-                className="topbar-menu-item"
-                role="menuitem"
-                onClick={() => {
-                  void handleOpenSettings();
-                }}
-              >
-                {uiText.topbar.settings}
-              </button>
-            )}
+              {uiText.topbar.signOut}
+            </button>
+            <button
+              type="button"
+              className="topbar-menu-item"
+              role="menuitem"
+              onClick={() => {
+                void handleOpenSettings();
+              }}
+            >
+              {uiText.topbar.settings}
+            </button>
           </div>
         )}
       </div>
