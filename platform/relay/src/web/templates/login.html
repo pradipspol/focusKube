@@ -1,0 +1,63 @@
+<h1>Sign in</h1>
+<p class="sub">Sign in to FocusKube to continue.</p>
+<div id="err"></div>
+<form id="f">
+  <label>Email <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"></label>
+  <label>Password <input type="password" name="password" required autocomplete="current-password" placeholder="At least 8 characters"></label>
+  <button type="submit">Sign in</button>
+</form>
+<form id="tfa-form" style="display:none">
+  <p class="sub" id="tfa-sent-to"></p>
+  <label>Code <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required autocomplete="one-time-code"></label>
+  <button type="submit">Verify</button>
+</form>
+<div id="google-signin">
+  <div class="auth-divider">or</div>
+  <form action="/v1/auth/google/start" method="get">
+    <input type="hidden" name="next" id="google-next">
+    <button type="submit" class="secondary">Continue with Google</button>
+  </form>
+  <div class="links" id="signup-link"><a href="/signup">Need an account? Sign up</a> &middot; <a href="/forgot-password">Forgot password?</a> &middot; <a href="/otp">Sign in with a code</a></div>
+</div>
+<script>
+  let tfaEmail = '';
+
+  // Same-origin-relative only (mirrors the server-side check in auth/routes.ts's
+  // validatedNextPath) — carries a page like the team-invite accept flow through login.
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next');
+  const validNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  if (validNext) {
+    document.getElementById('google-next').value = validNext;
+    document.getElementById('signup-link').innerHTML =
+      '<a href="/signup?next=' + encodeURIComponent(validNext) + '">Need an account? Sign up</a> &middot; <a href="/forgot-password">Forgot password?</a> &middot; <a href="/otp?next=' + encodeURIComponent(validNext) + '">Sign in with a code</a>';
+  }
+
+  document.getElementById('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.getElementById('err').innerHTML = '';
+    const body = Object.fromEntries(new FormData(e.target));
+    const res = await fetch('/v1/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+    if (data.twoFactorRequired) {
+      tfaEmail = data.email;
+      e.target.style.display = 'none';
+      document.getElementById('google-signin').style.display = 'none';
+      document.getElementById('tfa-form').style.display = 'grid';
+      document.getElementById('tfa-sent-to').textContent = 'Enter the code we emailed to ' + tfaEmail;
+      return;
+    }
+    location.href = validNext || '/home';
+  });
+
+  document.getElementById('tfa-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.getElementById('err').innerHTML = '';
+    const data = Object.fromEntries(new FormData(e.target));
+    const res = await fetch('/v1/auth/2fa/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: tfaEmail, code: data.code }) });
+    const body = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+    location.href = validNext || '/home';
+  });
+</script>

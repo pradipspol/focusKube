@@ -1,0 +1,164 @@
+<h1>Your FocusKube Account</h1>
+<div id="content">Loading&hellip;</div>
+<style>
+  .pw-field { position: relative; }
+  .pw-field input { display: block; width: 100%; padding-right: 40px; }
+  .pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--text-muted); }
+  .pw-toggle:hover { color: var(--text-heading); }
+  .pw-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .status-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status-pill.on { color: #4ac26b; background: rgba(74,194,107,0.15); }
+  .status-pill.off { color: var(--text-muted); background: rgba(143,160,179,0.12); }
+  @media (prefers-color-scheme: light) { .status-pill.on { color: #1a7f37; background: rgba(26,127,55,0.12); } }
+</style>
+<script>
+  const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+
+  /** A <label> wrapping a password input with a show/hide toggle button inside the field. */
+  function passwordField(labelText, name, opts) {
+    opts = opts || {};
+    const attrs = [
+      'type="password"',
+      'name="' + name + '"',
+      opts.autocomplete ? 'autocomplete="' + opts.autocomplete + '"' : '',
+      opts.minlength ? 'minlength="' + opts.minlength + '"' : '',
+      opts.required === false ? '' : 'required',
+    ].filter(Boolean).join(' ');
+    return (
+      '<label>' + labelText +
+      '<div class="pw-field">' +
+      '<input ' + attrs + '>' +
+      '<button type="button" class="pw-toggle" aria-label="Show password" title="Show password">' + EYE_ICON + '</button>' +
+      '</div>' +
+      '</label>'
+    );
+  }
+
+  /** Wires every .pw-toggle button on the page to flip its sibling input between
+   * password/text and swap the eye/eye-off icon — delegated once since the fields
+   * this page uses are all injected via innerHTML rather than present at load. */
+  function wirePasswordToggles(root) {
+    root.querySelectorAll('.pw-toggle').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = btn.previousElementSibling;
+        const showing = input.type === 'text';
+        input.type = showing ? 'password' : 'text';
+        btn.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+        btn.title = btn.ariaLabel = showing ? 'Show password' : 'Hide password';
+      });
+    });
+  }
+
+  (async () => {
+    const meRes = await fetch('/v1/auth/me');
+    if (!meRes.ok) { location.href = '/login'; return; }
+    const profileRes = await fetch('/v1/account/profile');
+    const { user } = await profileRes.json();
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+    let tfaEnabled = !!user.twoFactorEnabled;
+
+    document.getElementById('content').innerHTML =
+      '<p class="sub">Signed in as ' + (fullName ? fullName + ' &middot; ' : '') + (user.email || user.phone) + '</p>' +
+
+      '<div class="card">' +
+      '<h2>Username</h2>' +
+      '<p class="sub">Your email address is also your sign-in username.</p>' +
+      '<div id="email-err"></div>' +
+      '<form id="email-form">' +'<label>Email <input type="email" name="newEmail" value="' + (user.email || '').replace(/"/g, '&quot;') + '" required></label>' +
+      '<button type="submit" class="secondary" style="justify-self:start;">Update email</button>' +
+      '</form>' +
+      '</div>' +
+
+      '<div class="card">' +
+      '<h2>' + (user.hasPassword ? 'Change password' : 'Set a password') + '</h2>' +
+      (user.hasPassword ? '<p class="sub">Enter your current password to change it.</p>' : '<p class="sub">You signed in without a password (Google or a one-time code) — set one to also be able to log in with your email and password.</p>') +
+      '<div id="pw-err"></div>' +
+      '<form id="pw-form">' +
+      (user.hasPassword ? passwordField('Current password', 'currentPassword', { autocomplete: 'current-password' }) : '') +
+      passwordField('New password', 'newPassword', { minlength: 8, autocomplete: 'new-password' }) +
+      passwordField('Confirm new password', 'confirmPassword', { minlength: 8, autocomplete: 'new-password' }) +
+      '<button type="submit" style="justify-self:start;">' + (user.hasPassword ? 'Update password' : 'Set password') + '</button>' +
+      '</form>' +
+      '</div>' +
+
+      '<div class="card">' +
+      '<h2>Two-factor authentication</h2>' +
+      '<p class="sub">When enabled, logging in with your password also requires a one-time code emailed to you.</p>' +
+      '<div id="tfa-err"></div>' +
+      '<div class="card-row" style="margin-top:12px;">' +
+      '<span class="status-pill ' + (tfaEnabled ? 'on' : 'off') + '" id="tfa-status">' + (tfaEnabled ? 'Enabled' : 'Disabled') + '</span>' +
+      '<button type="button" id="tfa-toggle" class="' + (tfaEnabled ? 'secondary' : '') + '">' + (tfaEnabled ? 'Disable' : 'Enable') + '</button>' +
+      '</div>' +
+      '</div>' +
+
+      '<div class="card">' +
+      '<h2>Connected sign-in methods</h2>' +
+      '<p class="sub">Email: ' + (user.email || '—') + (user.email ? (user.emailVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
+      '<p class="sub">Phone: ' + (user.phone || 'Not set') + (user.phone ? (user.phoneVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
+      '<p class="sub">Google: ' + (user.hasGoogle ? 'Linked' : 'Not linked') + '</p>' +
+      '</div>' +
+
+      '<p class="links"><a href="/profile">Edit personal info &amp; profile image</a> &middot; <a href="/home">Manage your plan &amp; billing</a></p>' +
+
+      '<div class="card" style="margin-top:32px; border-color:var(--danger);">' +
+      '<h2>Danger zone</h2>' +
+      '<p class="sub">Deleting your account signs you out everywhere and deactivates your license. Your data is kept for a recovery window rather than erased immediately.</p>' +
+      '<div id="delete-err"></div>' +
+      '<button type="button" id="delete-account" class="secondary" style="border-color:var(--danger); color:var(--danger);">Delete my account</button>' +
+      '</div>';
+
+    wirePasswordToggles(document.getElementById('content'));
+
+    document.getElementById('email-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('email-err').innerHTML = '';
+      const body = Object.fromEntries(new FormData(e.target));
+      const res = await fetch('/v1/account/email', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('email-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      document.getElementById('email-err').innerHTML = '<div class="notice">Saved.</div>';
+    });
+
+    document.getElementById('pw-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('pw-err').innerHTML = '';
+      const body = Object.fromEntries(new FormData(e.target));
+      if (body.newPassword !== body.confirmPassword) {
+        document.getElementById('pw-err').innerHTML = '<div class="error">New password and confirmation do not match.</div>';
+        return;
+      }
+      delete body.confirmPassword;
+      const res = await fetch('/v1/account/password', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('pw-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      e.target.reset();
+      document.getElementById('pw-err').innerHTML = '<div class="notice">Password saved.</div>';
+    });
+
+    document.getElementById('tfa-toggle').addEventListener('click', async (e) => {
+      document.getElementById('tfa-err').innerHTML = '';
+      const nextEnabled = !tfaEnabled;
+      const res = await fetch('/v1/account/2fa', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled: nextEnabled }) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('tfa-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      tfaEnabled = nextEnabled;
+      const status = document.getElementById('tfa-status');
+      status.textContent = tfaEnabled ? 'Enabled' : 'Disabled';
+      status.className = 'status-pill ' + (tfaEnabled ? 'on' : 'off');
+      e.target.textContent = tfaEnabled ? 'Disable' : 'Enable';
+      e.target.className = tfaEnabled ? 'secondary' : '';
+    });
+
+    document.getElementById('delete-account').addEventListener('click', async () => {
+      document.getElementById('delete-err').innerHTML = '';
+      const typed = prompt('This will sign you out everywhere and deactivate your license. Type DELETE to confirm.');
+      if (typed !== 'DELETE') return;
+      const res = await fetch('/v1/account/delete', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ confirm: typed }) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('delete-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      location.href = '/focusKube';
+    });
+  })();
+</script>

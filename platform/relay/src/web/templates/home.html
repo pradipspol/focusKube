@@ -1,0 +1,125 @@
+<h1>FocusKube</h1>
+<p class="sub">A Kubernetes explorer with an AI assistant that reads your cluster's live state and helps you diagnose what's wrong — right from the desktop app.</p>
+<div class="links" style="margin-top:24px; display:flex; gap:12px; flex-wrap:wrap;">
+  <span class="nav-guest"><a href="/signup"><button type="button">Start free trial</button></a></span>
+  <a href="/download"><button type="button" class="secondary">Download the app</button></a>
+  <span class="nav-guest"><a href="/login"><button type="button" class="secondary">Log in</button></a></span>
+</div>
+
+<div class="nav-guest">
+  <h2 style="margin-top:40px;">Licensing</h2>
+  <div class="plan-grid">
+    <div class="card">
+      <h2>Free trial</h2>
+      <p class="sub">{{TRIAL_QUOTA}} AI assistant calls or {{TRIAL_DAYS}} days — whichever comes first. No card required, one trial per account.</p>
+    </div>
+    <div class="card">
+      <h2>Pro</h2>
+      <p class="sub">{{PRO_QUOTA}} AI assistant calls per license. Subscribe right here once you're ready for ongoing access.</p>
+    </div>
+  </div>
+  <p class="sub" style="margin-top:32px;">One account works everywhere — sign in on the web or inside the desktop app with the same email, and your license follows you.</p>
+</div>
+
+<div class="nav-user card" id="home-plan-card" style="display:none; margin-top:24px;">Loading&hellip;</div>
+<style>
+  .license-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .license-field { position: relative; flex: 1; min-width: 220px; }
+  .license-input { display: block; width: 100%; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px 40px 10px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); }
+  .license-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--text-muted); }
+  .license-toggle:hover { color: var(--text-heading); }
+  .license-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .license-row form { display: block; margin: 0; }
+</style>
+
+<script>
+  const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+
+  (async () => {
+    const meRes = await fetch('/v1/auth/me');
+    if (!meRes.ok) return;
+
+    const acctRes = await fetch('/v1/account');
+    const acct = await acctRes.json();
+    const fmtDate = (iso) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
+    const upgradeButtonsHtml =
+      '<form id="checkout-month"><button type="submit">Subscribe monthly</button></form>' +
+      '<form id="checkout-year"><button type="submit" class="secondary">Subscribe annually ({{PRO_ANNUAL_DISCOUNT_PERCENT}}% off)</button></form>';
+
+    let planHtml;
+    if (acct.license && acct.license.scope === 'org') {
+      // Covered by a team's pooled plan — full management lives on /team, not here.
+      const org = acct.license.org;
+      planHtml =
+        '<p>Covered by <strong>' + org.name + '</strong>&rsquo;s team plan &middot; ' + acct.license.quotaRemaining + ' of ' + acct.license.quotaGranted + ' pooled credits left</p>' +
+        '<p class="links"><a href="/team">' + (org.role === 'owner' ? 'Manage your team' : 'View team details') + ' &rarr;</a></p>';
+    } else if (acct.license) {
+      const trialNotice = acct.license.trialEndsAt
+        ? '<p class="notice">Trial ends ' + fmtDate(acct.license.trialEndsAt) + ' &middot; ' + acct.license.quotaRemaining + ' calls left</p>'
+        : '';
+      const isTrial = acct.license.plan === 'trial';
+      const upgradeButtons = isTrial ? upgradeButtonsHtml : '';
+      const billingButton = !isTrial ? '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' : '';
+      const cancelButton = isTrial ? '<form id="cancel-trial"><button type="submit" class="secondary danger">Cancel trial</button></form>' : '';
+      planHtml =
+        '<p><strong>Plan:</strong> ' + acct.license.plan + ' (' + acct.license.status + ')</p>' +
+        trialNotice +
+        '<div class="license-row">' +
+        '<div class="license-field">' +
+        '<input type="password" class="license-input" id="license-key" readonly value="' + acct.license.key.replace(/"/g, '&quot;') + '">' +
+        '<button type="button" class="license-toggle" id="license-toggle" aria-label="Show key" title="Show key">' + EYE_ICON + '</button>' +
+        '</div>' +
+        '<form id="regen"><button type="submit" class="secondary">Regenerate key</button></form>' +
+        '</div>' +
+        '<div class="button-row" style="margin-top:12px;">' +
+        upgradeButtons +
+        billingButton +
+        cancelButton +
+        '</div>';
+    } else if (acct.hasHadTrial) {
+      planHtml =
+        '<p>Your free trial has ended — you&rsquo;re back on the <strong>Free</strong> plan (no AI Assistant).</p>' +
+        '<div class="button-row">' +
+        upgradeButtonsHtml +
+        '<a href="/team"><button type="button" class="secondary">Buy for your team</button></a>' +
+        '</div>';
+    } else {
+      planHtml =
+        '<p>You&rsquo;re on the <strong>Free</strong> plan &mdash; no AI Assistant. Start a trial or subscribe to Pro to unlock it.</p>' +
+        '<div class="button-row">' +
+        '<form id="trial"><button type="submit">Start free 14-day Pro trial</button></form>' +
+        upgradeButtonsHtml +
+        '<a href="/team"><button type="button" class="secondary">Buy for your team</button></a>' +
+        '</div>';
+    }
+
+    document.getElementById('home-plan-card').innerHTML = '<h2>Your plan</h2>' + planHtml;
+
+    const goTo = async (path, body) => {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const respBody = await res.json();
+      if (!res.ok) { alert(respBody.error || 'Something went wrong'); return; }
+      if (respBody.url) location.href = respBody.url;
+      else location.reload();
+    };
+    document.getElementById('trial')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/account/trial/start'); });
+    document.getElementById('checkout-month')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/checkout', { interval: 'month' }); });
+    document.getElementById('checkout-year')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/checkout', { interval: 'year' }); });
+    document.getElementById('portal')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/portal'); });
+    document.getElementById('cancel-trial')?.addEventListener('submit', (e) => { e.preventDefault(); if (confirm('Cancel your trial and return to the Free plan?')) goTo('/v1/account/license/cancel'); });
+    document.getElementById('regen')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/account/license/regenerate'); });
+    document.getElementById('license-toggle')?.addEventListener('click', (e) => {
+      const input = document.getElementById('license-key');
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      e.currentTarget.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+      e.currentTarget.title = e.currentTarget.ariaLabel = showing ? 'Show key' : 'Hide key';
+    });
+  })();
+</script>

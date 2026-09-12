@@ -936,10 +936,10 @@
     next: 'Next',
   },
   aiAssistant: {
-    title: 'FocusKube Agent',
-    lockedTitle: 'FocusKube Agent is a paid feature',
+    title: 'FocusKube Assistant',
+    lockedTitle: 'FocusKube Assistant is a Pro feature',
     lockedCopy:
-      'Diagnose issues and get suggested fixes for the resources in this cluster, powered by Claude. Get a license to enable it.',
+      "Diagnose issues and get suggested fixes for the resources in this cluster, powered by Claude. The Free plan doesn't include the AI Assistant — start a trial or subscribe to Pro to unlock it.",
     disclosureTitle: 'Before you enable this',
     disclosureCopy:
       'Unlike the rest of focusKube, the AI assistant sends data off this machine: the resource YAML, related pods, and recent events/logs for whatever you ask about are sent to the focusKube relay service to generate a response. Nothing else in focusKube does this.',

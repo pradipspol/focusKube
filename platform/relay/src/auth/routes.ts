@@ -35,10 +35,24 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+// Deliberately permissive (matches the HTML5 type="email" spirit) — this only guards
+// against obviously malformed input server-side; the client's own check (signup.html)
+// is what gives the user immediate feedback.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 router.post('/signup', authLimiter, async (req, res) => {
-  const { email, password } = req.body as { email?: string; password?: string };
-  if (!email || !password || password.length < 8) {
-    res.status(400).json({ error: 'A valid email and an 8+ character password are required' });
+  const { email, password, firstName, lastName } = req.body as {
+    email?: string;
+    password?: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  if (!email || !EMAIL_RE.test(email)) {
+    res.status(400).json({ error: 'A valid email address is required' });
+    return;
+  }
+  if (!password || password.length < 8) {
+    res.status(400).json({ error: 'An 8+ character password is required' });
     return;
   }
   const normalizedEmail = normalizeEmail(email);
@@ -47,7 +61,12 @@ router.post('/signup', authLimiter, async (req, res) => {
     return;
   }
   const passwordHash = await hashPassword(password);
-  const user = createUser({ email: normalizedEmail, password_hash: passwordHash });
+  const user = createUser({
+    email: normalizedEmail,
+    password_hash: passwordHash,
+    first_name: firstName?.trim() || null,
+    last_name: lastName?.trim() || null,
+  });
   const token = createSession(user.id);
   setSessionCookie(res, token);
   // sessionToken lets a server-to-server caller (a self-hosted focusKube backend proxying
@@ -63,8 +82,43 @@ router.post('/login', authLimiter, async (req, res) => {
     return;
   }
   const user = findUserByEmail(normalizeEmail(email));
-  if (!user?.password_hash || !(await verifyPassword(password, user.password_hash))) {
+  // A deleted account fails the same way as a wrong password — this must not be usable
+  // to tell a deleted account apart from one that never existed.
+  if (!user?.password_hash || user.deleted_at || !(await verifyPassword(password, user.password_hash))) {
     res.status(401).json({ error: 'Invalid email or password' });
+    return;
+  }
+
+  if (user.two_factor_enabled) {
+    // Second factor: a one-time code emailed after the password already checked out (see
+    // POST /2fa/verify below, and account/routes.ts's POST /2fa for the enable/disable
+    // toggle). No session is created until that code is verified too.
+    const code = createOtp(user.email!, 'email', TWO_FACTOR_OTP_PURPOSE);
+    await sendOtpEmail(user.email!, code);
+    res.json({ twoFactorRequired: true, email: user.email });
+    return;
+  }
+
+  const token = createSession(user.id);
+  setSessionCookie(res, token);
+  res.json({ ok: true, sessionToken: token });
+});
+
+router.post('/2fa/verify', authLimiter, (req, res) => {
+  const { email, code } = req.body as { email?: string; code?: string };
+  if (!email || !code) {
+    res.status(400).json({ error: 'email and code are required' });
+    return;
+  }
+  const normalized = normalizeEmail(email);
+  const result = verifyOtp(normalized, TWO_FACTOR_OTP_PURPOSE, code);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  const user = findUserByEmail(normalized);
+  if (!user || user.deleted_at) {
+    res.status(400).json({ error: 'This account is no longer available' });
     return;
   }
   const token = createSession(user.id);
@@ -126,6 +180,7 @@ router.post('/password/reset-confirm', authLimiter, async (req, res) => {
 });
 
 const OTP_PURPOSE = 'login';
+const TWO_FACTOR_OTP_PURPOSE = '2fa-login';
 
 router.post('/otp/request', authLimiter, async (req, res) => {
   const { destination, channel } = req.body as { destination?: string; channel?: 'email' | 'sms' };
@@ -172,6 +227,10 @@ router.post('/otp/verify', authLimiter, (req, res) => {
   // Verifying a code IS proof of ownership of that email/phone — safe to trust it enough
   // to both create the account (if new) and mark that channel verified (if existing).
   let user = channel === 'email' ? findUserByEmail(normalized) : findUserByPhone(normalized);
+  if (user?.deleted_at) {
+    res.status(403).json({ error: 'This account is no longer available' });
+    return;
+  }
   if (!user) {
     user = createUser(
       channel === 'email' ? { email: normalized, email_verified: 1 } : { phone: normalized, phone_verified: 1 },
@@ -189,6 +248,26 @@ router.post('/otp/verify', authLimiter, (req, res) => {
 
 const OAUTH_STATE_COOKIE = 'fk_oauth_state';
 const OAUTH_REDIRECT_COOKIE = 'fk_oauth_app_redirect';
+// Carries a same-origin "return to this page after signing in" path (e.g. the org invite
+// accept flow's /invite?token=... — see org/routes.ts) across the Google redirect chain.
+// Deliberately separate from OAUTH_REDIRECT_COOKIE/validatedAppRedirect above: that one
+// carries a full external app URL for a self-hosted backend's OAuth flow; this one only
+// ever carries a relative path on this relay's own web pages.
+const POST_AUTH_NEXT_COOKIE = 'fk_post_auth_next';
+
+/** Same-origin-relative paths only — rejects an absolute URL, a protocol-relative "//host"
+ * path, or anything with a scheme, closing off the open-redirect this could otherwise be. */
+function validatedNextPath(raw: string | undefined): string | null {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+  try {
+    // Resolving against a fixed dummy origin is just a parser: if new URL() changes the
+    // path (e.g. it actually carried a scheme), the input wasn't a plain relative path.
+    const url = new URL(raw, 'http://fk-relative.invalid');
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Exact-origin match against the configured allowlist — never a prefix/substring check, to
@@ -235,7 +314,7 @@ router.get('/google/start', (req, res) => {
 
   // Present when a self-hosted focusKube backend (not this relay's own web pages) kicked off
   // the flow — carries the browser back to that backend's own callback route once we're done,
-  // instead of to this relay's /dashboard.
+  // instead of to this relay's /account.
   const appRedirect = validatedAppRedirect(
     typeof req.query.app_redirect === 'string' ? req.query.app_redirect : undefined,
   );
@@ -251,6 +330,19 @@ router.get('/google/start', (req, res) => {
     res.clearCookie(OAUTH_REDIRECT_COOKIE, { path: '/v1/auth/google' });
   }
 
+  const next = validatedNextPath(typeof req.query.next === 'string' ? req.query.next : undefined);
+  if (next) {
+    res.cookie(POST_AUTH_NEXT_COOKIE, next, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: config.isProduction,
+      maxAge: 10 * 60 * 1000,
+      path: '/v1/auth/google',
+    });
+  } else {
+    res.clearCookie(POST_AUTH_NEXT_COOKIE, { path: '/v1/auth/google' });
+  }
+
   res.redirect(googleAuthUrl(state));
 });
 
@@ -258,8 +350,10 @@ router.get('/google/callback', async (req, res) => {
   const { code, state } = req.query as { code?: string; state?: string };
   const cookieState = req.cookies?.[OAUTH_STATE_COOKIE];
   const appRedirect = req.cookies?.[OAUTH_REDIRECT_COOKIE];
+  const next = req.cookies?.[POST_AUTH_NEXT_COOKIE];
   res.clearCookie(OAUTH_STATE_COOKIE, { path: '/v1/auth/google' });
   res.clearCookie(OAUTH_REDIRECT_COOKIE, { path: '/v1/auth/google' });
+  res.clearCookie(POST_AUTH_NEXT_COOKIE, { path: '/v1/auth/google' });
 
   if (!code || !state || !cookieState || state !== cookieState) {
     res.status(400).send('Invalid or expired sign-in attempt. Please try again.');
@@ -270,11 +364,19 @@ router.get('/google/callback', async (req, res) => {
     const profile = await verifyGoogleCode(code);
 
     let user = findUserByGoogleSub(profile.sub);
+    if (user?.deleted_at) {
+      res.status(403).send('This account is no longer available.');
+      return;
+    }
     if (!user && profile.email) {
       // Only link onto an existing account when Google itself vouches the email is
       // verified — otherwise a Google account created with an unverified address could
       // hijack someone else's existing focusKube account.
       const existing = findUserByEmail(normalizeEmail(profile.email));
+      if (existing?.deleted_at) {
+        res.status(403).send('This account is no longer available.');
+        return;
+      }
       if (existing && profile.emailVerified) {
         linkGoogleSub(existing.id, profile.sub);
         if (!existing.email_verified) markEmailVerified(existing.id);
@@ -306,7 +408,7 @@ router.get('/google/callback', async (req, res) => {
     }
 
     setSessionCookie(res, createSession(user.id));
-    res.redirect('/dashboard');
+    res.redirect(next && validatedNextPath(next) ? next : '/home');
   } catch (err) {
     res.status(400).send(`Google sign-in failed: ${err instanceof Error ? err.message : 'unknown error'}`);
   }

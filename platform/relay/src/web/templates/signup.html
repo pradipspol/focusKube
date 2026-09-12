@@ -1,0 +1,92 @@
+<h1>Create your account</h1>
+<p class="sub">Sign up to FocusKube to continue.</p>
+<style>
+  .name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 480px) { .name-row { grid-template-columns: 1fr; } }
+  .pw-field { position: relative; }
+  .pw-field input { display: block; width: 100%; padding-right: 40px; }
+  .pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--text-muted); }
+  .pw-toggle:hover { color: var(--text-heading); }
+  .pw-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+<div id="err"></div>
+<form id="f" novalidate>
+  <div class="name-row">
+    <label>First name <input type="text" name="firstName" autocomplete="given-name"></label>
+    <label>Last name <input type="text" name="lastName" autocomplete="family-name"></label>
+  </div>
+  <label>Email <input type="email" name="email" id="email-input" required autocomplete="email" placeholder="you@example.com"></label>
+  <label>Password
+    <div class="pw-field">
+      <input type="password" name="password" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters">
+      <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </label>
+  <label>Confirm password
+    <div class="pw-field">
+      <input type="password" name="confirmPassword" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters">
+      <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </label>
+  <button type="submit">Sign up</button>
+</form>
+<div class="auth-divider">or</div>
+<form action="/v1/auth/google/start" method="get">
+  <input type="hidden" name="next" id="google-next">
+  <button type="submit" class="secondary">Continue with Google</button>
+</form>
+<div class="links" id="login-link"><a href="/login">Already have an account? Sign in</a></div>
+<script>
+  const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Same-origin-relative only (mirrors the server-side check in auth/routes.ts's
+  // validatedNextPath) — carries a page like the team-invite accept flow through signup.
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next');
+  const validNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  if (validNext) {
+    document.getElementById('google-next').value = validNext;
+    document.getElementById('login-link').innerHTML = '<a href="/login?next=' + encodeURIComponent(validNext) + '">Already have an account? Sign in</a>';
+  }
+  const prefillEmail = params.get('email');
+  if (prefillEmail) document.getElementById('email-input').value = prefillEmail;
+
+  document.querySelectorAll('.pw-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = btn.previousElementSibling;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+      btn.title = btn.ariaLabel = showing ? 'Show password' : 'Hide password';
+    });
+  });
+
+  document.getElementById('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.getElementById('err').innerHTML = '';
+    const body = Object.fromEntries(new FormData(e.target));
+    if (!EMAIL_RE.test(body.email || '')) {
+      document.getElementById('err').innerHTML = '<div class="error">Enter a valid email address.</div>';
+      return;
+    }
+    if (!body.password || body.password.length < 8) {
+      document.getElementById('err').innerHTML = '<div class="error">Password must be at least 8 characters.</div>';
+      return;
+    }
+    if (body.password !== body.confirmPassword) {
+      document.getElementById('err').innerHTML = '<div class="error">Passwords do not match.</div>';
+      return;
+    }
+    delete body.confirmPassword;
+    const res = await fetch('/v1/auth/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+    location.href = validNext || '/account';
+  });
+</script>

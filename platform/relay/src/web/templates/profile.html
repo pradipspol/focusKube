@@ -1,0 +1,132 @@
+<h1>Profile</h1>
+<div id="content">Loading&hellip;</div>
+<script>
+  const MAX_AVATAR_BYTES = 1024 * 1024;
+  let pendingAvatarDataUrl;
+
+  (async () => {
+    const meRes = await fetch('/v1/auth/me');
+    if (!meRes.ok) { location.href = '/login'; return; }
+    const profileRes = await fetch('/v1/account/profile');
+    const { user } = await profileRes.json();
+
+    const esc = (value) => (value || '').replace(/"/g, '&quot;');
+    const avatarSrc = user.avatarDataUrl || '';
+
+    document.getElementById('content').innerHTML =
+      '<div class="card">' +
+      '<h2>Personal info</h2>' +
+      '<div id="profile-err"></div>' +
+      '<form id="profile-form">' +
+      '<div style="display:flex; align-items:center; gap:16px;">' +
+      '<img id="avatar-preview" alt="Profile image" src="' + avatarSrc + '" style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:rgba(127,127,127,0.15);display:' + (avatarSrc ? 'block' : 'none') + '">' +
+      '<div id="avatar-placeholder" style="width:64px;height:64px;border-radius:50%;background:rgba(127,127,127,0.15);display:' + (avatarSrc ? 'none' : 'block') + '"></div>' +
+      '<label style="flex:1;">Profile image <input type="file" id="avatar-input" accept="image/*"></label>' +
+      '</div>' +
+      '<label>First name <input type="text" name="firstName" value="' + esc(user.firstName) + '"></label>' +
+      '<label>Last name <input type="text" name="lastName" value="' + esc(user.lastName) + '"></label>' +
+      '<label>Company <input type="text" name="company" value="' + esc(user.company) + '"></label>' +
+      '<label style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" name="productUpdatesOptIn" ' + (user.productUpdatesOptIn ? 'checked' : '') + ' style="width:auto;"> Send me product updates and tips by email</label>' +
+      '<button type="submit">Save</button>' +
+      '</form>' +
+      '</div>' +
+      '<p class="links"><a href="/account">Manage password, sign-in &amp; security &rarr;</a></p>';
+
+// document.getElementById('content').innerHTML =
+//     '<div class="card">' +
+//       '<h2>Personal info</h2>' +
+//       '<div id="profile-err"></div>' +
+
+//       '<div style="display:flex; gap:48px; align-items:flex-start;">' +
+
+//         // Left side - form
+//         '<form id="profile-form" style="flex:1;">' +
+//           '<label>First name <input type="text" name="firstName" value="' + esc(user.firstName) + '"></label>' +
+//           '<label>Last name <input type="text" name="lastName" value="' + esc(user.lastName) + '"></label>' +
+//           '<label>Company <input type="text" name="company" value="' + esc(user.company) + '"></label>' +
+//           '<label style="display:flex;align-items:center;gap:8px;">' +
+//             '<input type="checkbox" name="productUpdatesOptIn" ' +
+//             (user.productUpdatesOptIn ? 'checked' : '') +
+//             ' style="width:auto;">' +
+//             'Send me product updates and tips by email' +
+//           '</label>' +
+//           '<button type="submit">Save</button>' +
+//         '</form>' +
+
+//         // Right side - profile image
+//         '<div style="width:220px;display:flex;flex-direction:column;align-items:center;">' +
+
+//           '<img id="avatar-preview" ' +
+//             'alt="Profile image" ' +
+//             'src="' + avatarSrc + '" ' +
+//             'style="' +
+//               'width:140px;' +
+//               'height:140px;' +
+//               'border-radius:50%;' +
+//               'object-fit:cover;' +
+//               'background:rgba(127,127,127,0.15);' +
+//               'display:' + (avatarSrc ? 'block' : 'none') +
+//             '">' +
+
+//           '<div id="avatar-placeholder" ' +
+//             'style="' +
+//               'width:140px;' +
+//               'height:140px;' +
+//               'border-radius:50%;' +
+//               'background:rgba(127,127,127,0.15);' +
+//               'display:' + (avatarSrc ? 'none' : 'block') +
+//             '">' +
+//           '</div>' +
+
+//           '<label style="margin-top:16px;">' +
+//             '<input type="file" id="avatar-input" accept="image/*" style="display:none;">' +
+//             '<button type="button" onclick="document.getElementById(\'avatar-input\').click()">' +
+//               'Update Image' +
+//             '</button>' +
+//           '</label>' +
+
+//         '</div>' +
+
+//       '</div>' +
+//       '</div>' +
+
+//       '<p class="links"><a href="/account">Manage password, sign-in &amp; security &rarr;</a></p>';
+
+    const avatarInput = document.getElementById('avatar-input');
+    avatarInput.addEventListener('change', () => {
+      const file = avatarInput.files?.[0];
+      document.getElementById('profile-err').innerHTML = '';
+      if (!file) return;
+      if (file.size > MAX_AVATAR_BYTES) {
+        document.getElementById('profile-err').innerHTML = '<div class="error">Image is too large — please use a file under 1MB.</div>';
+        avatarInput.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingAvatarDataUrl = reader.result;
+        const preview = document.getElementById('avatar-preview');
+        preview.src = pendingAvatarDataUrl;
+        preview.style.display = 'block';
+        document.getElementById('avatar-placeholder').style.display = 'none';
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.getElementById('profile-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('profile-err').innerHTML = '';
+      const form = new FormData(e.target);
+      const body = {
+        firstName: form.get('firstName'),
+        lastName: form.get('lastName'),
+        company: form.get('company'),
+        productUpdatesOptIn: form.get('productUpdatesOptIn') === 'on',
+      };
+      if (pendingAvatarDataUrl !== undefined) body.avatarDataUrl = pendingAvatarDataUrl;
+      const res = await fetch('/v1/account/profile', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      if (!res.ok) { const data = await res.json(); document.getElementById('profile-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      document.getElementById('profile-err').innerHTML = '<div class="notice">Saved.</div>';
+    });
+  })();
+</script>

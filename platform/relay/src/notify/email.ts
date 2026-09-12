@@ -35,3 +35,12 @@ export async function sendOtpEmail(to: string, code: string): Promise<void> {
     `Your sign-in code is ${code}. It expires in ${config.otpTtlMinutes} minutes.`,
   );
 }
+
+export async function sendOrgInviteEmail(to: string, token: string, orgName: string, inviterLabel: string): Promise<void> {
+  const link = `${config.publicUrl}/invite?token=${encodeURIComponent(token)}`;
+  await sendEmail(
+    to,
+    `${inviterLabel} invited you to join ${orgName} on focusKube`,
+    `${inviterLabel} invited you to join "${orgName}" on focusKube, with access to the AI assistant.\n\nAccept the invite: ${link}\n\nThis link expires in ${config.org.inviteTtlDays} days. If you weren't expecting this, ignore this email.`,
+  );
+}

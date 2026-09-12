@@ -1,0 +1,201 @@
+<h1>Team</h1>
+<div id="content">Loading&hellip;</div>
+<style>
+  .license-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .license-field { position: relative; flex: 1; min-width: 220px; }
+  .license-input { display: block; width: 100%; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px 40px 10px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); }
+  .license-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--text-muted); }
+  .license-toggle:hover { color: var(--text-heading); }
+  .license-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .license-row form { display: block; margin: 0; }
+  table.members { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  table.members th, table.members td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  table.members th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  table.members button { padding: 4px 10px; font-size: 12px; }
+  .seat-form { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .seat-form input[type="number"] { width: 6ch; }
+  .seat-form form { display: contents; }
+</style>
+<script>
+  const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+  const MIN_SEATS = {{MIN_SEATS}};
+  const MAX_SEATS = {{MAX_SEATS}};
+
+  const esc = (value) => (value == null ? '' : String(value)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+
+  function noTeamCard() {
+    return (
+      '<div class="card">' +
+      '<h2>Buy licenses for your team</h2>' +
+      '<p class="sub">Pay monthly or annually for a number of seats — everyone you invite shares one pooled AI-assistant credit balance.</p>' +
+      '<div id="create-err"></div>' +
+      '<form id="create-team">' +
+      '<label>Team name <input type="text" name="name" required placeholder="Acme Inc."></label>' +
+      '<label>Number of seats <input type="number" name="seats" min="' + MIN_SEATS + '" max="' + MAX_SEATS + '" value="' + MIN_SEATS + '" required></label>' +
+      '<label>Billing <select name="interval"><option value="month">Monthly</option><option value="year">Annually (10% off)</option></select></label>' +
+      '<button type="submit">Continue to checkout</button>' +
+      '</form>' +
+      '</div>'
+    );
+  }
+
+  function ownerCard(data) {
+    const s = data.seats;
+    return (
+      '<div class="card">' +
+      '<div class="card-row"><h2>' + esc(data.org.name) + '</h2><span class="sub">' + s.filled + ' of ' + s.purchased + ' seats filled' + (s.pending ? ' &middot; ' + s.pending + ' pending' : '') + '</span></div>' +
+      (data.license ? (
+        '<p class="sub">' + data.license.quotaRemaining + ' of ' + data.license.quotaGranted + ' pooled credits left this cycle</p>' +
+        '<div class="license-row">' +
+        '<div class="license-field">' +
+        '<input type="password" class="license-input" id="license-key" readonly value="' + esc(data.license.key) + '">' +
+        '<button type="button" class="license-toggle" id="license-toggle" aria-label="Show key" title="Show key">' + EYE_ICON + '</button>' +
+        '</div>' +
+        '<form id="regen"><button type="submit" class="secondary">Regenerate my key</button></form>' +
+        '</div>'
+      ) : '') +
+      '<div class="seat-form">' +
+      '<form id="seats-form"><input type="number" name="seats" min="' + MIN_SEATS + '" max="' + MAX_SEATS + '" value="' + s.purchased + '"> <button type="submit" class="secondary">Update seats</button></form>' +
+      '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' +
+      '</div>' +
+      '<div id="seats-err"></div>' +
+      '</div>' +
+
+      '<div class="card">' +
+      '<h2>Invite a teammate</h2>' +
+      '<div id="invite-err"></div>' +
+      '<form id="invite-form"><label>Email <input type="email" name="email" required placeholder="teammate@example.com"></label><button type="submit">Send invite</button></form>' +
+      (data.invites.length ? (
+        '<table class="members"><thead><tr><th>Pending invite</th><th>Expires</th><th></th></tr></thead><tbody>' +
+        data.invites.map((i) =>
+          '<tr><td>' + esc(i.email) + '</td><td>' + fmtDate(i.expiresAt) + '</td><td>' +
+          '<button type="button" class="secondary resend-invite" data-id="' + i.id + '">Resend</button> ' +
+          '<button type="button" class="secondary danger revoke-invite" data-id="' + i.id + '">Revoke</button>' +
+          '</td></tr>'
+        ).join('') + '</tbody></table>'
+      ) : '') +
+      '</div>' +
+
+      '<div class="card">' +
+      '<h2>Members</h2>' +
+      '<table class="members"><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Calls used</th><th></th></tr></thead><tbody>' +
+      data.members.map((m) =>
+        '<tr><td>' + esc([m.firstName, m.lastName].filter(Boolean).join(' ') || '—') + '</td><td>' + esc(m.email) + '</td><td>' + fmtDate(m.joinedAt) + '</td><td>' + m.callsUsed + '</td><td>' +
+        (m.role === 'owner' ? '<span class="sub">Owner</span>' : '<button type="button" class="secondary danger remove-member" data-user-id="' + m.userId + '">Remove</button>') +
+        '</td></tr>'
+      ).join('') + '</tbody></table>' +
+      '</div>'
+    );
+  }
+
+  function memberCard(data) {
+    return (
+      '<div class="card">' +
+      '<h2>' + esc(data.org.name) + '</h2>' +
+      '<p class="sub">You\'re a member of this team.' + (data.license ? ' ' + data.license.quotaRemaining + ' of ' + data.license.quotaGranted + ' pooled credits left this cycle.' : '') + '</p>' +
+      '<form id="leave-form"><button type="submit" class="secondary">Leave team</button></form>' +
+      '</div>'
+    );
+  }
+
+  (async () => {
+    const meRes = await fetch('/v1/auth/me');
+    if (!meRes.ok) { location.href = '/login'; return; }
+
+    const acctRes = await fetch('/v1/account');
+    const acct = await acctRes.json();
+    const hasActiveProLicense = acct.license && (acct.license.plan === 'pro' || acct.license.plan === 'trial') && acct.license.status === 'active';
+
+    const orgRes = await fetch('/v1/org');
+    const data = await orgRes.json();
+
+    const content = document.getElementById('content');
+    if (!data.org) {
+      if (hasActiveProLicense) {
+        content.innerHTML = '<div class="card"><h2>You already have a ' + acct.license.plan + ' plan</h2><p class="sub">To create a team, you must first cancel your current ' + acct.license.plan + ' plan. Once cancelled, you can create and purchase team licenses.</p><a href="/account"><button type="button">Go to Account settings</button></a></div>';
+      } else {
+        content.innerHTML = noTeamCard();
+      }
+      document.getElementById('create-team').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        document.getElementById('create-err').innerHTML = '';
+        const body = Object.fromEntries(new FormData(e.target));
+        body.seats = Number(body.seats);
+        const res = await fetch('/v1/org/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const result = await res.json();
+        if (!res.ok) { document.getElementById('create-err').innerHTML = '<div class="error">' + result.error + '</div>'; return; }
+        if (result.url) location.href = result.url;
+      });
+      return;
+    }
+
+    content.innerHTML = data.role === 'owner' ? ownerCard(data) : memberCard(data);
+
+    if (data.role !== 'owner') {
+      document.getElementById('leave-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const res = await fetch('/v1/org/leave', { method: 'POST' });
+        if (res.ok) location.reload();
+      });
+      return;
+    }
+
+    document.getElementById('license-toggle')?.addEventListener('click', (e) => {
+      const input = document.getElementById('license-key');
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      e.currentTarget.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+    });
+
+    document.getElementById('regen')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const res = await fetch('/v1/account/license/regenerate', { method: 'POST' });
+      if (res.ok) location.reload();
+    });
+
+    document.getElementById('portal')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const res = await fetch('/v1/billing/portal', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'Something went wrong'); return; }
+      if (body.url) location.href = body.url;
+    });
+
+    document.getElementById('seats-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('seats-err').innerHTML = '';
+      const seats = Number(new FormData(e.target).get('seats'));
+      const res = await fetch('/v1/org/seats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seats }) });
+      const body = await res.json();
+      if (!res.ok) { document.getElementById('seats-err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      location.reload();
+    });
+
+    document.getElementById('invite-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('invite-err').innerHTML = '';
+      const email = new FormData(e.target).get('email');
+      const res = await fetch('/v1/org/invites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      const body = await res.json();
+      if (!res.ok) { document.getElementById('invite-err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      location.reload();
+    });
+
+    content.querySelectorAll('.resend-invite').forEach((btn) => btn.addEventListener('click', async () => {
+      const res = await fetch('/v1/org/invites/' + btn.dataset.id + '/resend', { method: 'POST' });
+      if (res.ok) location.reload();
+    }));
+    content.querySelectorAll('.revoke-invite').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Revoke this invite?')) return;
+      const res = await fetch('/v1/org/invites/' + btn.dataset.id, { method: 'DELETE' });
+      if (res.ok) location.reload();
+    }));
+    content.querySelectorAll('.remove-member').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Remove this member? Their seat key stops working immediately.')) return;
+      const res = await fetch('/v1/org/members/' + btn.dataset.userId, { method: 'DELETE' });
+      if (res.ok) location.reload();
+    }));
+  })();
+</script>

@@ -4,12 +4,15 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import 'express-async-errors';
 import { config } from './config.js';
-import { decrementQuota, devLicenseKey, licenseFromAuthHeader, lookupLicense } from './licenseStore.js';
+import { devLicenseKey, licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota } from './licenseStore.js';
 import { streamChatTurn } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
 import { billingRouter, handleStripeWebhook } from './billing/routes.js';
+import { orgRouter } from './org/routes.js';
+import { devRouter } from './dev/routes.js';
 import { webRouter } from './web/pages.js';
+import { isStripeDemoMode, simulateCheckoutCompleted, getSimulatedSession } from './billing/stripe-sim.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_MAX_TOKENS = 12048;
@@ -53,6 +56,75 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use('/v1/auth', authRouter);
 app.use('/v1/account', accountRouter);
 app.use('/v1/billing', billingRouter);
+app.use('/v1/org', orgRouter);
+app.use('/v1/dev', devRouter);
+
+// Demo checkout page (only in demo mode)
+app.get('/demo/checkout/:sessionId', (req, res) => {
+  if (!isStripeDemoMode()) {
+    return res.status(403).send('Demo mode not enabled');
+  }
+  const session = getSimulatedSession(req.params.sessionId);
+  if (!session) {
+    return res.status(404).send('Checkout session not found');
+  }
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Demo Checkout - FocusKube</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; max-width: 500px; }
+        .card { border: 1px solid #ddd; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .price { font-size: 32px; font-weight: bold; margin: 16px 0; }
+        .details { color: #666; margin: 16px 0; }
+        button { background: #007AFF; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
+        button:hover { background: #0051D5; }
+        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 16px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>Confirm Purchase</h1>
+        <p class="details"><strong>Email:</strong> ${session.customer_email}</p>
+        <p class="details"><strong>Plan:</strong> FocusKube Pro</p>
+        <p class="details"><strong>Billing:</strong> Monthly</p>
+        <div class="price">$19.99/month</div>
+        <button onclick="completePurchase()">Complete Purchase</button>
+        <div class="footer">
+          This is a demo checkout — no real charge will be made.
+        </div>
+      </div>
+      <script>
+        async function completePurchase() {
+          const btn = document.querySelector('button');
+          btn.disabled = true;
+          btn.textContent = 'Processing...';
+          try {
+            const res = await fetch('/v1/dev/stripe/webhook/checkout-completed', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: '${session.id}' })
+            });
+            if (res.ok) {
+              window.location.href = '${session.success_url}';
+            } else {
+              alert('Error completing purchase');
+              btn.disabled = false;
+              btn.textContent = 'Complete Purchase';
+            }
+          } catch (err) {
+            alert('Error: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = 'Complete Purchase';
+          }
+        }
+      </script>
+    </body>
+    </html>
+  `);
+});
+
 app.use('/', webRouter);
 
 // POST /v1/license/validate — looked up per call rather than a self-verifying token, since
@@ -80,13 +152,17 @@ app.post('/v1/ai/chat', async (req, res) => {
   if (!record || record.status !== 'active') {
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
-  if (record.quotaRemaining <= 0) {
-    return res.status(429).json({ error: 'Quota exhausted' });
-  }
 
   const { context, messages, model, maxTokens } = req.body as ChatRequestBody;
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages is required' });
+  }
+
+  // Reserved atomically before streaming, not read-then-decrement-after — the old order let
+  // concurrent requests against the same pooled Team balance both pass the same check (see
+  // licenseStore.ts's reserveQuota).
+  if (!reserveQuota(key!)) {
+    return res.status(429).json({ error: 'Quota exhausted' });
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -103,9 +179,9 @@ app.post('/v1/ai/chat', async (req, res) => {
       maxTokens ?? DEFAULT_MAX_TOKENS,
       (event) => send(event),
     );
-    decrementQuota(key!);
     res.write('data: [DONE]\n\n');
   } catch (err) {
+    refundQuota(key!);
     send({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
   } finally {
     res.end();

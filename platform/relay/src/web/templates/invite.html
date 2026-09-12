@@ -1,0 +1,57 @@
+<div id="content">Loading&hellip;</div>
+<script>
+  const esc = (value) => (value == null ? '' : String(value)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  (async () => {
+    const token = new URLSearchParams(location.search).get('token');
+    const content = document.getElementById('content');
+    if (!token) {
+      content.innerHTML = '<h1>Invalid invite</h1><p class="sub">This invite link is missing its token.</p>';
+      return;
+    }
+
+    const inviteRes = await fetch('/v1/org/invites/by-token/' + encodeURIComponent(token));
+    const invite = await inviteRes.json();
+    if (!inviteRes.ok) {
+      content.innerHTML = '<h1>Invite not found</h1><p class="sub">' + esc(invite.error || 'This invite is invalid or has expired.') + '</p>';
+      return;
+    }
+
+    content.innerHTML =
+      '<h1>Join ' + esc(invite.orgName) + '</h1>' +
+      '<p class="sub">You were invited to join <strong>' + esc(invite.orgName) + '</strong> on FocusKube, with access to the AI assistant.</p>' +
+      '<div id="err"></div>' +
+      '<div id="action"></div>';
+
+    const meRes = await fetch('/v1/auth/me');
+    const nextParam = 'next=' + encodeURIComponent(location.pathname + location.search);
+
+    if (!meRes.ok) {
+      // Not signed in — send to the flow that matches whether this address already has an
+      // account, prefilling the invited email either way.
+      const action = document.getElementById('action');
+      if (invite.accountExists) {
+        action.innerHTML = '<a href="/login?' + nextParam + '"><button type="button">Sign in to accept</button></a>';
+      } else {
+        action.innerHTML = '<a href="/signup?' + nextParam + '&email=' + encodeURIComponent(invite.email) + '"><button type="button">Create your account to accept</button></a>';
+      }
+      return;
+    }
+
+    const me = (await meRes.json()).user;
+    if (me.email && me.email.toLowerCase() !== invite.email.toLowerCase()) {
+      document.getElementById('action').innerHTML =
+        '<p class="sub">You\'re signed in as ' + esc(me.email) + ', but this invite was sent to ' + esc(invite.email) + '. Sign in with that address to accept it.</p>' +
+        '<a href="/login?' + nextParam + '"><button type="button" class="secondary">Switch account</button></a>';
+      return;
+    }
+
+    document.getElementById('action').innerHTML = '<button type="button" id="accept">Accept and join</button>';
+    document.getElementById('accept').addEventListener('click', async () => {
+      const res = await fetch('/v1/org/invites/by-token/' + encodeURIComponent(token) + '/accept', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      location.href = '/home';
+    });
+  })();
+</script>

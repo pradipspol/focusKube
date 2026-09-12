@@ -1,0 +1,47 @@
+<h1>Sign in with a code</h1>
+<p class="sub">Enter your email or phone number and we'll send a one-time code.</p>
+<div id="err"></div>
+<form id="request-form">
+  <label>Email or phone <input type="text" name="destination" required placeholder="you@example.com or +15551234567"></label>
+  <button type="submit">Send code</button>
+</form>
+<form id="verify-form" style="display:none">
+  <p class="sub" id="sent-to"></p>
+  <label>Code <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required autocomplete="one-time-code"></label>
+  <button type="submit">Verify</button>
+</form>
+<div class="links" id="login-link"><a href="/login">Use a password instead</a></div>
+<script>
+  let destination = '', channel = 'email';
+
+  // Same-origin-relative only (mirrors the server-side check in auth/routes.ts's
+  // validatedNextPath) — carries a page like the team-invite accept flow through this form.
+  const params = new URLSearchParams(location.search);
+  const next = params.get('next');
+  const validNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  if (validNext) {
+    document.getElementById('login-link').innerHTML = '<a href="/login?next=' + encodeURIComponent(validNext) + '">Use a password instead</a>';
+  }
+  const requestForm = document.getElementById('request-form');
+  const verifyForm = document.getElementById('verify-form');
+  requestForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    destination = data.destination.trim();
+    channel = destination.includes('@') ? 'email' : 'sms';
+    const res = await fetch('/v1/auth/otp/request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ destination, channel }) });
+    const body = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+    requestForm.style.display = 'none';
+    verifyForm.style.display = 'grid';
+    document.getElementById('sent-to').textContent = 'Code sent to ' + destination;
+  });
+  verifyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const res = await fetch('/v1/auth/otp/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ destination, channel, code: data.code }) });
+    const body = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+    location.href = validNext || '/account';
+  });
+</script>

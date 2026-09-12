@@ -213,7 +213,7 @@ export function TerminalDock({
             title={isMinimized ? 'Restore terminals' : 'Minimize all terminals'}
             aria-pressed={isMinimized}
           >
-            {isMinimized ? '▢' : '▁'}
+            {isMinimized ? '▢' : '—'}
           </button>
         </div>
       </div>
