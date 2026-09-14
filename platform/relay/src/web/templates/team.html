@@ -15,6 +15,7 @@
   .seat-form { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   .seat-form input[type="number"] { width: 6ch; }
   .seat-form form { display: contents; }
+  .button-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 </style>
 <script>
   const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -58,7 +59,10 @@
       ) : '') +
       '<div class="seat-form">' +
       '<form id="seats-form"><input type="number" name="seats" min="' + MIN_SEATS + '" max="' + MAX_SEATS + '" value="' + s.purchased + '"> <button type="submit" class="secondary">Update seats</button></form>' +
+      '</div>' +
+      '<div class="button-row">' +
       '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' +
+      '<form id="cancel-sub"><button type="submit" class="secondary danger">Cancel subscription</button></form>' +
       '</div>' +
       '<div id="seats-err"></div>' +
       '</div>' +
@@ -161,6 +165,16 @@
       const body = await res.json();
       if (!res.ok) { alert(body.error || 'Something went wrong'); return; }
       if (body.url) location.href = body.url;
+    });
+
+    document.getElementById('cancel-sub')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!confirm('Cancel the subscription? Your team will continue to have access and use remaining credits until the end of your billing period.')) return;
+      const res = await fetch('/v1/org/cancel-subscription', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'Something went wrong'); return; }
+      alert('Subscription cancelled. Your team will end at the end of the current billing period.');
+      location.reload();
     });
 
     document.getElementById('seats-form')?.addEventListener('submit', async (e) => {

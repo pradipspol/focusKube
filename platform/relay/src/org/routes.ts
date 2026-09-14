@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import { db } from '../db.js';
 import { getLicenseForUser } from '../licenseStore.js';
 import { sendOrgInviteEmail } from '../notify/email.js';
-import { createOrgCheckoutSession, updateOrgSeats } from './billing.js';
+import { createOrgCheckoutSession, updateOrgSeats, cancelOrgSubscription } from './billing.js';
 import { getOrgLicenseForUser } from './entitlement.js';
 import { OrgActionError } from './errors.js';
 import {
@@ -171,6 +171,19 @@ router.post('/seats', requireSession, requireOrgOwner, async (req, res) => {
   }
   try {
     await updateOrgSeats(req.org!.id, seatCount);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof OrgActionError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+});
+
+router.post('/cancel-subscription', requireSession, requireOrgOwner, async (req, res) => {
+  try {
+    await cancelOrgSubscription(req.org!.id);
     res.json({ ok: true });
   } catch (err) {
     if (err instanceof OrgActionError) {

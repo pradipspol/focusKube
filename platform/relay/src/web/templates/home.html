@@ -62,7 +62,9 @@
       const isTrial = acct.license.plan === 'trial';
       const upgradeButtons = isTrial ? upgradeButtonsHtml : '';
       const billingButton = !isTrial ? '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' : '';
-      const cancelButton = isTrial ? '<form id="cancel-trial"><button type="submit" class="secondary danger">Cancel trial</button></form>' : '';
+      const cancelButton = isTrial
+        ? '<form id="cancel-trial"><button type="submit" class="secondary danger">Cancel trial</button></form>'
+        : '<form id="cancel-pro"><button type="submit" class="secondary danger">Cancel subscription</button></form>';
       planHtml =
         '<p><strong>Plan:</strong> ' + acct.license.plan + ' (' + acct.license.status + ')</p>' +
         trialNotice +
@@ -113,6 +115,7 @@
     document.getElementById('checkout-year')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/checkout', { interval: 'year' }); });
     document.getElementById('portal')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/portal'); });
     document.getElementById('cancel-trial')?.addEventListener('submit', (e) => { e.preventDefault(); if (confirm('Cancel your trial and return to the Free plan?')) goTo('/v1/account/license/cancel'); });
+    document.getElementById('cancel-pro')?.addEventListener('submit', (e) => { e.preventDefault(); if (confirm('Cancel your Pro subscription? Your subscription will end at the end of your current billing period, and you can use remaining credits until then.')) goTo('/v1/billing/cancel'); });
     document.getElementById('regen')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/account/license/regenerate'); });
     document.getElementById('license-toggle')?.addEventListener('click', (e) => {
       const input = document.getElementById('license-key');

@@ -166,3 +166,22 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
   adjustOrgPoolForSeatChange(orgId, org.seats_purchased, seats);
   setOrgSeatsPurchased(orgId, seats);
 }
+
+/** Owner-triggered subscription cancellation. Marks the subscription to cancel at the
+ * end of the current billing period, allowing the team to use remaining credits until then. */
+export async function cancelOrgSubscription(orgId: string): Promise<void> {
+  const org = findOrgById(orgId);
+  if (!org) throw new OrgActionError(404, 'Team not found');
+
+  const licenseRow = db
+    .prepare(`SELECT stripe_subscription_id FROM licenses WHERE org_id = ?`)
+    .get(orgId) as { stripe_subscription_id: string | null } | undefined;
+  if (!licenseRow?.stripe_subscription_id) {
+    throw new OrgActionError(400, 'This team has no active subscription to cancel');
+  }
+
+  const stripe = stripeClient();
+  await stripe.subscriptions.update(licenseRow.stripe_subscription_id, {
+    cancel_at_period_end: true,
+  });
+}

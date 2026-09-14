@@ -124,6 +124,29 @@ router.post('/portal', requireSession, async (req, res) => {
   res.json({ url: portalSession.url });
 });
 
+router.post('/cancel', requireSession, async (req, res) => {
+  if (!isStripeConfigured()) {
+    res.status(503).json({ error: 'Billing is not configured on this server' });
+    return;
+  }
+
+  const license = db
+    .prepare(`SELECT stripe_subscription_id FROM licenses WHERE user_id = ? AND plan = ?`)
+    .get(req.user!.id, 'pro') as { stripe_subscription_id: string | null } | undefined;
+
+  if (!license?.stripe_subscription_id) {
+    res.status(400).json({ error: 'No active Pro subscription found' });
+    return;
+  }
+
+  const stripe = stripeClient();
+  await stripe.subscriptions.update(license.stripe_subscription_id, {
+    cancel_at_period_end: true,
+  });
+
+  res.json({ ok: true });
+});
+
 function stripeIdOf(value: string | { id: string } | null | undefined): string | null {
   if (!value) return null;
   return typeof value === 'string' ? value : value.id;
