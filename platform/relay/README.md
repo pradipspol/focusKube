@@ -27,6 +27,20 @@ cd platform/backend
 AI_RELAY_BASE_URL=http://localhost:4001 npm run dev
 ```
 
+## Running in Docker
+
+```bash
+cd platform/relay
+docker build -t focuskube-relay .
+docker run -p 4001:4001 --env-file .env -v relay-data:/app/data focuskube-relay
+```
+
+The image is a multi-stage build (compile with devDependencies, then a slim
+`node:22-alpine` runtime with only production dependencies) and runs as a non-root user.
+`/app/data` is where the SQLite file lives by default (`RELAY_DB_PATH`) — mount a volume
+there so it survives container recreation. `ANTHROPIC_API_KEY` (or the Azure OpenAI
+equivalent) still has to be supplied via the environment; nothing is baked into the image.
+
 ### What needs real credentials vs. what works out of the box
 
 Email/password sign-up, sessions, the account dashboard, and email-OTP sign-in all work with
