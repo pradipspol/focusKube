@@ -3,13 +3,31 @@ import { logError, logInfo } from '../util/logger.js';
 import type { ClusterContext } from './aiContextService.js';
 import { getLicenseKey } from '../runtime/aiLicenseStore.js';
 
+/** Text content is the common case (plain user/assistant turns); the richer content-block
+ * array shows up once a tool round has happened — an assistant's own `tool_use` block(s), or
+ * the `tool_result` block a follow-up user turn carries back. Passed through to the relay
+ * as-is (see llm/chatProvider.ts's ChatTurnMessage, which is Anthropic.MessageParam). */
+export type ChatMessageContent =
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'tool_use'; id: string; name: string; input: unknown }
+      | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+    >;
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
-  content: string;
+  content: ChatMessageContent;
+}
+
+export interface ChatTool {
+  name: string;
+  description: string;
+  input_schema: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
 }
 
 export interface ChatStreamChunk {
-  type: 'token' | 'tool_use' | 'stop' | 'error';
+  type: 'token' | 'tool_use' | 'stop' | 'stopped' | 'error';
   data: any;
 }
 
@@ -17,7 +35,9 @@ export class AiService {
   async sendChatToRelay(
     context: ClusterContext,
     messages: ChatMessage[],
+    tools: ChatTool[],
     onChunk: (chunk: ChatStreamChunk) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const licenseKey = await getLicenseKey();
 
@@ -32,6 +52,7 @@ export class AiService {
       const requestBody = {
         context,
         messages,
+        tools,
         model: 'claude-sonnet-5',
         maxTokens: 2048,
       };
@@ -43,6 +64,7 @@ export class AiService {
           Authorization: `Bearer ${licenseKey}`,
         },
         body: JSON.stringify(requestBody),
+        signal,
       });
 
       if (!response.ok) {
@@ -126,6 +148,12 @@ export class AiService {
         reader.releaseLock();
       }
     } catch (err) {
+      if (signal?.aborted) {
+        // A deliberate Stop, not a failure — surfaced as its own chunk type so the caller
+        // doesn't log or display it as an error.
+        onChunk({ type: 'stopped', data: {} });
+        return;
+      }
       logError('ai_service.fetch_error', {
         error: err instanceof Error ? err.message : String(err),
       });

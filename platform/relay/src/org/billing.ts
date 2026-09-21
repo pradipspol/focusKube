@@ -1,7 +1,7 @@
 import type Stripe from 'stripe';
 import { config } from '../config.js';
 import { db } from '../db.js';
-import { stripeClient } from '../billing/stripe.js';
+import { isStripeConfigured, stripeClient } from '../billing/stripe.js';
 import { buildProLineItem } from '../billing/pricing.js';
 import { adjustOrgPoolForSeatChange, createOrgPoolLicense, getLicenseForUser } from '../licenseStore.js';
 import { isStripeDemoMode, createDemoCheckoutSession } from '../billing/stripe-sim.js';
@@ -170,6 +170,8 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
 /** Owner-triggered subscription cancellation. Marks the subscription to cancel at the
  * end of the current billing period, allowing the team to use remaining credits until then. */
 export async function cancelOrgSubscription(orgId: string): Promise<void> {
+  if (!isStripeConfigured()) throw new OrgActionError(503, 'Billing is not configured on this server');
+
   const org = findOrgById(orgId);
   if (!org) throw new OrgActionError(404, 'Team not found');
 

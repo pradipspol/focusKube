@@ -1,0 +1,671 @@
+import { type Role, hasCapability } from '../auth/rbac.js';
+import {
+  applyManifest,
+  deleteResource,
+  getResource,
+  listResource,
+  redactIfSensitive,
+  sanitizeForEdit,
+  stripReadNoise,
+  type KubeAccessOptions,
+} from '../kube/resources.js';
+import { fetchDeploymentLogsOnce, fetchPodLogsOnce } from '../kube/podLogsOnce.js';
+import { badRequest } from '../util/httpError.js';
+import { describeK8sError } from '../util/k8sError.js';
+import { buildResourceDetail, filterAndSortEvents, pluralForKind, type HelmExecCtx } from './aiContextService.js';
+import { workloadsService } from './workloadsService.js';
+import * as helmService from './helmService.js';
+
+const HELM_ACCESS_UNAVAILABLE = 'Helm access is not currently available for this connection.';
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+export interface ToolExecCtx {
+  context: string;
+  kubeOptions: KubeAccessOptions;
+  role: Role;
+  /** Null when Helm access couldn't be resolved this turn (see
+   * aiContextService.ts's resolveSessionHelmAccess) — Helm tool calls fail cleanly with
+   * HELM_ACCESS_UNAVAILABLE rather than that blocking the rest of the turn's k8s tools. */
+  helm: HelmExecCtx | null;
+}
+
+export interface ToolResult {
+  output: string;
+  isError: boolean;
+}
+
+export interface ActionProposal {
+  summary: string;
+  /** Populated only for apply_manifest — the user should see what changes, not a blind manifest. */
+  diff?: { before?: string; after: string };
+}
+
+// The full `messages` array (including every prior tool result) is resent to the relay on
+// every subsequent round-trip within a turn — an uncapped tool result would compound cost
+// turn over turn, so every tool result is capped here before it goes back to either the model
+// or the browser. list_resources' output is now a compact per-item summary rather than raw
+// manifests, and get_resource/describe_resource strip the biggest raw-manifest bloat
+// (managedFields, the last-applied-configuration annotation — see stripReadNoise) — but a
+// single Pod's manifest alone can still sit right around the old 8KB ceiling (confirmed against
+// a real cluster: ~8.4KB after stripping), so the cap is doubled rather than left tight enough
+// to still truncate a single unremarkable object mid-JSON.
+const MAX_TOOL_OUTPUT_CHARS = 16 * 1024;
+
+function capOutput(text: string): string {
+  if (text.length <= MAX_TOOL_OUTPUT_CHARS) return text;
+  const remaining = text.length - MAX_TOOL_OUTPUT_CHARS;
+  return `${text.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n… (truncated, ${remaining} more characters)`;
+}
+
+function ok(text: string): ToolResult {
+  return { output: capOutput(text), isError: false };
+}
+
+async function fail(err: unknown): Promise<ToolResult> {
+  return { output: await describeK8sError(err), isError: true };
+}
+
+function clampTailLines(value: unknown): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 200;
+  return Math.min(Math.max(n, 1), 1000);
+}
+
+function clampLimit(value: unknown): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 20;
+  return Math.min(Math.max(n, 1), 50);
+}
+
+// listResource() returns full raw manifests (spec, status, metadata.managedFields, the
+// last-applied-configuration annotation, ...) — for a Pod alone that's routinely several KB,
+// so any list beyond a handful of items blew past MAX_TOOL_OUTPUT_CHARS, got truncated
+// mid-object by capOutput, and arrived at the frontend as invalid JSON (falling back to a raw
+// text dump instead of a table) — and even un-truncated, a table keyed by top-level object
+// keys (apiVersion/kind/metadata/spec/status) rendered giant JSON blobs as cells instead of
+// anything readable. list_resources is a listing tool (get_resource is where a caller asks for
+// the full manifest of one item), so it summarizes down to the kubectl-get-style fields callers
+// actually ask about instead of returning the raw object. Secrets/ConfigMaps already come back
+// pre-sanitized (no data) from listResource itself and are left as-is.
+function summarizeForList(item: any, plural: string): any {
+  if (plural === 'secrets' || plural === 'configmaps') return item;
+
+  const summary: Record<string, unknown> = {
+    name: item?.metadata?.name,
+    ...(item?.metadata?.namespace ? { namespace: item.metadata.namespace } : {}),
+    age: item?.metadata?.creationTimestamp,
+  };
+  const labels = item?.metadata?.labels;
+  if (labels && Object.keys(labels).length > 0) summary.labels = labels;
+
+  if (plural === 'pods') {
+    const containerStatuses = (item?.status?.containerStatuses ?? []) as Array<{ ready?: boolean; restartCount?: number }>;
+    summary.status = item?.status?.phase;
+    summary.ready = `${containerStatuses.filter((c) => c.ready).length}/${containerStatuses.length}`;
+    summary.restarts = containerStatuses.reduce((sum, c) => sum + (c.restartCount ?? 0), 0);
+    if (item?.spec?.nodeName) summary.node = item.spec.nodeName;
+  } else if (plural === 'deployments' || plural === 'statefulsets' || plural === 'replicasets' || plural === 'daemonsets') {
+    summary.desiredReplicas = item?.spec?.replicas;
+    summary.readyReplicas = item?.status?.readyReplicas ?? 0;
+    summary.availableReplicas = item?.status?.availableReplicas ?? 0;
+  } else if (plural === 'services') {
+    summary.type = item?.spec?.type;
+    summary.clusterIP = item?.spec?.clusterIP;
+    summary.ports = ((item?.spec?.ports ?? []) as Array<{ port: number; nodePort?: number; protocol?: string }>)
+      .map((p) => `${p.port}${p.nodePort ? `:${p.nodePort}` : ''}/${p.protocol ?? 'TCP'}`)
+      .join(', ');
+  } else if (typeof item?.status?.phase === 'string') {
+    summary.status = item.status.phase;
+  } else if (Array.isArray(item?.status?.conditions) && item.status.conditions.length > 0) {
+    const last = item.status.conditions[item.status.conditions.length - 1];
+    summary.status = `${last.type}=${last.status}`;
+  }
+  return summary;
+}
+
+export const READ_TOOLS: ToolDefinition[] = [
+  {
+    name: 'list_resources',
+    description:
+      'List Kubernetes resources of one kind (e.g. pods, deployments, services), optionally scoped to a namespace. By default returns a compact kubectl-get-style summary per item (name, status, replica/ready counts, etc.) — call get_resource for one item\'s complete manifest, or pass full:true here if the user explicitly asked for the complete raw manifest of every item in the list (a large list in full detail may be truncated).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'Resource type, plural form (e.g. "pods", "deployments", "services", "configmaps", "secrets").' },
+        namespace: { type: 'string', description: 'Namespace to scope the list to. Omit to list across all namespaces (for namespaced kinds).' },
+        full: { type: 'boolean', description: 'Return each item\'s complete raw manifest instead of the compact summary. Only set this when the user explicitly asked for full/complete/raw JSON.' },
+      },
+      required: ['kind'],
+    },
+  },
+  {
+    name: 'get_resource',
+    description: "Fetch one Kubernetes resource's full manifest by kind and name.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'Resource type, plural form (e.g. "pods", "deployments").' },
+        name: { type: 'string', description: 'Resource name.' },
+        namespace: { type: 'string', description: 'Namespace (required for namespaced kinds).' },
+      },
+      required: ['kind', 'name'],
+    },
+  },
+  {
+    name: 'describe_resource',
+    description:
+      "kubectl describe-equivalent: a resource's manifest, plus (for a Deployment) its owned Pods and its recent Events.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'Resource type, plural form (e.g. "deployments", "pods").' },
+        name: { type: 'string', description: 'Resource name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['kind', 'name', 'namespace'],
+    },
+  },
+  {
+    name: 'get_logs',
+    description: 'Tail logs for a Pod, or for all Pods behind a Deployment. Provide exactly one of podName or deploymentName.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        podName: { type: 'string', description: 'A specific Pod name.' },
+        deploymentName: { type: 'string', description: "A Deployment name — logs are fetched from up to 3 of its Pods." },
+        namespace: { type: 'string', description: 'Namespace.' },
+        container: { type: 'string', description: 'Container name, if the Pod has more than one.' },
+        tailLines: { type: 'number', description: 'Number of lines to fetch from the end of the log (default 200, max 1000).' },
+      },
+      required: ['namespace'],
+    },
+  },
+  {
+    name: 'get_events',
+    description: 'Recent Kubernetes Events, optionally filtered to one resource Kind/name and/or namespace.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Namespace to scope to. Omit for cluster-wide.' },
+        kind: { type: 'string', description: 'Filter to events involving this Kind (capitalized, e.g. "Deployment", "Pod").' },
+        name: { type: 'string', description: 'Filter to events involving this resource name.' },
+        limit: { type: 'number', description: 'Max events to return (default 20, max 50).' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'helm_list_releases',
+    description: 'List installed Helm releases, optionally scoped to a namespace.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Namespace to scope to. Omit to list across all namespaces.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'helm_get_release_values',
+    description: "Fetch a Helm release's current values (YAML).",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
+    name: 'helm_get_release_manifest',
+    description: "Fetch a Helm release's current rendered manifest (YAML).",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
+    name: 'helm_get_release_history',
+    description: "A Helm release's revision history (chart/app versions, status, description per revision).",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
+    name: 'helm_search_charts',
+    description: 'Search charts available across the configured Helm repositories.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+];
+
+export const WRITE_TOOLS: ToolDefinition[] = [
+  {
+    name: 'scale_deployment',
+    description: "Propose changing a Deployment's replica count. Requires the user's explicit approval before it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Deployment name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+        replicas: { type: 'number', description: 'Target replica count.' },
+      },
+      required: ['name', 'namespace', 'replicas'],
+    },
+  },
+  {
+    name: 'restart_deployment',
+    description:
+      "Propose a rollout restart of a Deployment (bumps its pod template's restartedAt annotation). Requires the user's explicit approval before it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Deployment name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
+    name: 'apply_manifest',
+    description:
+      'Propose creating or updating (kubectl-apply-equivalent) a resource from a full manifest. Requires the user\'s explicit approval before it runs; they will see a before/after diff.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        manifest: {
+          type: 'object',
+          description: 'A complete Kubernetes object: apiVersion, kind, metadata.name (and metadata.namespace for namespaced kinds), spec, etc.',
+        },
+      },
+      required: ['manifest'],
+    },
+  },
+  {
+    name: 'delete_resource',
+    description: "Propose deleting a resource. Requires the user's explicit approval before it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'Resource type, plural form (e.g. "pods", "deployments").' },
+        name: { type: 'string', description: 'Resource name.' },
+        namespace: { type: 'string', description: 'Namespace (required for namespaced kinds).' },
+      },
+      required: ['kind', 'name'],
+    },
+  },
+  {
+    name: 'helm_install',
+    description:
+      "Propose installing a Helm chart as a new release. Requires the user's explicit approval before it runs; they will see the rendered manifest it would create.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        chart: { type: 'string', description: 'Chart reference, e.g. "bitnami/redis".' },
+        releaseName: { type: 'string', description: 'Name for the new release.' },
+        namespace: { type: 'string', description: 'Namespace to install into.' },
+        version: { type: 'string', description: 'Chart version. Omit for the latest.' },
+        values: { type: 'string', description: 'Values override (YAML). Omit to use the chart defaults.' },
+      },
+      required: ['chart', 'releaseName', 'namespace'],
+    },
+  },
+  {
+    name: 'helm_upgrade',
+    description:
+      "Propose upgrading an existing Helm release's chart version and/or values. Requires the user's explicit approval before it runs; they will see a before/after manifest diff.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+        version: { type: 'string', description: 'Target chart version. Omit to keep the current version.' },
+        values: { type: 'string', description: 'New values override (YAML). Omit to keep the current values.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
+    name: 'helm_rollback',
+    description: "Propose rolling back a Helm release to an earlier revision. Requires the user's explicit approval before it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+        revision: { type: 'number', description: 'Revision number to roll back to (see helm_get_release_history).' },
+      },
+      required: ['name', 'namespace', 'revision'],
+    },
+  },
+  {
+    name: 'helm_uninstall',
+    description: "Propose uninstalling a Helm release. Requires the user's explicit approval before it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Release name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+];
+
+const WRITE_TOOL_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
+
+export function isWriteTool(name: string): boolean {
+  return WRITE_TOOL_NAMES.has(name);
+}
+
+// Destructive tools that need the `delete` capability specifically, not just `write` — the
+// rest of WRITE_TOOLS only needs `write`. Mirrors delete_resource's own tier: a `rwonly` role
+// has `write` but not `delete`.
+const DELETE_TIER_TOOL_NAMES = new Set(['delete_resource', 'helm_rollback', 'helm_uninstall']);
+
+/** Used both to filter the catalog above and to re-check a write tool's required capability at
+ * action_decision time (ws/streams.ts) — a long-lived socket can outlive a role change. */
+export function requiresDeleteCapability(name: string): boolean {
+  return DELETE_TIER_TOOL_NAMES.has(name);
+}
+
+/** The tool catalog offered to Claude for one connection — filtered by the session's own RBAC
+ * role so a viewer/read-only session's model never even sees a mutating tool as callable, let
+ * alone gets to the approval step. */
+export function toolCatalogForRole(role: Role | undefined | null): ToolDefinition[] {
+  const tools = [...READ_TOOLS];
+  if (hasCapability(role, 'write')) {
+    tools.push(...WRITE_TOOLS.filter((t) => !DELETE_TIER_TOOL_NAMES.has(t.name)));
+  }
+  if (hasCapability(role, 'delete')) {
+    tools.push(...WRITE_TOOLS.filter((t) => DELETE_TIER_TOOL_NAMES.has(t.name)));
+  }
+  return tools;
+}
+
+export function describeProposedAction(name: string, input: any): string {
+  switch (name) {
+    case 'scale_deployment':
+      return `Scale deployment "${input?.name}" in namespace "${input?.namespace}" to ${input?.replicas} replica(s)`;
+    case 'restart_deployment':
+      return `Restart deployment "${input?.name}" in namespace "${input?.namespace}"`;
+    case 'apply_manifest': {
+      const manifest = input?.manifest ?? {};
+      const ns = manifest.metadata?.namespace ? ` in namespace "${manifest.metadata.namespace}"` : '';
+      return `Apply ${manifest.kind ?? 'resource'} "${manifest.metadata?.name ?? 'unknown'}"${ns}`;
+    }
+    case 'delete_resource': {
+      const ns = input?.namespace ? ` in namespace "${input.namespace}"` : '';
+      return `Delete ${input?.kind} "${input?.name}"${ns}`;
+    }
+    case 'helm_install':
+      return `Install chart "${input?.chart}" as release "${input?.releaseName}" in namespace "${input?.namespace}"`;
+    case 'helm_upgrade': {
+      const version = input?.version ? ` to version ${input.version}` : '';
+      return `Upgrade Helm release "${input?.name}" in namespace "${input?.namespace}"${version}`;
+    }
+    case 'helm_rollback':
+      return `Roll back Helm release "${input?.name}" in namespace "${input?.namespace}" to revision ${input?.revision}`;
+    case 'helm_uninstall':
+      return `Uninstall Helm release "${input?.name}" in namespace "${input?.namespace}"`;
+    default:
+      return `Run ${name}`;
+  }
+}
+
+/** Builds the summary + (for apply_manifest/helm_install/helm_upgrade) before/after diff shown
+ * on the approval card, fetched BEFORE the user approves anything — every one of these lookups
+ * is read-only (get/dry-run), safe to run eagerly. */
+export async function prepareActionProposal(name: string, input: any, ctx: ToolExecCtx): Promise<ActionProposal> {
+  const summary = describeProposedAction(name, input);
+
+  if (name === 'apply_manifest') {
+    const manifest = input?.manifest;
+    if (!manifest || typeof manifest !== 'object') return { summary };
+
+    const after = JSON.stringify(manifest, null, 2);
+    const plural = manifest.kind ? pluralForKind(String(manifest.kind)) : undefined;
+    const resourceName = manifest.metadata?.name;
+    if (!plural || !resourceName) return { summary, diff: { after } };
+
+    try {
+      const existing = await getResource(plural, String(resourceName), ctx.context, manifest.metadata?.namespace, ctx.kubeOptions);
+      const before = JSON.stringify(sanitizeForEdit(redactIfSensitive(existing, plural)), null, 2);
+      return { summary, diff: { before, after } };
+    } catch {
+      // Doesn't exist yet (or couldn't be fetched) — apply_manifest will create it.
+      return { summary, diff: { after } };
+    }
+  }
+
+  if (name === 'helm_install' && ctx.helm) {
+    try {
+      const after = await helmService.previewInstall(ctx.helm.session, ctx.helm.scoped, {
+        chart: String(input?.chart ?? ''),
+        releaseName: String(input?.releaseName ?? ''),
+        namespace: String(input?.namespace ?? ''),
+        version: input?.version ? String(input.version) : undefined,
+        values: input?.values ? String(input.values) : undefined,
+      });
+      return { summary, diff: { after } };
+    } catch {
+      // The dry-run itself can fail (bad chart ref, etc.) — the approval card still shows the
+      // summary; the real error will surface once the tool actually runs.
+      return { summary };
+    }
+  }
+
+  if (name === 'helm_upgrade' && ctx.helm) {
+    try {
+      const releaseName = String(input?.name ?? '');
+      const namespace = String(input?.namespace ?? '');
+      const params = {
+        version: input?.version ? String(input.version) : undefined,
+        values: input?.values ? String(input.values) : undefined,
+      };
+      const [before, after] = await Promise.all([
+        helmService.getReleaseManifest(ctx.helm.session, ctx.helm.scoped, releaseName, namespace),
+        helmService.previewUpgrade(ctx.helm.session, ctx.helm.scoped, releaseName, namespace, params),
+      ]);
+      return { summary, diff: { before, after } };
+    } catch {
+      return { summary };
+    }
+  }
+
+  return { summary };
+}
+
+export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx): Promise<ToolResult> {
+  try {
+    switch (name) {
+      case 'list_resources': {
+        const kind = input?.kind;
+        if (!kind) throw badRequest('kind is required');
+        const namespace = input?.namespace ? String(input.namespace) : undefined;
+        const items = await listResource(String(kind), ctx.context, namespace, ctx.kubeOptions);
+        const shaped = input?.full
+          ? items.map((item: any) => stripReadNoise(redactIfSensitive(item, String(kind))))
+          : items.map((item: any) => summarizeForList(item, String(kind)));
+        return ok(JSON.stringify(shaped, null, 2));
+      }
+      case 'get_resource': {
+        const { kind, name: resourceName, namespace } = input ?? {};
+        if (!kind || !resourceName) throw badRequest('kind and name are required');
+        const resource = await getResource(
+          String(kind),
+          String(resourceName),
+          ctx.context,
+          namespace ? String(namespace) : undefined,
+          ctx.kubeOptions,
+        );
+        // Secret/ConfigMap values never enter a tool result — this content is rendered in
+        // chat and re-sent to the LLM on every later turn (see redactIfSensitive's doc comment).
+        return ok(JSON.stringify(stripReadNoise(redactIfSensitive(resource, String(kind))), null, 2));
+      }
+      case 'describe_resource': {
+        const { kind, name: resourceName, namespace } = input ?? {};
+        if (!kind || !resourceName || !namespace) throw badRequest('kind, name, and namespace are required');
+        const detail = await buildResourceDetail(String(kind), String(namespace), String(resourceName), ctx.context, ctx.kubeOptions);
+        return ok(JSON.stringify(detail, null, 2));
+      }
+      case 'get_logs': {
+        const { podName, deploymentName, namespace, container } = input ?? {};
+        if (!namespace) throw badRequest('namespace is required');
+        if (!podName && !deploymentName) throw badRequest('podName or deploymentName is required');
+        const tailLines = clampTailLines(input?.tailLines);
+        const logOpts = { tailLines, context: ctx.context, kubeOptions: ctx.kubeOptions };
+        const result = podName
+          ? await fetchPodLogsOnce(String(namespace), String(podName), container ? String(container) : undefined, logOpts)
+          : await fetchDeploymentLogsOnce(String(namespace), String(deploymentName), container ? String(container) : undefined, logOpts);
+        return ok(result.text + (result.truncated ? '\n… (truncated)' : ''));
+      }
+      case 'get_events': {
+        const { namespace, kind, name: resourceName } = input ?? {};
+        const filter = kind || resourceName ? { kind: kind ? String(kind) : undefined, name: resourceName ? String(resourceName) : undefined } : undefined;
+        const events = await filterAndSortEvents(
+          ctx.context,
+          namespace ? String(namespace) : undefined,
+          ctx.kubeOptions,
+          filter,
+          clampLimit(input?.limit),
+        );
+        return ok(JSON.stringify(events ?? [], null, 2));
+      }
+      case 'helm_list_releases': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const namespace = input?.namespace ? String(input.namespace) : undefined;
+        const releases = await helmService.listReleases(ctx.helm.session, ctx.helm.scoped, namespace);
+        return ok(JSON.stringify(releases, null, 2));
+      }
+      case 'helm_get_release_values': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        const values = await helmService.getReleaseValues(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
+        return ok(values);
+      }
+      case 'helm_get_release_manifest': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        const manifest = await helmService.getReleaseManifest(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
+        return ok(manifest);
+      }
+      case 'helm_get_release_history': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        const history = await helmService.getReleaseHistory(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
+        return ok(JSON.stringify(history, null, 2));
+      }
+      case 'helm_search_charts': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const charts = await helmService.searchCharts(ctx.helm.session, ctx.helm.scoped);
+        return ok(JSON.stringify(charts, null, 2));
+      }
+      default:
+        return { output: `Unknown tool: ${name}`, isError: true };
+    }
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** Only ever called from the approval-decision path (see ws/streams.ts), never from the
+ * auto-executing read-tool loop. */
+export async function executeWriteTool(name: string, input: any, ctx: ToolExecCtx): Promise<ToolResult> {
+  try {
+    switch (name) {
+      case 'scale_deployment': {
+        const { name: depName, namespace, replicas } = input ?? {};
+        if (!depName || !namespace || typeof replicas !== 'number') {
+          throw badRequest('name, namespace, and replicas are required');
+        }
+        await workloadsService.scaleDeployment(String(depName), String(namespace), ctx.context, replicas, ctx.kubeOptions);
+        return ok(`Scaled deployment "${depName}" in namespace "${namespace}" to ${replicas} replica(s).`);
+      }
+      case 'restart_deployment': {
+        const { name: depName, namespace } = input ?? {};
+        if (!depName || !namespace) throw badRequest('name and namespace are required');
+        await workloadsService.restartDeployment(String(depName), String(namespace), ctx.context, ctx.kubeOptions);
+        return ok(`Restarted deployment "${depName}" in namespace "${namespace}".`);
+      }
+      case 'apply_manifest': {
+        const manifest = input?.manifest;
+        if (!manifest || typeof manifest !== 'object') throw badRequest('manifest is required');
+        const { object, created } = await applyManifest(manifest, ctx.context, ctx.kubeOptions);
+        const plural = manifest.kind ? pluralForKind(String(manifest.kind)) : undefined;
+        const redacted = plural ? redactIfSensitive(object, plural) : object;
+        return ok(`${created ? 'Created' : 'Updated'} ${manifest.kind} "${manifest.metadata?.name}".\n\n${JSON.stringify(redacted, null, 2)}`);
+      }
+      case 'delete_resource': {
+        const { kind, name: resourceName, namespace } = input ?? {};
+        if (!kind || !resourceName) throw badRequest('kind and name are required');
+        await deleteResource(String(kind), String(resourceName), ctx.context, namespace ? String(namespace) : undefined, ctx.kubeOptions);
+        return ok(`Deleted ${kind} "${resourceName}"${namespace ? ` in namespace "${namespace}"` : ''}.`);
+      }
+      case 'helm_install': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { chart, releaseName, namespace, version, values } = input ?? {};
+        if (!chart || !releaseName || !namespace) throw badRequest('chart, releaseName, and namespace are required');
+        const output = await helmService.installRelease(ctx.helm.session, ctx.helm.scoped, {
+          chart: String(chart),
+          releaseName: String(releaseName),
+          namespace: String(namespace),
+          version: version ? String(version) : undefined,
+          values: values ? String(values) : undefined,
+        });
+        return ok(`Installed release "${releaseName}" in namespace "${namespace}".\n\n${output}`);
+      }
+      case 'helm_upgrade': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace, version, values } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        const output = await helmService.upgradeRelease(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace), {
+          version: version ? String(version) : undefined,
+          values: values ? String(values) : undefined,
+        });
+        return ok(`Upgraded release "${releaseName}" in namespace "${namespace}".\n\n${output}`);
+      }
+      case 'helm_rollback': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace, revision } = input ?? {};
+        if (!releaseName || !namespace || typeof revision !== 'number') throw badRequest('name, namespace, and revision are required');
+        const output = await helmService.rollbackRelease(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace), revision);
+        return ok(`Rolled back release "${releaseName}" in namespace "${namespace}" to revision ${revision}.\n\n${output}`);
+      }
+      case 'helm_uninstall': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        const output = await helmService.uninstallRelease(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
+        return ok(`Uninstalled release "${releaseName}" in namespace "${namespace}".\n\n${output}`);
+      }
+      default:
+        return { output: `Unknown tool: ${name}`, isError: true };
+    }
+  } catch (err) {
+    return fail(err);
+  }
+}

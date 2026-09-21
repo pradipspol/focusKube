@@ -371,6 +371,20 @@ export default function App() {
     }
     return AI_PANEL_DEFAULT_WIDTH_VW;
   });
+  // An open artifact (a tool result "popped out" of the chat, see AiAssistantPanel.tsx) needs
+  // real room next to the chat column, well past the panel's normal resize ceiling — widen it
+  // temporarily and restore whatever width the user had set once the artifact closes.
+  const AI_PANEL_ARTIFACT_WIDTH_VW = 60;
+  const aiPanelWidthBeforeArtifactRef = useRef<number | null>(null);
+  const handleArtifactOpenChange = (open: boolean) => {
+    if (open) {
+      if (aiPanelWidthBeforeArtifactRef.current === null) aiPanelWidthBeforeArtifactRef.current = aiPanelWidthVw;
+      setAiPanelWidthVw(AI_PANEL_ARTIFACT_WIDTH_VW);
+    } else if (aiPanelWidthBeforeArtifactRef.current !== null) {
+      setAiPanelWidthVw(aiPanelWidthBeforeArtifactRef.current);
+      aiPanelWidthBeforeArtifactRef.current = null;
+    }
+  };
 
   const [createResourceOpen, setCreateResourceOpen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
@@ -1529,7 +1543,7 @@ export default function App() {
               aria-label={uiText.common.resizeSidebar}
             />
             <div className="ai-panel-dock">
-              <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} />
+              <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} onArtifactOpenChange={handleArtifactOpenChange} />
             </div>
           </>
         )}

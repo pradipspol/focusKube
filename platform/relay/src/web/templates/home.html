@@ -62,7 +62,11 @@
       const isTrial = acct.license.plan === 'trial';
       const upgradeButtons = isTrial ? upgradeButtonsHtml : '';
       const billingButton = !isTrial ? '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' : '';
-      const cancelButton = isTrial
+      // Only offer cancellation while there's actually something active to cancel — once
+      // Stripe reports the subscription gone, status flips to 'inactive' but the plan/license
+      // row itself lingers (so a stale key still shows), and a repeat click on this button
+      // would otherwise reach the relay's /cancel with nothing left to cancel there either.
+      const cancelButton = acct.license.status !== 'active' ? '' : isTrial
         ? '<form id="cancel-trial"><button type="submit" class="secondary danger">Cancel trial</button></form>'
         : '<form id="cancel-pro"><button type="submit" class="secondary danger">Cancel subscription</button></form>';
       planHtml =

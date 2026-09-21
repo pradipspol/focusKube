@@ -68,6 +68,9 @@ export function AiEntitlementGate({ children }: Props) {
           {typeof entitlement.quotaRemaining === 'number' && (
             <span className="ai-gate-quota">
               {uiText.aiAssistant.quotaRemainingLabel}: {entitlement.quotaRemaining}
+              <span className="ai-gate-quota-info" title={uiText.aiAssistant.quotaExplainer} aria-label={uiText.aiAssistant.quotaExplainer}>
+                ⓘ
+              </span>
             </span>
           )}
           {isTrial && !checkoutOpened && (

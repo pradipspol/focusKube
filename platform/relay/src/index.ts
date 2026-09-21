@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import 'express-async-errors';
 import { config } from './config.js';
 import { devLicenseKey, licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota } from './licenseStore.js';
-import { streamChatTurn } from './llm/chatProvider.js';
+import { streamChatTurn, type ChatTool, type ChatTurnMessage } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
 import { billingRouter, handleStripeWebhook } from './billing/routes.js';
@@ -34,16 +34,26 @@ app.use(cookieParser());
 
 interface ChatRequestBody {
   context?: unknown;
-  messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  messages?: ChatTurnMessage[];
   model?: string;
   maxTokens?: number;
+  /** The tool catalog the backend has already filtered by the session's RBAC role — the relay
+   * has no Kubernetes knowledge of its own and never decides which tools exist, only forwards
+   * whichever set the caller sends. */
+  tools?: ChatTool[];
 }
 
 function buildSystemPrompt(context: unknown): string {
   return [
     'You are the focusKube AI assistant, embedded in a Kubernetes explorer UI.',
-    'Help the user diagnose issues with the resource they currently have focused: explain what is wrong and cite specific evidence from the context below (status fields, events, related pods) rather than generic Kubernetes advice.',
-    'You are read-only in this phase — you cannot execute any change yourself. If a fix needs a mutation (restart, scale, rollback, edit), describe exactly what to do so the user can perform it manually; never claim to have made a change.',
+    'Help the user diagnose issues with the resource they currently have focused: explain what is wrong and cite specific evidence from the context below (status fields, events, related pods) rather than generic Kubernetes advice. You can also inspect and manage Helm releases — nothing outside the Kubernetes/Helm scope.',
+    '',
+    'Tools — call them yourself, directly, whenever they would help. Never ask the user "should I proceed?" or "do you want me to run this?" in your own reply instead of calling a tool: that produces plain text with no way for the user to actually respond, and nothing will happen.',
+    '- Read tools (list_resources, get_resource, describe_resource, get_logs, get_events, helm_list_releases, helm_get_release_values, helm_get_release_manifest, helm_get_release_history, helm_search_charts) run immediately with no approval step of any kind. Call them the moment the context JSON below does not already answer the question, and cite what they return rather than guessing.',
+    '- Write tools (scale_deployment, restart_deployment, apply_manifest, delete_resource, helm_install, helm_upgrade, helm_rollback, helm_uninstall) are never executed by you. The instant you call one, the system itself shows the user an approval card (Approve / Reject / Allow for this session) — that IS the permission step, so call the tool as soon as you have decided a change is warranted rather than asking about it first. You will get the real outcome back afterward as a tool result.',
+    '- Never tell the user a change has been made until a tool result confirms it. If the user rejects a proposal, acknowledge that and do not repeat the same proposal without a good reason.',
+    '- A tool result is evidence for you to interpret, not the answer itself. Once you have called every tool you need, always finish with your own written explanation in plain language — what the evidence means, and why (e.g. quote the specific log line or event that shows the cause). Never end a turn on a tool call alone and let the raw output stand in for your answer; the user is asking you to reason about it, not to see it.',
+    '',
     'Be concise and specific.',
     '',
     'Cluster context (JSON):',
@@ -153,7 +163,7 @@ app.post('/v1/ai/chat', async (req, res) => {
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
 
-  const { context, messages, model, maxTokens } = req.body as ChatRequestBody;
+  const { context, messages, model, maxTokens, tools } = req.body as ChatRequestBody;
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages is required' });
   }
@@ -171,20 +181,35 @@ app.post('/v1/ai/chat', async (req, res) => {
 
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
+  // platform/backend's aiService.ts aborts its own fetch to this route when the user clicks
+  // Stop (or when its WS connection drops) — Node surfaces that as this request's socket
+  // closing, which we turn into an abort signal threaded into the actual LLM call so tokens
+  // stop generating immediately instead of streaming to no one.
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+
   try {
     await streamChatTurn(
       buildSystemPrompt(context),
       messages.map((m) => ({ role: m.role, content: m.content })),
       model || DEFAULT_MODEL,
       maxTokens ?? DEFAULT_MAX_TOKENS,
+      tools ?? [],
       (event) => send(event),
+      controller.signal,
     );
     res.write('data: [DONE]\n\n');
   } catch (err) {
+    if (controller.signal.aborted) {
+      // The client disconnected on purpose (Stop) — nothing left to write to, and the LLM call
+      // itself still ran, so the quota reservation stands (see reserveQuota's doc comment: one
+      // reservation per real relay round-trip, matching the cost actually incurred).
+      return;
+    }
     refundQuota(key!);
     send({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
   } finally {
-    res.end();
+    if (!res.writableEnded) res.end();
   }
 });
 

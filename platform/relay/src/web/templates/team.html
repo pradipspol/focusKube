@@ -62,7 +62,10 @@
       '</div>' +
       '<div class="button-row">' +
       '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' +
-      '<form id="cancel-sub"><button type="submit" class="secondary danger">Cancel subscription</button></form>' +
+      // Once the org's subscription is actually gone at Stripe, org.status flips away from
+      // 'active' — hide the button rather than let a repeat click hit cancelOrgSubscription
+      // with nothing left to cancel.
+      (data.org.status === 'active' ? '<form id="cancel-sub"><button type="submit" class="secondary danger">Cancel subscription</button></form>' : '') +
       '</div>' +
       '<div id="seats-err"></div>' +
       '</div>' +
@@ -173,7 +176,7 @@
       const res = await fetch('/v1/org/cancel-subscription', { method: 'POST' });
       const body = await res.json();
       if (!res.ok) { alert(body.error || 'Something went wrong'); return; }
-      alert('Subscription cancelled. Your team will end at the end of the current billing period.');
+      alert('Subscription cancelled. Your team\'s access will end at the end of the current billing period.');
       location.reload();
     });
 

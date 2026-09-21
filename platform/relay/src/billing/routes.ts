@@ -226,10 +226,14 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
     }
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      db.prepare(`UPDATE licenses SET status = 'inactive', updated_at = ? WHERE stripe_subscription_id = ?`).run(
-        new Date().toISOString(),
-        subscription.id,
-      );
+      // Also clears stripe_subscription_id: the subscription is gone at Stripe, so leaving
+      // the id on the row let a stale "Cancel subscription" button (still shown because the
+      // row/org is still returned regardless of status) call stripe.subscriptions.update on
+      // an already-deleted id and throw an unhandled error instead of a clean "nothing to
+      // cancel" — see billing/routes.ts's /cancel and org/billing.ts's cancelOrgSubscription.
+      db.prepare(
+        `UPDATE licenses SET status = 'inactive', stripe_subscription_id = NULL, updated_at = ? WHERE stripe_subscription_id = ?`,
+      ).run(new Date().toISOString(), subscription.id);
       markOrgCancelled(subscription.id); // no-op when not a Team's subscription
       break;
     }

@@ -13,7 +13,7 @@ export interface ResourceKind {
   namespaced: boolean;
 }
 
-interface KubeAccessOptions {
+export interface KubeAccessOptions {
   kubeconfigPath?: string;
   fallbackContext?: string | null;
   azureConfigDir?: string;
@@ -512,6 +512,24 @@ export async function deleteResource(
   return unwrapBody(res);
 }
 
+/** Strips the two fields that inflate a manifest's size without telling a reader anything
+ * useful: `metadata.managedFields` (field-ownership bookkeeping Kubernetes attaches on every
+ * write — routinely several KB on its own, confirmed against a real cluster) and the
+ * `kubectl.kubernetes.io/last-applied-configuration` annotation (a full copy of the prior
+ * manifest, stamped by every `kubectl apply`). Unlike sanitizeForEdit, keeps `status`,
+ * `creationTimestamp`, and `generation` — this is for a read tool result to show/summarize,
+ * not for re-submitting as an edit. */
+export function stripReadNoise<T extends k8s.KubernetesObject>(obj: T): T {
+  const clone: any = JSON.parse(JSON.stringify(obj));
+  if (clone.metadata) {
+    delete clone.metadata.managedFields;
+    if (clone.metadata.annotations) {
+      delete clone.metadata.annotations['kubectl.kubernetes.io/last-applied-configuration'];
+    }
+  }
+  return clone;
+}
+
 /** Strip server-managed fields so an object is clean to re-apply. */
 export function sanitizeForEdit<T extends k8s.KubernetesObject>(obj: T): T {
   const clone: any = JSON.parse(JSON.stringify(obj));
@@ -525,6 +543,50 @@ export function sanitizeForEdit<T extends k8s.KubernetesObject>(obj: T): T {
   }
   delete clone.status;
   return clone;
+}
+
+/** Whether a Pod's labels satisfy a Deployment/ReplicaSet-style LabelSelector (`matchLabels` +
+ * `matchExpressions`). Shared by ws/streams.ts's log streaming and kube/podLogsOnce.ts's
+ * one-shot log fetch for the AI assistant's get_logs tool. */
+export function matchesDeploymentSelector(selector: any, podLabels: Record<string, unknown>): boolean {
+  const matchLabels = selector?.matchLabels ?? {};
+  const matchExpressions = Array.isArray(selector?.matchExpressions) ? selector.matchExpressions : [];
+
+  const labelsMatch = Object.entries(matchLabels).every(([key, value]) => podLabels[key] === String(value));
+  if (!labelsMatch) return false;
+
+  return matchExpressions.every((expression: any) => {
+    const key = String(expression?.key ?? '');
+    const values = Array.isArray(expression?.values) ? expression.values.map((value: unknown) => String(value)) : [];
+    const labelValue = podLabels[key];
+    switch (expression?.operator) {
+      case 'In':
+        return labelValue !== undefined && values.includes(String(labelValue));
+      case 'NotIn':
+        return labelValue === undefined || !values.includes(String(labelValue));
+      case 'Exists':
+        return labelValue !== undefined;
+      case 'DoesNotExist':
+        return labelValue === undefined;
+      default:
+        return false;
+    }
+  });
+}
+
+const SENSITIVE_PLURALS = new Set(['secrets', 'configmaps']);
+
+/** Redacts a single Secret/ConfigMap down to metadata + key names only (no values) — the
+ * same reduction `listResource()` already applies to list results, reused here for callers
+ * that fetch ONE resource by name via `getResource()`/`applyManifest()`, which apply no
+ * redaction of their own. The AI assistant's tools (aiToolExecutor.ts, aiContextService.ts)
+ * must call this before putting a fetched object into a tool result or approval-card diff —
+ * that content is rendered in chat AND re-sent to the LLM on every subsequent turn, which is
+ * a materially different exposure than the human-only resource browser (whose own secret
+ * value reveal is a separate, explicit, config.allowSecretReveal-gated action). No-op for any
+ * other kind. */
+export function redactIfSensitive(obj: any, plural: string): any {
+  return SENSITIVE_PLURALS.has(plural) ? sanitizeListObject(obj, plural) : obj;
 }
 
 function sanitizeListObject(obj: any, plural: string): any {

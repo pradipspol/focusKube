@@ -4,19 +4,28 @@ import { PassThrough, Writable } from 'node:stream';
 import { URL } from 'node:url';
 import * as k8s from '@kubernetes/client-node';
 import { kube } from '../kube/client.js';
-import { resourceWatchPath, resolveKind } from '../kube/resources.js';
+import { resourceWatchPath, resolveKind, matchesDeploymentSelector } from '../kube/resources.js';
 import { ensureContextAuthReady } from '../kube/authGuard.js';
 import { describeK8sError } from '../util/k8sError.js';
 import { activeSessionAzureConfigDir, activeSessionKubeconfigPath, resolveSessionAuthContext } from '../auth/session.js';
 import { resolveAuthFromHeaders } from '../auth/session.js';
-import { hasCapability } from '../auth/rbac.js';
+import { hasCapability, type Role } from '../auth/rbac.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
 import { logError, logInfo, logWarn } from '../util/logger.js';
 import { handleTerminal } from './terminal.js';
 import { observabilityWss, handleObservabilityUpgrade } from './observability.js';
 import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
-import { aiService } from '../services/aiService.js';
-import { aiContextService } from '../services/aiContextService.js';
+import { aiService, type ChatMessage, type ChatMessageContent } from '../services/aiService.js';
+import { aiContextService, resolveSessionKubeAccess, resolveSessionHelmAccess, type ClusterContext } from '../services/aiContextService.js';
+import {
+  toolCatalogForRole,
+  isWriteTool,
+  requiresDeleteCapability,
+  executeReadTool,
+  executeWriteTool,
+  prepareActionProposal,
+  type ToolExecCtx,
+} from '../services/aiToolExecutor.js';
 import { getLicenseKey } from '../runtime/aiLicenseStore.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
@@ -157,32 +166,6 @@ function wsWritable(ws: WebSocket): Writable {
       if (ws.readyState === WebSocket.OPEN) ws.send(chunk.toString());
       cb();
     },
-  });
-}
-
-function matchesDeploymentSelector(selector: any, podLabels: Record<string, unknown>): boolean {
-  const matchLabels = selector?.matchLabels ?? {};
-  const matchExpressions = Array.isArray(selector?.matchExpressions) ? selector.matchExpressions : [];
-
-  const labelsMatch = Object.entries(matchLabels).every(([key, value]) => podLabels[key] === String(value));
-  if (!labelsMatch) return false;
-
-  return matchExpressions.every((expression: any) => {
-    const key = String(expression?.key ?? '');
-    const values = Array.isArray(expression?.values) ? expression.values.map((value: unknown) => String(value)) : [];
-    const labelValue = podLabels[key];
-    switch (expression?.operator) {
-      case 'In':
-        return labelValue !== undefined && values.includes(String(labelValue));
-      case 'NotIn':
-        return labelValue === undefined || !values.includes(String(labelValue));
-      case 'Exists':
-        return labelValue !== undefined;
-      case 'DoesNotExist':
-        return labelValue === undefined;
-      default:
-        return false;
-    }
   });
 }
 
@@ -960,6 +943,36 @@ function aiChatParams(req: any) {
   };
 }
 
+// Bounds one user message's automatic read-tool loop (each round-trip is a real, billed relay
+// call) — protects against a degenerate back-and-forth, e.g. a read tool whose own output
+// prompts the model to call it again. Deliberately NOT shared across an action_decision's
+// resumption: a write-tool round only ever continues after a human clicks Approve/Reject,
+// which is its own natural rate limit.
+const MAX_TOOL_ROUNDS = 6;
+
+/** One relay round-trip's `tool_use` blocks — Claude can (and does) request several tools in
+ * parallel within a single turn, e.g. reading two pods' logs at once. The Anthropic API
+ * requires every tool_use block from one assistant turn to be answered by a tool_result in
+ * the SAME following user turn, all at once — so when a round mixes read and write calls, the
+ * read calls' results are computed immediately but held here until every write call in the
+ * same round has been decided, and only then combined into one tool_result message. */
+interface PendingRound {
+  turnContext: ClusterContext;
+  toolCtx: ToolExecCtx;
+  /** tool_use ids from this round, in the order Claude emitted them — preserved so the
+   * combined tool_result message lines up positionally with the assistant's own turn. */
+  order: string[];
+  results: Map<string, { content: string; is_error: boolean }>;
+  /** Write-tool ids from this round not yet decided. Empty means the round is ready to close. */
+  awaiting: Set<string>;
+}
+
+interface PendingAction {
+  name: string;
+  input: unknown;
+  roundId: string;
+}
+
 async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
   const session = req.userSession;
   if (!session) {
@@ -969,6 +982,10 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
   }
 
   const requestedContext = aiChatParams(req).context;
+  const role = (req.authUser?.role as Role | undefined) ?? undefined;
+  // RBAC-filtered before Claude ever sees the catalog — a viewer/read-only session's model
+  // must never be offered scale/restart/apply/delete as callable tools in the first place.
+  const tools = toolCatalogForRole(role);
 
   const licenseKey = await getLicenseKey();
   if (!licenseKey) {
@@ -978,56 +995,368 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
   }
 
   try {
-    // Listen for messages from the client
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-    let currentAssistantToken = '';
+    // Listen for messages from the client. All of `messages`/`pendingActions`/`pendingRounds`
+    // live only for the lifetime of this one connection — there is no server-side conversation
+    // store, so an unanswered proposal simply never executes if the socket closes first.
+    const messages: ChatMessage[] = [];
+    const pendingActions = new Map<string, PendingAction>();
+    const pendingRounds = new Map<string, PendingRound>();
+    let roundCounter = 0;
+    // Tool names the user has approved with "Allow for this session" — scoped to this one
+    // connection only (never persisted), same lifetime as `messages`/`pendingActions` above.
+    // A tool in this set skips the approval card entirely and executes like a read tool.
+    const sessionAutoApprovedTools = new Set<string>();
+    // client turnId -> messages.length right before that turn's user content was pushed —
+    // lets `edit_message` rewind `messages` back to right before a past turn and replay it with
+    // different (or, for "regenerate", identical) text. Entries for turns made unreachable by a
+    // later edit are dropped as part of that edit (see the `edit_message` handler below).
+    const checkpoints = new Map<string, number>();
+    // The AbortController for whichever relay round-trip is currently streaming, if any — `stop`
+    // aborts it directly rather than going through `enqueue`, since the queued turn is exactly
+    // what's being interrupted and would otherwise never get a chance to run.
+    let currentRelayAbort: AbortController | null = null;
 
-    ws.on('message', async (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
+    // Serializes everything that mutates `messages`/`pendingActions` or talks to the relay, so
+    // an action_decision and a fresh user_message on the same socket can't interleave mid-turn.
+    let turnQueue: Promise<void> = Promise.resolve();
+    const enqueue = (fn: () => Promise<void>): void => {
+      turnQueue = turnQueue.then(fn).catch((err) => {
+        logError('ai_chat.turn_error', { error: err instanceof Error ? err.message : String(err) });
+        ws.send(JSON.stringify({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' }));
+      });
+    };
 
-        if (msg.type === 'user_message') {
-          const userText = msg.text;
-          messages.push({ role: 'user', content: userText });
+    // Once every write call in a round has been decided, combine all of that round's tool
+    // results (reads computed immediately, writes filled in as decisions arrive) into one
+    // user turn, in original order, and resume the relay round-trip loop.
+    const finishRoundIfReady = async (roundId: string): Promise<void> => {
+      const round = pendingRounds.get(roundId);
+      if (!round || round.awaiting.size > 0) return;
+      pendingRounds.delete(roundId);
+      const content: ChatMessageContent = round.order.map((id) => {
+        const r = round.results.get(id)!;
+        return { type: 'tool_result' as const, tool_use_id: id, content: r.content, is_error: r.is_error };
+      });
+      messages.push({ role: 'user', content });
+      await runTurn(round.turnContext, round.toolCtx);
+    };
 
-          // Reassemble context each turn so it reflects whatever resource the
-          // user currently has focused, not just what was open when the socket connected.
-          const focusedResource = msg.focusedResource
-            ? {
-                kind: String(msg.focusedResource.kind ?? ''),
-                namespace: String(msg.focusedResource.namespace ?? ''),
-                name: String(msg.focusedResource.name ?? ''),
-              }
-            : undefined;
-          const turnContext = await aiContextService.assembleContext(session, focusedResource, requestedContext);
-
-          // Stream the response
-          await aiService.sendChatToRelay(turnContext, messages, (chunk) => {
-            if (chunk.type === 'token') {
-              currentAssistantToken += chunk.data.token || '';
-              ws.send(JSON.stringify({ type: 'token', token: chunk.data.token }));
-            } else if (chunk.type === 'tool_use') {
-              ws.send(JSON.stringify({ type: 'tool_use', ...chunk.data }));
-            } else if (chunk.type === 'stop') {
-              messages.push({ role: 'assistant', content: currentAssistantToken });
-              currentAssistantToken = '';
-              ws.send(JSON.stringify({ type: 'stop' }));
-            } else if (chunk.type === 'error') {
-              // Discard the partial reply rather than recording it as a completed assistant
-              // turn — a cut-off answer isn't something later turns should build on.
-              currentAssistantToken = '';
-              ws.send(JSON.stringify({ type: 'error', message: chunk.data.message }));
-            }
-          });
+    // Runs (and, for read-only rounds, loops) one or more relay round-trips until the
+    // assistant's turn either truly ends or pauses on one or more write-tool proposals.
+    const runTurn = async (turnContext: ClusterContext, toolCtx: ToolExecCtx | null): Promise<void> => {
+      // Set once we've already nudged this turn (below) — bounds it to a single retry so a
+      // model that keeps coming back empty can't loop forever instead of ending the turn.
+      let nudgedForExplanation = false;
+      for (let round = 0; ; round++) {
+        if (round >= MAX_TOOL_ROUNDS) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Too many tool calls in one turn — try rephrasing.' }));
+          return;
         }
+
+        let assistantText = '';
+        // Claude can request several tools in one turn (e.g. two get_logs calls at once) —
+        // every tool_use block emitted this round-trip is collected, not just the last.
+        const toolUses: Array<{ id: string; name: string; input: unknown }> = [];
+        let sawError = false;
+        let stopped = false;
+
+        const abortController = new AbortController();
+        currentRelayAbort = abortController;
+        try {
+          await aiService.sendChatToRelay(
+            turnContext,
+            messages,
+            tools,
+            (chunk) => {
+              if (chunk.type === 'token') {
+                assistantText += chunk.data.token || '';
+                ws.send(JSON.stringify({ type: 'token', token: chunk.data.token }));
+              } else if (chunk.type === 'tool_use') {
+                toolUses.push({ id: chunk.data.id, name: chunk.data.name, input: chunk.data.input });
+              } else if (chunk.type === 'stopped') {
+                stopped = true;
+                ws.send(JSON.stringify({ type: 'stopped' }));
+              } else if (chunk.type === 'error') {
+                sawError = true;
+                ws.send(JSON.stringify({ type: 'error', message: chunk.data.message }));
+              }
+              // 'stop' needs no handling here — the branches below react once sendChatToRelay's
+              // await resolves, based on whether any tool_use showed up this round-trip.
+            },
+            abortController.signal,
+          );
+        } finally {
+          currentRelayAbort = null;
+        }
+
+        if (sawError) return;
+
+        if (stopped) {
+          // Whatever text streamed before the abort stands as the assistant's turn — no further
+          // tool_use processing (any that were mid-flight are simply dropped), and the turn ends
+          // cleanly rather than looping for another round.
+          messages.push({ role: 'assistant', content: assistantText });
+          return;
+        }
+
+        if (toolUses.length === 0) {
+          // The model used at least one tool this turn (the immediately-preceding message is
+          // that round's tool_result batch) but came back with no text of its own — despite the
+          // system prompt's explicit instruction not to, this is a real, observed failure mode
+          // of the configured model: it treats the raw tool output as a self-explanatory answer
+          // and stops. Rather than let that raw output stand as the whole reply, nudge it once,
+          // in-band (appended to the same tool-result turn — see toOpenAiMessages' handling of a
+          // trailing text block, which is what actually delivers this to the Azure OpenAI path).
+          const lastMessage = messages[messages.length - 1];
+          if (
+            !assistantText.trim() &&
+            !nudgedForExplanation &&
+            lastMessage &&
+            lastMessage.role === 'user' &&
+            Array.isArray(lastMessage.content) &&
+            lastMessage.content.some((block) => block.type === 'tool_result')
+          ) {
+            nudgedForExplanation = true;
+            lastMessage.content = [
+              ...lastMessage.content,
+              {
+                type: 'text',
+                text: 'Explain what those results mean for my question, in your own words, citing the specific evidence — do not end your turn on the tool call alone.',
+              },
+            ];
+            continue;
+          }
+          // A plain text turn, truly done.
+          messages.push({ role: 'assistant', content: assistantText });
+          ws.send(JSON.stringify({ type: 'stop' }));
+          return;
+        }
+
+        const assistantContent: ChatMessageContent = [
+          ...(assistantText ? [{ type: 'text' as const, text: assistantText }] : []),
+          ...toolUses.map((t) => ({ type: 'tool_use' as const, id: t.id, name: t.name, input: t.input })),
+        ];
+        messages.push({ role: 'assistant', content: assistantContent });
+
+        if (!toolCtx) {
+          // The tool catalog is only offered once cluster access resolves, so this shouldn't
+          // normally happen — guard anyway rather than leaving the turn stuck.
+          const content: ChatMessageContent = toolUses.map((t) => {
+            const output = 'Cluster is not currently reachable — cannot run this tool.';
+            ws.send(JSON.stringify({ type: 'tool_result', id: t.id, name: t.name, output, isError: true }));
+            return { type: 'tool_result' as const, tool_use_id: t.id, content: output, is_error: true };
+          });
+          messages.push({ role: 'user', content });
+          continue;
+        }
+
+        const roundId = `round-${++roundCounter}`;
+        const thisRound: PendingRound = {
+          turnContext,
+          toolCtx,
+          order: toolUses.map((t) => t.id),
+          results: new Map(),
+          awaiting: new Set(),
+        };
+
+        for (const t of toolUses) {
+          if (isWriteTool(t.name)) {
+            // The before/after diff is a read-only lookup either way, so fetch it up front
+            // regardless of whether this call ends up auto-approved or shown as a card.
+            const proposal = await prepareActionProposal(t.name, t.input, toolCtx);
+            if (sessionAutoApprovedTools.has(t.name)) {
+              // Already allowed for this session — run it now, same as a read tool, but still
+              // surface it as a resolved (not pending) action card so the diff/outcome is visible.
+              const result = await executeWriteTool(t.name, t.input, toolCtx);
+              const status: 'approved' | 'failed' = result.isError ? 'failed' : 'approved';
+              logInfo('ai_chat.action_decided', { userId: req.authUser?.id, tool: t.name, approved: true, remembered: true, status });
+              ws.send(JSON.stringify({
+                type: 'action_auto',
+                id: t.id,
+                name: t.name,
+                input: t.input,
+                summary: proposal.summary,
+                diff: proposal.diff,
+                status,
+                output: result.output,
+              }));
+              thisRound.results.set(t.id, { content: result.output, is_error: result.isError });
+            } else {
+              thisRound.awaiting.add(t.id);
+              pendingActions.set(t.id, { name: t.name, input: t.input, roundId });
+              ws.send(JSON.stringify({
+                type: 'action_proposed',
+                id: t.id,
+                name: t.name,
+                input: t.input,
+                summary: proposal.summary,
+                diff: proposal.diff,
+              }));
+            }
+          } else {
+            ws.send(JSON.stringify({ type: 'tool_call', id: t.id, name: t.name, input: t.input }));
+            const result = await executeReadTool(t.name, t.input, toolCtx);
+            ws.send(JSON.stringify({ type: 'tool_result', id: t.id, name: t.name, output: result.output, isError: result.isError }));
+            thisRound.results.set(t.id, { content: result.output, is_error: result.isError });
+          }
+        }
+
+        if (thisRound.awaiting.size === 0) {
+          // Every tool_use this round was a read tool — combine now and keep looping.
+          const content: ChatMessageContent = thisRound.order.map((id) => {
+            const r = thisRound.results.get(id)!;
+            return { type: 'tool_result' as const, tool_use_id: id, content: r.content, is_error: r.is_error };
+          });
+          messages.push({ role: 'user', content });
+          continue;
+        }
+
+        // At least one write call is pending approval — pause. Resumes via
+        // finishRoundIfReady, from the action_decision branch below, once every write call in
+        // this round (there may be more than one) has been decided.
+        pendingRounds.set(roundId, thisRound);
+        return;
+      }
+    };
+
+    // Shared by a fresh `user_message` and an `edit_message` replay — the only difference
+    // between them is whether `messages`/`checkpoints` got truncated first (see the
+    // `edit_message` handler below).
+    const runUserTurn = async (text: string, turnId: unknown, focusedResourceRaw: unknown): Promise<void> => {
+      if (pendingActions.size > 0) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Resolve the pending action proposal before sending another message.' }));
+        return;
+      }
+
+      if (typeof turnId === 'string' && turnId) {
+        checkpoints.set(turnId, messages.length);
+      }
+      messages.push({ role: 'user', content: text });
+
+      // Reassemble context each turn so it reflects whatever resource the
+      // user currently has focused, not just what was open when the socket connected.
+      const focusedResource =
+        focusedResourceRaw && typeof focusedResourceRaw === 'object'
+          ? {
+              kind: String((focusedResourceRaw as any).kind ?? ''),
+              namespace: String((focusedResourceRaw as any).namespace ?? ''),
+              name: String((focusedResourceRaw as any).name ?? ''),
+            }
+          : undefined;
+      const context = requestedContext || session.activeContext || 'default';
+      // Resolved once and reused for both the context-assembly and tool-execution paths —
+      // each resolution is real I/O (kubeconfig repair, Azure token-cache warm-up, and for
+      // Helm, its own scope/auth resolution). Independent of each other, so resolved in
+      // parallel rather than one after the other.
+      const [kubeOptions, helmCtx] = await Promise.all([
+        resolveSessionKubeAccess(session, context),
+        resolveSessionHelmAccess(session, context),
+      ]);
+      const turnContext = await aiContextService.assembleContext(session, focusedResource, requestedContext, kubeOptions);
+      const toolCtx: ToolExecCtx | null = kubeOptions && role ? { context, kubeOptions, role, helm: helmCtx } : null;
+
+      await runTurn(turnContext, toolCtx);
+    };
+
+    ws.on('message', (data) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(data.toString());
       } catch (err) {
-        logError('ai_chat.message_error', {
-          error: err instanceof Error ? err.message : String(err),
+        ws.send(JSON.stringify({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' }));
+        return;
+      }
+
+      if (msg.type === 'user_message') {
+        enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource));
+        return;
+      }
+
+      if (msg.type === 'edit_message') {
+        enqueue(async () => {
+          if (pendingActions.size > 0) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Resolve the pending action proposal before editing a message.' }));
+            return;
+          }
+          const turnId = String(msg.turnId ?? '');
+          const checkpoint = checkpoints.get(turnId);
+          // A missing checkpoint means this turn predates the current socket (e.g. the
+          // connection dropped/reopened, or the backend restarted, since either wipes this
+          // in-memory map) — the exact history rewind is no longer possible, but the user still
+          // asked a question and still expects an answer, so fall back to appending it as a
+          // fresh turn instead of erroring out with nothing to show for the edit.
+          if (checkpoint !== undefined) {
+            // Drop everything this turn (and any later one) produced, including checkpoints for
+            // turns that no longer exist once we rewind past them.
+            messages.length = checkpoint;
+            for (const [id, idx] of checkpoints) {
+              if (idx >= checkpoint) checkpoints.delete(id);
+            }
+          }
+          await runUserTurn(msg.text, turnId, msg.focusedResource);
         });
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: err instanceof Error ? err.message : 'Unknown error',
-        }));
+        return;
+      }
+
+      if (msg.type === 'stop') {
+        // Deliberately NOT enqueued — the queued turn is exactly what this is meant to
+        // interrupt, so waiting for it to reach the front of `turnQueue` would defeat the
+        // point. A no-op if nothing is currently streaming.
+        currentRelayAbort?.abort();
+        return;
+      }
+
+      if (msg.type === 'action_decision') {
+        enqueue(async () => {
+          const id = String(msg.id ?? '');
+          const pending = pendingActions.get(id);
+          const round = pending ? pendingRounds.get(pending.roundId) : undefined;
+          if (!pending || !round) {
+            ws.send(JSON.stringify({ type: 'error', message: 'This proposal is no longer active.' }));
+            return;
+          }
+          pendingActions.delete(id);
+
+          const approved = !!msg.approved;
+          const remember = approved && !!msg.remember;
+          let output: string;
+          let isError = false;
+          let status: 'approved' | 'rejected' | 'failed';
+
+          if (!approved) {
+            output = 'User rejected this action.';
+            status = 'rejected';
+          } else if (!hasCapability(role, 'write') || (requiresDeleteCapability(pending.name) && !hasCapability(role, 'delete'))) {
+            // Re-checked here, not just at catalog-build time — a long-lived socket can
+            // outlive a role change between the proposal and the click.
+            output = 'Your role no longer permits this action.';
+            isError = true;
+            status = 'failed';
+          } else {
+            // Recorded before executing, not after — "allow for this session" is a standing
+            // choice about this tool going forward, not conditional on this one call succeeding.
+            if (remember) sessionAutoApprovedTools.add(pending.name);
+            const result = await executeWriteTool(pending.name, pending.input, round.toolCtx);
+            output = result.output;
+            isError = result.isError;
+            status = result.isError ? 'failed' : 'approved';
+          }
+
+          logInfo('ai_chat.action_decided', {
+            userId: req.authUser?.id,
+            tool: pending.name,
+            approved,
+            remembered: remember,
+            status,
+          });
+
+          ws.send(JSON.stringify({ type: 'action_result', id, status, output }));
+          round.results.set(id, { content: output, is_error: isError });
+          round.awaiting.delete(id);
+
+          await finishRoundIfReady(pending.roundId);
+        });
+        return;
       }
     });
 

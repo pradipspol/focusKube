@@ -21,18 +21,62 @@ export interface AiChatMessage {
 }
 
 /** Wire messages sent to /ws/ai. */
-export type AiChatOutboundMessage = {
-  type: 'user_message';
-  text: string;
-  focusedResource?: AiFocusedResource;
-};
+export type AiChatOutboundMessage =
+  /** `turnId` identifies this turn for later editing/regenerating (see `edit_message` below)
+   * and is otherwise unused by the backend for a fresh message. */
+  | { type: 'user_message'; text: string; turnId?: string; focusedResource?: AiFocusedResource }
+  /** Approve/reject a write-tool proposal previously received as `action_proposed`. `id` is
+   * that proposal's tool_use id, used to correlate the decision back to the paused turn.
+   * `remember: true` (only meaningful alongside `approved: true`) additionally tells the
+   * backend to auto-approve this tool name for the rest of the connection — see `action_auto`
+   * below for how a later occurrence of that tool is then reported. */
+  | { type: 'action_decision'; id: string; approved: boolean; remember?: boolean }
+  /** Rewinds the conversation back to right before the turn identified by `turnId` (dropping
+   * everything that turn and any later ones produced) and resends `text` as that turn's user
+   * message — used for both "edit a past message" (text differs) and "regenerate" (text is the
+   * original, unchanged). */
+  | { type: 'edit_message'; turnId: string; text: string; focusedResource?: AiFocusedResource }
+  /** Aborts whichever turn is currently streaming on this connection, if any. A no-op if
+   * nothing is in flight. */
+  | { type: 'stop' };
+
+/** A write-tool proposal's before/after view — `before` is absent when the target resource
+ * doesn't exist yet (apply_manifest would create it). */
+export interface AiActionDiff {
+  before?: string;
+  after: string;
+}
 
 /** Wire messages received from /ws/ai. */
 export type AiChatInboundMessage =
   | { type: 'token'; token: string }
-  | { type: 'tool_use'; [key: string]: unknown }
   | { type: 'stop' }
-  | { type: 'error'; message: string };
+  /** The turn ended because the user clicked Stop — distinct from `stop` (a normal end-of-turn)
+   * only so the frontend can skip showing anything alarming; whatever text streamed before the
+   * abort stays exactly as-is. */
+  | { type: 'stopped' }
+  | { type: 'error'; message: string }
+  /** A read tool (list/get/describe/logs/events) started — auto-executes, no approval needed. */
+  | { type: 'tool_call'; id: string; name: string; input: unknown }
+  /** That read tool finished; `output` is the (possibly truncated) result text. */
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean }
+  /** A write tool (scale/restart/apply/delete) was requested — render an approval card and
+   * send an `action_decision` back; nothing has touched the cluster yet. */
+  | { type: 'action_proposed'; id: string; name: string; input: unknown; summary: string; diff?: AiActionDiff }
+  /** The outcome once the user decided (or the proposal was re-checked and denied). */
+  | { type: 'action_result'; id: string; status: 'approved' | 'rejected' | 'failed'; output?: string }
+  /** A write tool that matched an earlier "Allow for this session" choice — already executed,
+   * with no pending step at all. Render it the same as a resolved action card. */
+  | {
+      type: 'action_auto';
+      id: string;
+      name: string;
+      input: unknown;
+      summary: string;
+      diff?: AiActionDiff;
+      status: 'approved' | 'failed';
+      output: string;
+    };
 
 const AI_API_BASE = '/api/ai';
 
