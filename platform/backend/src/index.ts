@@ -27,11 +27,17 @@ import { getRequestOperation, setRequestOperation } from './util/requestOp.js';
 const app = express();
 
 
+// This backend is a single-user local process (the desktop app's own backend, talked to only
+// by its own frontend on this machine) - loopback traffic is never third-party abuse, and this
+// UI's own polling (contexts, Azure account/subscription checks, resource views, etc.) routinely
+// exceeds a public-API-style budget within minutes. Only rate-limit non-loopback callers.
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const limiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: 200, // max 200 requests per windowMs
   standardHeaders: 'draft-8',
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => LOOPBACK_IPS.has(req.ip ?? ''),
 });
 
 // apply rate limiter to all requests

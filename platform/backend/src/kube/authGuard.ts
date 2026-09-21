@@ -6,6 +6,7 @@ import type { SessionScope } from '../auth/session.js';
 import type { CallIdentity } from '../util/callIdentity.js';
 import { repairKubeconfig } from './kubeConfigRepair.js';
 import { fetchAndCacheKubeloginToken, getCachedKubeloginToken, resolveContextIdentity } from './kubeloginCache.js';
+import { userRequiresAzureAuth } from './execAuthDetection.js';
 
 interface EnsureContextAuthOptions {
   context?: string;
@@ -94,7 +95,7 @@ export async function ensureContextAuthReady(options: EnsureContextAuthOptions):
   const exec = userAny?.exec ?? userAny?.authProvider?.config?.exec ?? userAny?.authProvider?.exec;
   const command = String(exec?.command ?? '').toLowerCase();
 
-  if (exec && (command.includes('kubelogin') || command.includes('az'))) {
+  if (userRequiresAzureAuth(user)) {
     const azureConfigDir = options.azureConfigDir?.trim();
     if (!azureConfigDir) {
       throw new HttpError(

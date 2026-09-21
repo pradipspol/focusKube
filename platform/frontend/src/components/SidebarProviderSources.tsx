@@ -1288,6 +1288,11 @@ export function SidebarProviderSources ({
               const nodeKey = `localkube:${item.id}`;
               const expanded = !isGroupCollapsed(nodeKey);
               const isMinikubeConfig = item.contexts.includes('minikube');
+              // Only contexts whose kubeconfig user entry actually runs kubelogin/az need a
+              // signed-in "local scope" Azure session - a plain cert/token/basic-auth context
+              // in the same uploaded file never does, and must not be hidden behind it.
+              const azureAuthContextNames = new Set(item.azureAuthContexts ?? []);
+              const contextNeedsAzureAuth = (ctxName: string) => !isMinikubeConfig && azureAuthContextNames.has(ctxName);
               return (
                 <div key={item.id} className="context-root">
                   <div
@@ -1295,12 +1300,9 @@ export function SidebarProviderSources ({
                     title={item.name}
                     onClick={async () => {
                       const willExpand = isGroupCollapsed(nodeKey);
-                      if (willExpand) {
-                        const preferredContext = item.contexts[0];
-                        if (!isMinikubeConfig) {
-                          const ok = await ensureLocalAzureConnected(preferredContext);
-                          if (!ok) return;
-                        }
+                      if (willExpand && azureAuthContextNames.size > 0 && !isMinikubeConfig) {
+                        const ok = await ensureLocalAzureConnected(item.azureAuthContexts[0]);
+                        if (!ok) return;
                       }
                       toggleGroup(nodeKey);
                     }}
@@ -1313,12 +1315,9 @@ export function SidebarProviderSources ({
                           onClick={async (event) => {
                             event.stopPropagation();
                             const willExpand = isGroupCollapsed(nodeKey);
-                            if (willExpand) {
-                              const preferredContext = item.contexts[0];
-                              if (!isMinikubeConfig) {
-                                const ok = await ensureLocalAzureConnected(preferredContext);
-                                if (!ok) return;
-                              }
+                            if (willExpand && azureAuthContextNames.size > 0 && !isMinikubeConfig) {
+                              const ok = await ensureLocalAzureConnected(item.azureAuthContexts[0]);
+                              if (!ok) return;
                             }
                             toggleGroup(nodeKey);
                           }}
@@ -1372,12 +1371,11 @@ export function SidebarProviderSources ({
                       {localAzureAuthFailed && !collapsed && (
                         <div className="sidebar-hint">{uiText.sidebar.authenticateLocalAzure}</div>
                       )}
-                      {!localAzureAuthenticated && collapsed && null}
-                      {(localAzureAuthenticated || isMinikubeConfig) && item.contexts.length === 0 && !collapsed && (
+                      {item.contexts.length === 0 && !collapsed && (
                         <div className="sidebar-hint">{uiText.sidebar.noContextsInFile}</div>
                       )}
-                      {(localAzureAuthenticated || isMinikubeConfig) &&
-                        item.contexts.map((ctxName) => {
+                      {item.contexts.map((ctxName) => {
+                          const needsAzureAuth = contextNeedsAzureAuth(ctxName);
                           const removeContext = async () => {
                             const ok = await confirm({
                               title: uiText.confirmDialog.removeTitle,
@@ -1415,7 +1413,7 @@ export function SidebarProviderSources ({
                                 className="nav-item context-item"
                                 title={`Connect ${ctxName}`}
                                 onClick={async () => {
-                                  if (!isMinikubeConfig) {
+                                  if (needsAzureAuth) {
                                     const ok = await ensureLocalAzureConnected(ctxName);
                                     if (!ok) return;
                                   }
@@ -1448,7 +1446,7 @@ export function SidebarProviderSources ({
                                               label: 'Connect',
                                               onSelect: async () => {
                                               setMenuLocalContextKey(undefined);
-                                              if (!isMinikubeConfig) {
+                                              if (needsAzureAuth) {
                                                 const ok = await ensureLocalAzureConnected(ctxName);
                                                 if (!ok) return;
                                               }

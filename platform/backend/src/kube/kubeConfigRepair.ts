@@ -1,6 +1,8 @@
 import { promises as fs } from 'fs';
+import yaml from 'js-yaml';
 import { logWarn } from '../util/logger.js';
 import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
+import { userRequiresAzureAuth } from './execAuthDetection.js';
 
 /**
  * Repair deprecated Azure flags from kubeconfig content (string).
@@ -40,14 +42,47 @@ export function repairKubeconfigContent(content: string, azureConfigDir?: string
     .replace(/(--login[^\n\r]{0,40})devicecode\b/gi, '$1azurecli')
     .replace(/(\s+-\s+)devicecode\b/g, '$1azurecli');
 
-  // Inject AZURE_CONFIG_DIR into exec provider environment if provided
+  // Force every Azure/kubelogin exec user onto this scope's isolated AZURE_CONFIG_DIR, so the
+  // actual `kubelogin`/`az` process the k8s client library spawns for API calls picks up the
+  // SAME signed-in identity this app already resolved for the scope/account - instead of
+  // whatever ~/.azure the exec plugin falls back to when the process env doesn't set it
+  // (@kubernetes/client-node's exec auth only merges the kubeconfig's own exec.env, never a
+  // caller-supplied env - see exec_auth.js). Done via a structural YAML edit rather than a
+  // text regex: a regex tied to one exact key order/format (e.g. requiring a literal
+  // `env: null` immediately followed by `command:`) silently no-ops - and therefore leaves
+  // the context pointed at the wrong Azure identity - on any kubeconfig whose exec block
+  // was written with different key order or already has a stale env array.
   if (azureConfigDir) {
-    // Replace: env: null  with: env: [{ name: AZURE_CONFIG_DIR, value: <azureConfigDir> }]
-    // $1 already starts with \n, so do not add an extra \n before each list item
-    loginChanged = loginChanged.replace(
-      /(\n(\s*))env:\s*null(\s*\n\s*(?:installHint|command):)/gi,
-      `$1env:$1  - name: AZURE_CONFIG_DIR$1    value: ${azureConfigDir.replace(/\\/g, '\\\\')}$3`
-    );
+    try {
+      const doc = yaml.load(loginChanged) as any;
+      let changed = false;
+      for (const entry of Array.isArray(doc?.users) ? doc.users : []) {
+        const exec = entry?.user?.exec;
+        if (!userRequiresAzureAuth(entry?.user)) continue;
+        const envList: Array<{ name?: string; value?: string }> = Array.isArray(exec.env) ? exec.env : [];
+        const existing = envList.find((e) => e?.name === 'AZURE_CONFIG_DIR');
+        if (existing) {
+          if (existing.value !== azureConfigDir) {
+            existing.value = azureConfigDir;
+            changed = true;
+          }
+        } else {
+          envList.push({ name: 'AZURE_CONFIG_DIR', value: azureConfigDir });
+          changed = true;
+        }
+        if (exec.env !== envList) {
+          exec.env = envList;
+          changed = true;
+        }
+      }
+      if (changed) {
+        loginChanged = yaml.dump(doc);
+      }
+    } catch (err) {
+      logWarn('kube.config.azure_config_dir_inject_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   return loginChanged;

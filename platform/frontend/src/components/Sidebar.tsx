@@ -329,8 +329,15 @@ export function Sidebar ({
     return checkLocalAzureConnected(contextName, true);
   };
 
+  // Only an uploaded kubeconfig that actually contains a kubelogin/az-backed context needs
+  // this check at all - a plain cert/token/basic-auth kubeconfig should never trigger it or
+  // the Azure sign-in panel it opens on failure.
+  const localKubeconfigsNeedingAzureAuth = localKubeconfigs.filter(
+    (kubeconfig) => (kubeconfig.azureAuthContexts?.length ?? 0) > 0,
+  );
+
   useEffect(() => {
-    if (localKubeconfigs.length === 0) {
+    if (localKubeconfigsNeedingAzureAuth.length === 0) {
       setLocalAzureAuthenticated(false);
       setLocalAzureAuthStatus('idle');
       setLocalAzureRetryCount(0);
@@ -339,15 +346,15 @@ export function Sidebar ({
 
     if (localAzureAuthenticated || localAzureAuthStatus !== 'idle') return;
 
-    const preferredContext = localKubeconfigs[0]?.contexts[0];
+    const preferredContext = localKubeconfigsNeedingAzureAuth[0]?.azureAuthContexts[0];
     void checkLocalAzureConnected(preferredContext, true);
-  }, [checkLocalAzureConnected, localAzureAuthenticated, localAzureAuthStatus, localKubeconfigs]);
+  }, [checkLocalAzureConnected, localAzureAuthenticated, localAzureAuthStatus, localKubeconfigsNeedingAzureAuth]);
 
   useEffect(() => {
-    if (!azureRefreshToken || localAzureAuthenticated || localKubeconfigs.length === 0) return;
-    const preferredContext = localKubeconfigs[0]?.contexts[0];
+    if (!azureRefreshToken || localAzureAuthenticated || localKubeconfigsNeedingAzureAuth.length === 0) return;
+    const preferredContext = localKubeconfigsNeedingAzureAuth[0]?.azureAuthContexts[0];
     void checkLocalAzureConnected(preferredContext, false);
-  }, [azureRefreshToken, checkLocalAzureConnected, localAzureAuthenticated, localKubeconfigs]);
+  }, [azureRefreshToken, checkLocalAzureConnected, localAzureAuthenticated, localKubeconfigsNeedingAzureAuth]);
 
   // useEffect(() => {
   //   if (localKubeconfigs.length === 0) {
@@ -557,7 +564,12 @@ export function Sidebar ({
     const contextExpanded = !isGroupCollapsed(`${nodeKeyPrefix}:${ctx.name}`);
     const isStarred = !!resolvedSource && !!starredContexts[getStarKey(resolvedSource, ctx.name)];
     const isLocalContextNode = resolvedSource === 'local';
-    const canExpandLocalContextNode = !isLocalContextNode || ctx.name === 'minikube' || localAzureAuthenticated;
+    // Only local contexts whose kubeconfig user entry actually runs kubelogin/az (per the
+    // backend's ctx.requiresAzureAuth, mirroring authGuard.ts) need a signed-in Azure
+    // session first - a plain cert/token/basic-auth local context never does, regardless
+    // of whether the "local scope" Azure sign-in below has ever been completed.
+    const needsLocalAzureAuth = isLocalContextNode && ctx.name !== 'minikube' && !!ctx.requiresAzureAuth;
+    const canExpandLocalContextNode = !needsLocalAzureAuth || localAzureAuthenticated;
     // Distinguishes this rendered node from any other node that happens to share
     // the same context name (e.g. a starred entry vs. its local-kubeconfig source).
     const nodeIdentityKey = `${nodeKeyPrefix}:${resolvedSource ?? 'unknown'}:${ctx.name}`;
@@ -572,7 +584,7 @@ export function Sidebar ({
           className={`nav-item context-item ${isSelectedContext ? 'active' : ''}`}
           onClick={async () => {
             onOpenExplorer();
-            if (isLocalContextNode && ctx.name !== 'minikube') {
+            if (needsLocalAzureAuth) {
               const ok = await ensureLocalAzureConnected(ctx.name);
               if (!ok) return;
             }
@@ -599,7 +611,7 @@ export function Sidebar ({
                   event.stopPropagation();
                   const key = `${nodeKeyPrefix}:${ctx.name}`;
                   const willExpand = isGroupCollapsed(key);
-                  if (willExpand && isLocalContextNode && ctx.name !== 'minikube') {
+                  if (willExpand && needsLocalAzureAuth) {
                     const ok = await ensureLocalAzureConnected(ctx.name);
                     if (!ok) return;
                   }
@@ -650,7 +662,7 @@ export function Sidebar ({
                           }
                           return;
                         }
-                        if (isLocalContextNode) {
+                        if (needsLocalAzureAuth) {
                           const ok = await ensureLocalAzureConnected(ctx.name);
                           if (!ok) return;
                         }

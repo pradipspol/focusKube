@@ -3,6 +3,7 @@ import type { SessionScope } from '../auth/session.js';
 import type { DesktopContextSourceDoc, DesktopLocalKubeconfigDoc } from '../runtime/desktopStore.js';
 import { AsyncRefreshCache } from '../util/asyncCache.js';
 import { badRequest } from '../util/httpError.js';
+import { userRequiresAzureAuth } from '../kube/execAuthDetection.js';
 
 export type ContextEntry = {
   ctx: {
@@ -11,6 +12,7 @@ export type ContextEntry = {
     user: string;
     namespace?: string;
     active: boolean;
+    requiresAzureAuth?: boolean;
   };
   scope: SessionScope;
 };
@@ -24,6 +26,7 @@ export type ContextsPayload = {
     namespace?: string;
     active: boolean;
     connected?: boolean;
+    requiresAzureAuth?: boolean;
     source?: {
       provider: 'aks' | 'eks' | 'local' | 'minikube';
       subscriptionId?: string;
@@ -38,6 +41,10 @@ export type ContextsPayload = {
     id: string;
     name: string;
     contexts: string[];
+    /** Subset of `contexts` whose kubeconfig user entry authenticates via kubelogin/az exec,
+     * i.e. actually needs a signed-in Azure session before they can be listed/connected -
+     * as opposed to a plain cert/token/basic-auth context, which needs no such gate. */
+    azureAuthContexts: string[];
     createdAt: string;
     updatedAt: string;
   }>;
@@ -70,9 +77,30 @@ export class ContextsService {
       id: doc.id,
       name: doc.name,
       contexts: doc.contexts,
+      azureAuthContexts: this.azureAuthContextNames(doc.content, doc.contexts),
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
     }));
+  }
+
+  /** Which of `contextNames` (from an uploaded local kubeconfig) actually need a signed-in
+   * Azure session - i.e. their user entry runs kubelogin/az, not a static credential. A
+   * kubeconfig that fails to parse is treated as needing none, since the "connect" flow
+   * that consumes this list will surface the real parse error itself. */
+  private azureAuthContextNames(content: string, contextNames: string[]): string[] {
+    try {
+      const kc = new k8s.KubeConfig();
+      kc.loadFromString(content);
+      const contextsByName = new Map(kc.getContexts().map((ctx) => [ctx.name, ctx]));
+      return contextNames.filter((name) => {
+        const ctx = contextsByName.get(name);
+        if (!ctx) return false;
+        const user = kc.users.find((u) => u.name === ctx.user);
+        return userRequiresAzureAuth(user);
+      });
+    } catch {
+      return [];
+    }
   }
 
   sourceForEntry(scope: SessionScope, contextName: string, sourceDoc?: DesktopContextSourceDoc): ContextsPayload['contexts'][number]['source'] {

@@ -5,6 +5,7 @@ export interface KubeContext {
   namespace?: string;
   active: boolean;
   connected?: boolean;
+  requiresAzureAuth?: boolean;
   source?: {
     provider: 'aks' | 'eks' | 'local' | 'minikube';
     subscriptionId?: string;
@@ -26,6 +27,9 @@ export interface LocalKubeconfigSummary {
   id: string;
   name: string;
   contexts: string[];
+  /** Subset of `contexts` that authenticate via kubelogin/az exec and so need a signed-in
+   * Azure session before they can be listed/connected. */
+  azureAuthContexts: string[];
   createdAt: string;
   updatedAt: string;
 }

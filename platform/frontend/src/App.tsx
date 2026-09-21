@@ -841,7 +841,12 @@ export default function App() {
     const resolvedOriginSource = originSource ?? (originContext
       ? (contextsQuery.data?.contexts.find((ctx) => ctx.name === originContext)?.source?.provider as 'aks' | 'eks' | 'local' | 'minikube' | undefined)
       : undefined);
-    const resolvedAzureSource = view.type === 'azure' ? (azureSource ?? 'cloud') : undefined;
+    // A caller opening the Azure panel for a local-kubeconfig context (e.g. Sidebar's
+    // auto-open-on-failed-check path) only ever passes originSource, not azureSource
+    // explicitly - without this fallback every such open silently landed on 'cloud' scope
+    // instead of 'local', showing the unrelated AKS multi-account login as if it satisfied
+    // the local-scope check. Mirrors the same fallback loadStoredTabs() already applies.
+    const resolvedAzureSource = view.type === 'azure' ? (azureSource ?? (resolvedOriginSource === 'local' ? 'local' : 'cloud')) : undefined;
     const id = viewId(view, originContext, resolvedOriginSource, originKubeconfigId, resolvedAzureSource);
     setTabs((current) => {
       const activeTab = current.find((tab) => tab.id === activeTabId);

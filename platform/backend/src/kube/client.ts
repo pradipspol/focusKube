@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { HttpError, notFound } from '../util/httpError.js';
 import { logInfo, logWarn, logError } from '../util/logger.js';
 import { extractServerId, extractTenantId, getCachedKubeloginToken, getContextPin, pinTenantId, recordContextServerId } from './kubeloginCache.js';
+import { userRequiresAzureAuth } from './execAuthDetection.js';
 
 interface KubeClientOptions {
   kubeconfigPath?: string;
@@ -120,6 +121,7 @@ class KubeManager {
         user: ctx.user,
         namespace: ctx.namespace,
         active: !!selected && ctx.name === selected,
+        requiresAzureAuth: userRequiresAzureAuth(kc.users.find((u) => u.name === ctx.user)),
       }));
   }
 
