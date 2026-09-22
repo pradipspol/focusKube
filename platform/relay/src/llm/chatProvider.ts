@@ -22,7 +22,7 @@ export type ChatTool = Anthropic.Tool;
  * docs show it inline as `base_url`) — idempotent either way, so a pasted-in full v1 URL
  * doesn't get /openai/v1/ appended a second time.
  */
-function azureOpenAiV1BaseUrl(endpoint: string): string {
+export function azureOpenAiV1BaseUrl(endpoint: string): string {
   const trimmed = endpoint.replace(/\/+$/, '');
   if (/\/openai\/v1$/i.test(trimmed)) {
     return `${trimmed}/`;

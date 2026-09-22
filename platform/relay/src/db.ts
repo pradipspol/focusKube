@@ -200,3 +200,25 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_licenses_subscription ON licenses(stripe
 db.prepare(
   `UPDATE licenses SET quota_granted = quota_remaining WHERE quota_granted = 0 AND quota_remaining > 0`,
 ).run();
+
+// k8s-docs knowledge base (see docs/ingest.ts, docs/search.ts) — chunked official Kubernetes
+// documentation with embeddings, used by the AI assistant's search_k8s_docs tool. `id` is a
+// deterministic hash of (url, chunk index), so re-running ingestion upserts the same rows
+// instead of duplicating them; `content_hash` lets ingestion skip the (paid) embedding call
+// for a chunk whose text hasn't changed since last time. `embedding` is a JSON-encoded float
+// array — there are only ever a few thousand rows at this scale, so a brute-force cosine scan
+// in JS (see docs/search.ts) is simpler than adding a vector-search extension and fast enough.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS doc_chunks (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    heading TEXT,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_doc_chunks_url ON doc_chunks(url);
+`);

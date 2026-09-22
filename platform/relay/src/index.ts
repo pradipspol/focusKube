@@ -13,6 +13,7 @@ import { orgRouter } from './org/routes.js';
 import { devRouter } from './dev/routes.js';
 import { webRouter } from './web/pages.js';
 import { isStripeDemoMode, simulateCheckoutCompleted, getSimulatedSession } from './billing/stripe-sim.js';
+import { searchDocs } from './docs/search.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_MAX_TOKENS = 12048;
@@ -49,7 +50,8 @@ function buildSystemPrompt(context: unknown): string {
     'Help the user diagnose issues with the resource they currently have focused: explain what is wrong and cite specific evidence from the context below (status fields, events, related pods) rather than generic Kubernetes advice. You can also inspect and manage Helm releases — nothing outside the Kubernetes/Helm scope.',
     '',
     'Tools — call them yourself, directly, whenever they would help. Never ask the user "should I proceed?" or "do you want me to run this?" in your own reply instead of calling a tool: that produces plain text with no way for the user to actually respond, and nothing will happen.',
-    '- Read tools (list_resources, get_resource, describe_resource, get_logs, get_pod_metrics, get_node_metrics, get_deployment_history, get_events, helm_list_releases, helm_get_release_values, helm_get_release_manifest, helm_get_release_history, helm_search_charts) run immediately with no approval step of any kind. Call them the moment the context JSON below does not already answer the question, and cite what they return rather than guessing.',
+    '- Read tools (list_resources, get_resource, describe_resource, get_logs, get_pod_metrics, get_node_metrics, get_deployment_history, get_events, helm_list_releases, helm_get_release_values, helm_get_release_manifest, helm_get_release_history, helm_search_charts, search_k8s_docs) run immediately with no approval step of any kind. Call them the moment the context JSON below does not already answer the question, and cite what they return rather than guessing.',
+    '- search_k8s_docs is different from the rest: it looks up official Kubernetes documentation, not this cluster\'s live state. Reach for it for general-concept questions ("what does this status condition mean", "how does X actually work") or to back up a claim about Kubernetes\' own behavior with a citation — not as a substitute for the live-state tools above when the question is about a specific resource in this cluster. If it returns nothing useful, say the docs lookup didn\'t turn up anything relevant rather than treating an empty result as confirmation of anything.',
     '- Write tools (scale_deployment, restart_deployment, rollback_deployment, apply_manifest, delete_resource, helm_install, helm_upgrade, helm_rollback, helm_uninstall) are never executed by you. The instant you call one, the system itself shows the user an approval card (Approve / Reject / Allow for this session) — that IS the permission step, so call the tool as soon as you have decided a change is warranted rather than asking about it first. You will get the real outcome back afterward as a tool result.',
     '- Never tell the user a change has been made until a tool result confirms it. If the user rejects a proposal, acknowledge that and do not repeat the same proposal without a good reason.',
     '- A tool result is evidence for you to interpret, not the answer itself. Once you have called every tool you need, always finish with your own written explanation in plain language — what the evidence means, and why (e.g. quote the specific log line or event that shows the cause). Never end a turn on a tool call alone and let the raw output stand in for your answer; the user is asking you to reason about it, not to see it.',
@@ -228,6 +230,30 @@ app.post('/v1/ai/chat', async (req, res) => {
   }
 });
 
+// POST /v1/ai/docs/search — backs the search_k8s_docs AI tool (platform/backend's
+// aiToolExecutor.ts). Not itself a chat turn, so it does NOT go through reserveQuota — the
+// quota model bills per relay round-trip that actually talks to an LLM chat model; a doc
+// lookup is a cheap embeddings call, not that.
+app.post('/v1/ai/docs/search', async (req, res) => {
+  const key = licenseFromAuthHeader(req.headers.authorization);
+  const record = key ? lookupLicense(key) : undefined;
+  if (!record || record.status !== 'active') {
+    return res.status(403).json({ error: 'License invalid or inactive' });
+  }
+
+  const { query, k } = req.body as { query?: unknown; k?: unknown };
+  if (typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ error: 'query is required' });
+  }
+
+  try {
+    const results = await searchDocs(query, typeof k === 'number' ? k : 5);
+    res.json({ results });
+  } catch (err) {
+    res.status(503).json({ error: err instanceof Error ? err.message : 'Doc search unavailable' });
+  }
+});
+
 const server = http.createServer(app);
 server.listen(config.port, () => {
   console.log(`focusKube AI relay listening on :${config.port}`);
@@ -241,5 +267,11 @@ server.listen(config.port, () => {
     }
   } else if (!process.env.ANTHROPIC_API_KEY) {
     console.warn('ANTHROPIC_API_KEY is not set — /v1/ai/chat will fail until it is.');
+  }
+  if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.embeddingsDeployment) {
+    console.warn(
+      'AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT (or API_KEY/ENDPOINT) is not set — the k8s-docs knowledge base ' +
+        '(search_k8s_docs tool, npm run ingest:k8s-docs) is unavailable until it is.',
+    );
   }
 });

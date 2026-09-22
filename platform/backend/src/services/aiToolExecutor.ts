@@ -15,6 +15,7 @@ import { describeK8sError } from '../util/k8sError.js';
 import { buildResourceDetail, filterAndSortEvents, pluralForKind, type HelmExecCtx } from './aiContextService.js';
 import { workloadsService } from './workloadsService.js';
 import { resourcesService } from './resourcesService.js';
+import { aiService } from './aiService.js';
 import * as helmService from './helmService.js';
 
 const HELM_ACCESS_UNAVAILABLE = 'Helm access is not currently available for this connection.';
@@ -320,6 +321,18 @@ export const READ_TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: 'search_k8s_docs',
+    description:
+      "Semantic search over official Kubernetes documentation (kubernetes.io) — use this when a question is about how Kubernetes itself behaves in general (e.g. what a status condition or restart policy actually means, why the CFS quota mechanism throttles CPU) rather than about this specific cluster's live state. Cite the returned url when you use a result. Returns nothing useful if the knowledge base hasn't been set up — treat an empty/error result as 'unavailable', not as 'the docs don't cover this'.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A natural-language question or topic, e.g. "why does a pod stay in ContainerCreating".' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -722,6 +735,12 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
         if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
         const charts = await helmService.searchCharts(ctx.helm.session, ctx.helm.scoped);
         return okList(charts);
+      }
+      case 'search_k8s_docs': {
+        const { query } = input ?? {};
+        if (!query) throw badRequest('query is required');
+        const results = await aiService.searchDocs(String(query));
+        return okList(results);
       }
       default:
         return { output: `Unknown tool: ${name}`, isError: true };

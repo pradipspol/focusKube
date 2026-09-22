@@ -165,6 +165,31 @@ export class AiService {
       });
     }
   }
+
+  /** Backs the search_k8s_docs AI tool (aiToolExecutor.ts) — a plain JSON round-trip to the
+   * relay's k8s-docs knowledge base, not a chat turn (no streaming, no quota reservation on
+   * the relay side; see index.ts's /v1/ai/docs/search). */
+  async searchDocs(query: string, k = 5): Promise<Array<{ url: string; title: string; heading: string | null; content: string; score: number }>> {
+    const licenseKey = await getLicenseKey();
+    if (!licenseKey) throw new Error('No license key configured');
+
+    const response = await fetch(`${config.aiRelayBaseUrl}/v1/ai/docs/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${licenseKey}`,
+      },
+      body: JSON.stringify({ query, k }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Doc search failed: ${response.status} ${response.statusText}${errorText ? ` — ${errorText.slice(0, 200)}` : ''}`);
+    }
+
+    const body = (await response.json()) as { results?: Array<{ url: string; title: string; heading: string | null; content: string; score: number }> };
+    return body.results ?? [];
+  }
 }
 
 export const aiService = new AiService();

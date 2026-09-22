@@ -100,5 +100,10 @@ export const config = {
     endpoint: process.env.AZURE_OPENAI_ENDPOINT ?? '',
     // Azure addresses models by deployment name, not the underlying model name.
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? '',
+    // A separate embeddings-model deployment (e.g. text-embedding-3-small) in the SAME Azure
+    // OpenAI resource — used only by the k8s-docs knowledge base (llm/embeddings.ts), never
+    // by chat. Independent of `deployment`/`aiProvider`: embeddings still work here even if
+    // AI_PROVIDER is 'anthropic' for chat, as long as apiKey/endpoint/this are set.
+    embeddingsDeployment: process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT ?? '',
   },
 };
