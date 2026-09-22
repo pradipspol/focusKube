@@ -1043,19 +1043,31 @@ a {
   padding: 0 2px;
 }
 .ai-message-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: var(--fs-xs);
   cursor: pointer;
-  padding: 1px 2px;
+  padding: 4px;
 }
 .ai-message-action-button:hover {
   color: var(--text);
-  text-decoration: underline;
+  background: var(--surface-raised);
 }
 .ai-message-action-primary {
   color: var(--accent);
+}
+.ai-action-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+.ai-action-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* GFM markdown prose rendered by react-markdown — headers, lists, bold/italic, tables, etc. */

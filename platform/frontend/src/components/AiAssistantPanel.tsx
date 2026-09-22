@@ -13,6 +13,10 @@ import {
 } from '../api/aiAssistantApi';
 import { AiEntitlementGate } from './AiEntitlementGate';
 import { uiText } from '../text';
+import copyIconSvg from './icons/copy.svg?raw';
+import checkIconSvg from './icons/check.svg?raw';
+import editIconSvg from './icons/edit.svg?raw';
+import cancelIconSvg from './icons/cancel.svg?raw';
 
 interface Props {
   scope: Scope;
@@ -121,6 +125,29 @@ function ExportIcon() {
       <path d="M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
     </svg>
   );
+}
+
+// Raw-imported so the icon markup lives in its own .svg file instead of inline JSX; rendered
+// via dangerouslySetInnerHTML (safe here — content is bundled at build time, not user input)
+// to keep it a true inline <svg> in the DOM so `stroke="currentColor"` tracks the button's color.
+function InlineIcon({ svg }: { svg: string }) {
+  return <span className="ai-action-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+function CopyIcon() {
+  return <InlineIcon svg={copyIconSvg} />;
+}
+
+function CheckIcon() {
+  return <InlineIcon svg={checkIconSvg} />;
+}
+
+function EditIcon() {
+  return <InlineIcon svg={editIconSvg} />;
+}
+
+function CancelIcon() {
+  return <InlineIcon svg={cancelIconSvg} />;
 }
 
 let nextMessageId = 1;
@@ -299,9 +326,10 @@ function CopyButton({ text }: { text: string }) {
         // clipboard unavailable — nothing more we can do
       });
   };
+  const label = copied ? uiText.aiAssistant.copied : uiText.aiAssistant.copy;
   return (
-    <button type="button" className="ai-message-action-button" onClick={handleCopy}>
-      {copied ? uiText.aiAssistant.copied : uiText.aiAssistant.copy}
+    <button type="button" className="ai-message-action-button" onClick={handleCopy} aria-label={label} title={label}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
     </button>
   );
 }
@@ -871,11 +899,23 @@ function ChatMessages({
                   autoFocus
                 />
                 <div className="ai-message-actions">
-                  <button type="button" className="ai-message-action-button ai-message-action-primary" onClick={onEditSave}>
-                    {uiText.aiAssistant.save}
+                  <button
+                    type="button"
+                    className="ai-message-action-button ai-message-action-primary"
+                    onClick={onEditSave}
+                    aria-label={uiText.aiAssistant.save}
+                    title={uiText.aiAssistant.save}
+                  >
+                    <CheckIcon />
                   </button>
-                  <button type="button" className="ai-message-action-button" onClick={onEditCancel}>
-                    {uiText.aiAssistant.cancel}
+                  <button
+                    type="button"
+                    className="ai-message-action-button"
+                    onClick={onEditCancel}
+                    aria-label={uiText.aiAssistant.cancel}
+                    title={uiText.aiAssistant.cancel}
+                  >
+                    <CancelIcon />
                   </button>
                 </div>
               </div>
@@ -892,8 +932,14 @@ function ChatMessages({
                 <div className="ai-message-actions">
                   <CopyButton text={message.content} />
                   {message.role === 'user' && canEdit && (
-                    <button type="button" className="ai-message-action-button" onClick={() => onEditStart(message.id, message.content)}>
-                      {uiText.aiAssistant.edit}
+                    <button
+                      type="button"
+                      className="ai-message-action-button"
+                      onClick={() => onEditStart(message.id, message.content)}
+                      aria-label={uiText.aiAssistant.edit}
+                      title={uiText.aiAssistant.edit}
+                    >
+                      <EditIcon />
                     </button>
                   )}
                 </div>
