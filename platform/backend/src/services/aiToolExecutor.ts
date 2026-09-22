@@ -14,6 +14,7 @@ import { badRequest } from '../util/httpError.js';
 import { describeK8sError } from '../util/k8sError.js';
 import { buildResourceDetail, filterAndSortEvents, pluralForKind, type HelmExecCtx } from './aiContextService.js';
 import { workloadsService } from './workloadsService.js';
+import { resourcesService } from './resourcesService.js';
 import * as helmService from './helmService.js';
 
 const HELM_ACCESS_UNAVAILABLE = 'Helm access is not currently available for this connection.';
@@ -68,6 +69,31 @@ function capOutput(text: string): string {
 
 function ok(text: string): ToolResult {
   return { output: capOutput(text), isError: false };
+}
+
+// capOutput's char-level slice is fine for prose (logs) and safe to fall back to raw text for
+// a single object, but for a JSON *array* — every list-shaped tool result — slicing mid-item
+// produces invalid JSON, which silently loses the table view on the frontend (ToolOutputViewer
+// can no longer JSON.parse it) and shows the user a truncated JSON dump instead. This trims
+// whole items off the end instead, so the result is always valid, always-tabular JSON, with a
+// final synthetic row noting how many items were left out.
+function okList(items: unknown[]): ToolResult {
+  const full = JSON.stringify(items, null, 2);
+  if (full.length <= MAX_TOOL_OUTPUT_CHARS) return { output: full, isError: false };
+
+  const noteFor = (omitted: number) => ({
+    name: `… ${omitted} more item(s) truncated — narrow with a namespace, or ask about a specific resource`,
+  });
+  const fits = (kept: number) => JSON.stringify([...items.slice(0, kept), noteFor(items.length - kept)], null, 2).length <= MAX_TOOL_OUTPUT_CHARS;
+
+  let lo = 0;
+  let hi = items.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fits(mid)) lo = mid;
+    else hi = mid - 1;
+  }
+  return { output: JSON.stringify([...items.slice(0, lo), noteFor(items.length - lo)], null, 2), isError: false };
 }
 
 async function fail(err: unknown): Promise<ToolResult> {
@@ -174,7 +200,8 @@ export const READ_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'get_logs',
-    description: 'Tail logs for a Pod, or for all Pods behind a Deployment. Provide exactly one of podName or deploymentName.',
+    description:
+      'Tail logs for a Pod, or for all Pods behind a Deployment. Provide exactly one of podName or deploymentName. For a crashing/restarting container (CrashLoopBackOff, restartCount > 0), set previous:true to see the log from BEFORE the crash — the current container\'s logs alone usually only show the fresh, healthy startup.',
     input_schema: {
       type: 'object',
       properties: {
@@ -183,8 +210,46 @@ export const READ_TOOLS: ToolDefinition[] = [
         namespace: { type: 'string', description: 'Namespace.' },
         container: { type: 'string', description: 'Container name, if the Pod has more than one.' },
         tailLines: { type: 'number', description: 'Number of lines to fetch from the end of the log (default 200, max 1000).' },
+        previous: { type: 'boolean', description: "Fetch the previous (pre-crash/pre-restart) container instance's log instead of the current one." },
       },
       required: ['namespace'],
+    },
+  },
+  {
+    name: 'get_pod_metrics',
+    description:
+      "Current CPU/memory usage for a Pod, per container, from the cluster's metrics-server (kubectl top pod equivalent). Use this alongside get_resource/describe_resource (which show requests/limits, not usage) whenever the user asks about CPU throttling, OOM risk, or right-sizing — compare actual usage to the configured request/limit rather than guessing.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        podName: { type: 'string', description: 'Pod name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['podName', 'namespace'],
+    },
+  },
+  {
+    name: 'get_node_metrics',
+    description:
+      "Current CPU/memory usage per node (kubectl top nodes equivalent), from the cluster's metrics-server. Omit nodeName to list every node. Use this to tell node-level pressure (many pods competing for the same node's capacity, node under memory pressure causing evictions) apart from a single pod's own request/limit being too small — get_pod_metrics alone can't distinguish these.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        nodeName: { type: 'string', description: 'A specific node name. Omit to list metrics for all nodes.' },
+      },
+    },
+  },
+  {
+    name: 'get_deployment_history',
+    description:
+      "A Deployment's rollout revision history (kubectl rollout history equivalent) — each revision's ReplicaSet name, when it was created, and its container image(s). Use this before proposing rollback_deployment so both you and the user know which revision (and image) you'd actually be reverting to, and to check whether a recent image change lines up with when a problem started.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Deployment name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+      },
+      required: ['name', 'namespace'],
     },
   },
   {
@@ -287,6 +352,20 @@ export const WRITE_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'rollback_deployment',
+    description:
+      "Propose rolling back a Deployment to an earlier ReplicaSet revision (kubectl rollout undo equivalent — call get_deployment_history first to see available revisions). Requires the user's explicit approval before it runs; they will see a before/after container image diff.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Deployment name.' },
+        namespace: { type: 'string', description: 'Namespace.' },
+        revision: { type: 'number', description: 'Revision number to roll back to (see get_deployment_history). Omit to roll back to the immediately previous revision.' },
+      },
+      required: ['name', 'namespace'],
+    },
+  },
+  {
     name: 'apply_manifest',
     description:
       'Propose creating or updating (kubectl-apply-equivalent) a resource from a full manifest. Requires the user\'s explicit approval before it runs; they will see a before/after diff.',
@@ -381,7 +460,7 @@ export function isWriteTool(name: string): boolean {
 // Destructive tools that need the `delete` capability specifically, not just `write` — the
 // rest of WRITE_TOOLS only needs `write`. Mirrors delete_resource's own tier: a `rwonly` role
 // has `write` but not `delete`.
-const DELETE_TIER_TOOL_NAMES = new Set(['delete_resource', 'helm_rollback', 'helm_uninstall']);
+const DELETE_TIER_TOOL_NAMES = new Set(['delete_resource', 'rollback_deployment', 'helm_rollback', 'helm_uninstall']);
 
 /** Used both to filter the catalog above and to re-check a write tool's required capability at
  * action_decision time (ws/streams.ts) — a long-lived socket can outlive a role change. */
@@ -409,6 +488,10 @@ export function describeProposedAction(name: string, input: any): string {
       return `Scale deployment "${input?.name}" in namespace "${input?.namespace}" to ${input?.replicas} replica(s)`;
     case 'restart_deployment':
       return `Restart deployment "${input?.name}" in namespace "${input?.namespace}"`;
+    case 'rollback_deployment': {
+      const rev = input?.revision ? ` to revision ${input.revision}` : ' to the previous revision';
+      return `Roll back deployment "${input?.name}" in namespace "${input?.namespace}"${rev}`;
+    }
     case 'apply_manifest': {
       const manifest = input?.manifest ?? {};
       const ns = manifest.metadata?.namespace ? ` in namespace "${manifest.metadata.namespace}"` : '';
@@ -455,6 +538,34 @@ export async function prepareActionProposal(name: string, input: any, ctx: ToolE
     } catch {
       // Doesn't exist yet (or couldn't be fetched) — apply_manifest will create it.
       return { summary, diff: { after } };
+    }
+  }
+
+  if (name === 'rollback_deployment') {
+    try {
+      const depName = String(input?.name ?? '');
+      const namespace = String(input?.namespace ?? '');
+      const [current, history] = await Promise.all([
+        getResource('deployments', depName, ctx.context, namespace, ctx.kubeOptions),
+        workloadsService.deploymentHistory(depName, namespace, ctx.context, ctx.kubeOptions),
+      ]);
+      const revisions = history.revisions;
+      const target = input?.revision
+        ? revisions.find((r: any) => r.revision === input.revision)
+        : revisions[revisions.length - 2];
+      if (!target) return { summary };
+      const before = JSON.stringify(
+        { images: (current as any)?.spec?.template?.spec?.containers?.map((c: any) => c.image) ?? [] },
+        null,
+        2,
+      );
+      const after = JSON.stringify({ revision: target.revision, images: target.images }, null, 2);
+      return { summary, diff: { before, after } };
+    } catch {
+      // The target revision may no longer exist (its ReplicaSet was garbage-collected), or
+      // history couldn't be fetched — the approval card still shows the summary; the real
+      // error (e.g. "No previous revision") surfaces once the tool actually runs.
+      return { summary };
     }
   }
 
@@ -507,7 +618,7 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
         const shaped = input?.full
           ? items.map((item: any) => stripReadNoise(redactIfSensitive(item, String(kind))))
           : items.map((item: any) => summarizeForList(item, String(kind)));
-        return ok(JSON.stringify(shaped, null, 2));
+        return okList(shaped);
       }
       case 'get_resource': {
         const { kind, name: resourceName, namespace } = input ?? {};
@@ -530,15 +641,43 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
         return ok(JSON.stringify(detail, null, 2));
       }
       case 'get_logs': {
-        const { podName, deploymentName, namespace, container } = input ?? {};
+        const { podName, deploymentName, namespace, container, previous } = input ?? {};
         if (!namespace) throw badRequest('namespace is required');
         if (!podName && !deploymentName) throw badRequest('podName or deploymentName is required');
         const tailLines = clampTailLines(input?.tailLines);
-        const logOpts = { tailLines, context: ctx.context, kubeOptions: ctx.kubeOptions };
+        const logOpts = { tailLines, context: ctx.context, kubeOptions: ctx.kubeOptions, previous: !!previous };
         const result = podName
           ? await fetchPodLogsOnce(String(namespace), String(podName), container ? String(container) : undefined, logOpts)
           : await fetchDeploymentLogsOnce(String(namespace), String(deploymentName), container ? String(container) : undefined, logOpts);
         return ok(result.text + (result.truncated ? '\n… (truncated)' : ''));
+      }
+      case 'get_pod_metrics': {
+        const { podName, namespace } = input ?? {};
+        if (!podName || !namespace) throw badRequest('podName and namespace are required');
+        // ctx.kubeOptions.kubeconfigPath is always populated here (resolveSessionKubeAccess
+        // always sets it) — just typed loosely as optional for callers that don't have a
+        // session yet, so resourcesService's stricter KubeOptions needs it asserted.
+        const snapshot = await resourcesService.getPodMetrics(String(podName), String(namespace), ctx.context, {
+          kubeconfigPath: ctx.kubeOptions.kubeconfigPath!,
+          fallbackContext: ctx.kubeOptions.fallbackContext ?? null,
+          azureConfigDir: ctx.kubeOptions.azureConfigDir,
+        });
+        return ok(JSON.stringify(snapshot, null, 2));
+      }
+      case 'get_node_metrics': {
+        const nodeName = input?.nodeName ? String(input.nodeName) : undefined;
+        const snapshots = await resourcesService.getNodeMetrics(nodeName, ctx.context, {
+          kubeconfigPath: ctx.kubeOptions.kubeconfigPath!,
+          fallbackContext: ctx.kubeOptions.fallbackContext ?? null,
+          azureConfigDir: ctx.kubeOptions.azureConfigDir,
+        });
+        return okList(snapshots);
+      }
+      case 'get_deployment_history': {
+        const { name: depName, namespace } = input ?? {};
+        if (!depName || !namespace) throw badRequest('name and namespace are required');
+        const history = await workloadsService.deploymentHistory(String(depName), String(namespace), ctx.context, ctx.kubeOptions);
+        return okList(history.revisions);
       }
       case 'get_events': {
         const { namespace, kind, name: resourceName } = input ?? {};
@@ -550,13 +689,13 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
           filter,
           clampLimit(input?.limit),
         );
-        return ok(JSON.stringify(events ?? [], null, 2));
+        return okList(events ?? []);
       }
       case 'helm_list_releases': {
         if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
         const namespace = input?.namespace ? String(input.namespace) : undefined;
         const releases = await helmService.listReleases(ctx.helm.session, ctx.helm.scoped, namespace);
-        return ok(JSON.stringify(releases, null, 2));
+        return okList(releases);
       }
       case 'helm_get_release_values': {
         if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
@@ -577,12 +716,12 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
         const { name: releaseName, namespace } = input ?? {};
         if (!releaseName || !namespace) throw badRequest('name and namespace are required');
         const history = await helmService.getReleaseHistory(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
-        return ok(JSON.stringify(history, null, 2));
+        return okList(history);
       }
       case 'helm_search_charts': {
         if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
         const charts = await helmService.searchCharts(ctx.helm.session, ctx.helm.scoped);
-        return ok(JSON.stringify(charts, null, 2));
+        return okList(charts);
       }
       default:
         return { output: `Unknown tool: ${name}`, isError: true };
@@ -610,6 +749,18 @@ export async function executeWriteTool(name: string, input: any, ctx: ToolExecCt
         if (!depName || !namespace) throw badRequest('name and namespace are required');
         await workloadsService.restartDeployment(String(depName), String(namespace), ctx.context, ctx.kubeOptions);
         return ok(`Restarted deployment "${depName}" in namespace "${namespace}".`);
+      }
+      case 'rollback_deployment': {
+        const { name: depName, namespace, revision } = input ?? {};
+        if (!depName || !namespace) throw badRequest('name and namespace are required');
+        const result = await workloadsService.rollbackDeployment(
+          String(depName),
+          String(namespace),
+          ctx.context,
+          typeof revision === 'number' ? revision : undefined,
+          ctx.kubeOptions,
+        );
+        return ok(`Rolled back deployment "${depName}" in namespace "${namespace}" to revision ${result.rolledBackTo}.`);
       }
       case 'apply_manifest': {
         const manifest = input?.manifest;

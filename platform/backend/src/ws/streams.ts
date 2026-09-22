@@ -948,7 +948,12 @@ function aiChatParams(req: any) {
 // prompts the model to call it again. Deliberately NOT shared across an action_decision's
 // resumption: a write-tool round only ever continues after a human clicks Approve/Reject,
 // which is its own natural rate limit.
-const MAX_TOOL_ROUNDS = 6;
+// A real multi-step diagnosis (e.g. "why is this deployment's CPU throttling" — resolve the
+// deployment, list its pods, pull get_pod_metrics, check get_events, then explain) easily uses
+// 4-5 rounds before the model ever gets to its explanation; 6 left no headroom at all. Raised
+// to give that room, and see the forced-final-round fallback below for when even that isn't
+// enough — it still ends in a real (partial) diagnosis rather than a bare error.
+const MAX_TOOL_ROUNDS = 10;
 
 /** One relay round-trip's `tool_use` blocks — Claude can (and does) request several tools in
  * parallel within a single turn, e.g. reading two pods' logs at once. The Anthropic API
@@ -1047,10 +1052,33 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       // Set once we've already nudged this turn (below) — bounds it to a single retry so a
       // model that keeps coming back empty can't loop forever instead of ending the turn.
       let nudgedForExplanation = false;
+      // Set once the round budget is hit and we've forced one no-tools round to get a real
+      // answer out of whatever evidence was already gathered — see below.
+      let forcedFinalRound = false;
       for (let round = 0; ; round++) {
         if (round >= MAX_TOOL_ROUNDS) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Too many tool calls in one turn — try rephrasing.' }));
-          return;
+          if (forcedFinalRound) {
+            // Already gave it one forced, tool-less round (below) and it still didn't produce a
+            // real answer — genuinely give up rather than loop forever.
+            ws.send(JSON.stringify({ type: 'error', message: 'Too many tool calls in one turn — try rephrasing.' }));
+            return;
+          }
+          // Rather than discard every tool result gathered so far and hand back a bare error,
+          // force one last round with no tools offered (so the model literally cannot ask for
+          // another one) and an explicit instruction to answer from what it already has. This
+          // is what actually gets the user a diagnosis instead of nothing when a question needs
+          // more lookups than the round budget allows.
+          forcedFinalRound = true;
+          const lastMessage = messages[messages.length - 1];
+          if (lastMessage && lastMessage.role === 'user' && Array.isArray(lastMessage.content)) {
+            lastMessage.content = [
+              ...lastMessage.content,
+              {
+                type: 'text',
+                text: "You've reached the tool-call limit for this turn. Do not call any more tools — answer now using only the evidence already gathered above, and say plainly which parts you weren't able to check.",
+              },
+            ];
+          }
         }
 
         let assistantText = '';
@@ -1066,7 +1094,9 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           await aiService.sendChatToRelay(
             turnContext,
             messages,
-            tools,
+            // No tools on the forced final round — the model must answer text-only, which is
+            // what actually guarantees this round terminates instead of asking for round 11.
+            forcedFinalRound ? [] : tools,
             (chunk) => {
               if (chunk.type === 'token') {
                 assistantText += chunk.data.token || '';

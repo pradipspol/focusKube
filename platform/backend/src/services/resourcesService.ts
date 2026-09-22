@@ -214,6 +214,18 @@ function buildPodMetricsSnapshot(body: any) {
   };
 }
 
+function buildNodeMetricsSnapshot(body: any) {
+  return {
+    name: body?.metadata?.name,
+    timestamp: body?.timestamp,
+    window: body?.window,
+    cpu: body?.usage?.cpu ?? '0',
+    memory: body?.usage?.memory ?? '0',
+    cpuMillicores: cpuToMillicores(body?.usage?.cpu ?? '0'),
+    memoryBytes: memoryToBytes(body?.usage?.memory ?? '0'),
+  };
+}
+
 export class ResourcesService {
   listKinds() {
     return Object.values(RESOURCE_KINDS);
@@ -340,6 +352,30 @@ export class ResourcesService {
       { action: 'read', plural: 'pods', context, namespace, name: podName, azureConfigDir: options.azureConfigDir },
     );
     return buildPodMetricsSnapshot((metricsRes as any).body ?? metricsRes);
+  }
+
+  /** kubectl-top-nodes equivalent — omit nodeName for every node in the cluster. Node metrics
+   * are cluster-scoped (no namespace), unlike getPodMetrics. */
+  async getNodeMetrics(
+    nodeName: string | undefined,
+    context: string | undefined,
+    options: KubeOptions,
+  ) {
+    const api = (await kube.rawConfig(context, options)).makeApiClient(k8s.CustomObjectsApi);
+    if (nodeName) {
+      const metricsRes = await callK8s(
+        () => api.getClusterCustomObject('metrics.k8s.io', 'v1beta1', 'nodes', nodeName),
+        { action: 'read', plural: 'nodes', context, name: nodeName, azureConfigDir: options.azureConfigDir },
+      );
+      return [buildNodeMetricsSnapshot((metricsRes as any).body ?? metricsRes)];
+    }
+    const metricsRes = await callK8s(
+      () => api.listClusterCustomObject('metrics.k8s.io', 'v1beta1', 'nodes'),
+      { action: 'list', plural: 'nodes', context, azureConfigDir: options.azureConfigDir },
+    );
+    const body = (metricsRes as any).body ?? metricsRes;
+    const items = Array.isArray(body?.items) ? body.items : [];
+    return items.map((item: any) => buildNodeMetricsSnapshot(item));
   }
 
   async getPodMetricsBatch(

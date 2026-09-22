@@ -988,6 +988,8 @@
     cancel: 'Cancel',
     expand: 'Expand',
     closeArtifact: 'Close',
+    showOutput: 'Show output',
+    hideOutput: 'Hide output',
     editUnavailableHint: "This message can't be edited — a proposal after it has already run.",
     approve: 'Approve',
     reject: 'Reject',

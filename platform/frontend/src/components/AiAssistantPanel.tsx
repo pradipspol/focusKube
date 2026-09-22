@@ -49,6 +49,11 @@ interface ToolChatMessage {
   status: 'running' | 'done';
   output?: string;
   isError?: boolean;
+  /** Client-side timestamps (Date.now()), purely for the "took Xs" caption — never persisted
+   * to or read from the backend, so a page reload just loses the elapsed-time display, not
+   * anything load-bearing. */
+  startedAt?: number;
+  completedAt?: number;
 }
 
 /** A write tool (scale/restart/apply/delete) proposal, rendered as an Approve/Reject card. */
@@ -355,6 +360,62 @@ function formatToolArgs(input: unknown): string {
     .join(', ');
 }
 
+/** A plain-language "what's happening" caption for a tool card — e.g. "Fetching logs for pod
+ * "web-abc123"…" — shown above the technical name/args line while the standard AI assistant
+ * convention. Same tool name gets an "-ing" phrasing while running and a past-tense one once
+ * done, per `phase`. Falls back to a generic phrasing for any tool name not special-cased here
+ * (new tools keep working, just without a tailored sentence). */
+function describeToolActivity(name: string, input: unknown, phase: 'progress' | 'done'): string {
+  const i = (input ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string | undefined => (v === undefined || v === null || v === '' ? undefined : String(v));
+  const kind = str(i.kind);
+  const namespace = str(i.namespace);
+  const resourceName = str(i.name);
+  const podName = str(i.podName);
+  const deploymentName = str(i.deploymentName);
+  const nodeName = str(i.nodeName);
+  const nsPhrase = namespace ? ` in namespace "${namespace}"` : '';
+  const v = (ing: string, ed: string) => (phase === 'progress' ? ing : ed);
+
+  switch (name) {
+    case 'list_resources':
+      return `${v('Listing', 'Listed')} ${kind ?? 'resources'}${nsPhrase}`;
+    case 'get_resource':
+      return `${v('Fetching', 'Fetched')} ${kind ?? 'resource'} "${resourceName}"${nsPhrase}`;
+    case 'describe_resource':
+      return `${v('Describing', 'Described')} ${kind ?? 'resource'} "${resourceName}"${nsPhrase}`;
+    case 'get_logs': {
+      const target = podName ? `pod "${podName}"` : deploymentName ? `deployment "${deploymentName}"` : 'pod';
+      const prev = i.previous ? 'previous ' : '';
+      return `${v('Fetching', 'Fetched')} ${prev}logs for ${target}${nsPhrase}`;
+    }
+    case 'get_pod_metrics':
+      return `${v('Fetching', 'Fetched')} metrics for pod "${podName}"${nsPhrase}`;
+    case 'get_node_metrics':
+      return `${v('Fetching', 'Fetched')} node metrics${nodeName ? ` for "${nodeName}"` : ' for all nodes'}`;
+    case 'get_deployment_history':
+      return `${v('Fetching', 'Fetched')} rollout history for "${resourceName}"${nsPhrase}`;
+    case 'get_events':
+      return `${v('Fetching', 'Fetched')} events${nsPhrase}`;
+    case 'helm_list_releases':
+      return `${v('Listing', 'Listed')} Helm releases${nsPhrase}`;
+    case 'helm_get_release_values':
+      return `${v('Fetching', 'Fetched')} values for release "${resourceName}"${nsPhrase}`;
+    case 'helm_get_release_manifest':
+      return `${v('Fetching', 'Fetched')} manifest for release "${resourceName}"${nsPhrase}`;
+    case 'helm_get_release_history':
+      return `${v('Fetching', 'Fetched')} history for release "${resourceName}"${nsPhrase}`;
+    case 'helm_search_charts':
+      return v('Searching Helm charts', 'Searched Helm charts');
+    default:
+      return `${v('Running', 'Ran')} ${name}`;
+  }
+}
+
+function formatElapsed(ms: number): string {
+  return ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
 const TOOL_OUTPUT_COLLAPSE_LINES = 20;
 const TOOL_OUTPUT_COLLAPSE_ROWS = 20;
 
@@ -594,17 +655,73 @@ function ToolOutputViewer({
   );
 }
 
+/** A short "N items" / "N lines" hint on the collapsed toggle — cheap enough to compute eagerly
+ * since it's just a JSON.parse attempt, and it tells the user roughly what they'd be opening. */
+function describeOutputSize(output: string, isError?: boolean): string | null {
+  if (!output || isError) return null;
+  try {
+    const parsed = JSON.parse(output);
+    if (Array.isArray(parsed)) return `${parsed.length} item${parsed.length === 1 ? '' : 's'}`;
+  } catch {
+    // Not JSON — a plain-text result (logs); fall through to a line count.
+  }
+  const lines = output.split('\n').length;
+  return `${lines} line${lines === 1 ? '' : 's'}`;
+}
+
 function ToolMessage({ message, onExpand }: { message: ToolChatMessage; onExpand: () => void }) {
   const args = useMemo(() => formatToolArgs(message.input), [message.input]);
+  // Collapsed by default — the card sits where the tool was actually called (its natural
+  // chronological position, same as Claude's own assistant UI), with the raw output tucked
+  // behind an explicit toggle rather than dumped inline.
+  const [bodyOpen, setBodyOpen] = useState(false);
+  const sizeLabel = useMemo(
+    () => (message.status === 'done' ? describeOutputSize(message.output ?? '', message.isError) : null),
+    [message.status, message.output, message.isError],
+  );
+  const activity = useMemo(
+    () => describeToolActivity(message.name, message.input, message.status === 'running' ? 'progress' : 'done'),
+    [message.name, message.input, message.status],
+  );
+  const elapsed =
+    message.status === 'done' && message.startedAt && message.completedAt
+      ? formatElapsed(message.completedAt - message.startedAt)
+      : null;
 
   return (
     <div className={`ai-tool-message${message.status === 'running' ? ' ai-tool-message-running' : ''}${message.isError ? ' ai-tool-message-error' : ''}`}>
+      <div className={`ai-tool-activity${message.status === 'running' ? ' ai-tool-activity-running' : ''}`}>
+        <span className="ai-tool-activity-label">{activity}</span>
+        {message.status === 'running' ? (
+          <span className="ai-thinking-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        ) : (
+          elapsed && <span className="ai-tool-activity-elapsed">{elapsed}</span>
+        )}
+      </div>
       <div className="ai-tool-message-header">
         <span className="ai-tool-message-name">{message.name}</span>
         {args && <span className="ai-tool-message-args">{args}</span>}
         {message.status === 'running' && <span className="ai-tool-spinner" aria-hidden="true" />}
+        {message.status === 'done' && message.output && (
+          <button
+            type="button"
+            className="ai-tool-message-toggle"
+            onClick={() => setBodyOpen((v) => !v)}
+            aria-expanded={bodyOpen}
+          >
+            {bodyOpen ? uiText.aiAssistant.hideOutput : uiText.aiAssistant.showOutput}
+            {sizeLabel && <span className="ai-tool-message-size">{sizeLabel}</span>}
+            <span className={`ai-tool-message-chevron${bodyOpen ? ' ai-tool-message-chevron-open' : ''}`} aria-hidden="true">
+              ▾
+            </span>
+          </button>
+        )}
       </div>
-      {message.status === 'done' && message.output && (
+      {message.status === 'done' && message.output && bodyOpen && (
         <ToolOutputViewer name={message.name} id={message.id} output={message.output} isError={message.isError} mode="compact" onExpand={onExpand} />
       )}
     </div>
@@ -996,14 +1113,21 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         }
         if (msg.type === 'token') {
           setBusy(true);
+          // The id decision (and the nextMessageId/ref mutation it requires) happens here,
+          // exactly once per WS frame — never inside the setMessages updater below. React 18
+          // StrictMode (dev only) invokes state updaters twice per dispatch to catch impure
+          // ones; an updater that mutated streamingIdRef itself would set the ref on its first
+          // (discarded) call, so the second (real) call would see the ref already pointing at
+          // an id absent from `current` and silently no-op — which is exactly what happened
+          // here: every token after the first got swallowed with no error and no visible text.
+          if (!streamingIdRef.current) {
+            streamingIdRef.current = `assistant-${nextMessageId++}`;
+          }
+          const id = streamingIdRef.current;
           setMessages((current) => {
-            if (streamingIdRef.current) {
-              return current.map((m) =>
-                m.id === streamingIdRef.current && m.kind === 'text' ? { ...m, content: m.content + msg.token } : m,
-              );
+            if (current.some((m) => m.id === id && m.kind === 'text')) {
+              return current.map((m) => (m.id === id && m.kind === 'text' ? { ...m, content: m.content + msg.token } : m));
             }
-            const id = `assistant-${nextMessageId++}`;
-            streamingIdRef.current = id;
             return [...current, { id, kind: 'text', role: 'assistant', content: msg.token }];
           });
         } else if (msg.type === 'stop') {
@@ -1024,12 +1148,14 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           streamingIdRef.current = null;
           setMessages((current) => [
             ...current,
-            { id: msg.id, kind: 'tool', name: msg.name, input: msg.input, status: 'running' },
+            { id: msg.id, kind: 'tool', name: msg.name, input: msg.input, status: 'running', startedAt: Date.now() },
           ]);
         } else if (msg.type === 'tool_result') {
           setMessages((current) =>
             current.map((m) =>
-              m.id === msg.id && m.kind === 'tool' ? { ...m, status: 'done', output: msg.output, isError: msg.isError } : m,
+              m.id === msg.id && m.kind === 'tool'
+                ? { ...m, status: 'done', output: msg.output, isError: msg.isError, completedAt: Date.now() }
+                : m,
             ),
           );
         } else if (msg.type === 'action_proposed') {
@@ -1127,7 +1253,10 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     setError(null);
     setBusy(true);
     const turnId = createTurnId();
-    setMessages((current) => [...current, { id: `user-${nextMessageId++}`, kind: 'text', role: 'user', content: text, turnId }]);
+    // id computed before dispatch, not inside the updater — see the 'token' handler's comment
+    // above for why mutating nextMessageId inside a setState updater is unsafe under StrictMode.
+    const id = `user-${nextMessageId++}`;
+    setMessages((current) => [...current, { id, kind: 'text', role: 'user', content: text, turnId }]);
     wsRef.current.send(
       JSON.stringify({
         type: 'user_message',
@@ -1351,7 +1480,16 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
             onExpandTool={openArtifact}
           />
 
-          {busy && <div className="ai-panel-thinking">{uiText.aiAssistant.thinking}</div>}
+          {busy && (
+            <div className="ai-panel-thinking">
+              <span className="ai-panel-thinking-label">{uiText.aiAssistant.thinking}</span>
+              <span className="ai-thinking-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
+          )}
           {!connected && !busy && <div className="ai-panel-pending-hint">{uiText.aiAssistant.reconnecting}</div>}
           {hasPendingAction && <div className="ai-panel-pending-hint">{uiText.aiAssistant.pendingActionHint}</div>}
 

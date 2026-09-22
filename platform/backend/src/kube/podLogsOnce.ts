@@ -73,7 +73,7 @@ export async function fetchPodLogsOnce(
   namespace: string,
   podName: string,
   container: string | undefined,
-  opts: { tailLines: number; context?: string; kubeOptions: KubeAccessOptions },
+  opts: { tailLines: number; context?: string; kubeOptions: KubeAccessOptions; previous?: boolean },
 ): Promise<LogFetchResult> {
   const kubeConfig = await kube.rawConfig(opts.context, opts.kubeOptions);
   const log = new k8s.Log(kubeConfig);
@@ -90,6 +90,7 @@ export async function fetchPodLogsOnce(
       follow: false,
       tailLines: opts.tailLines,
       pretty: false,
+      previous: opts.previous,
     })) as unknown as { abort: () => void };
   } catch (err) {
     throw err instanceof Error ? err : new Error(String(err));
@@ -112,7 +113,7 @@ export async function fetchDeploymentLogsOnce(
   namespace: string,
   deploymentName: string,
   container: string | undefined,
-  opts: { tailLines: number; context?: string; kubeOptions: KubeAccessOptions },
+  opts: { tailLines: number; context?: string; kubeOptions: KubeAccessOptions; previous?: boolean },
 ): Promise<LogFetchResult> {
   const deployment: any = await getResource('deployments', deploymentName, opts.context, namespace, opts.kubeOptions);
   const selector = deployment?.spec?.selector ?? {};
