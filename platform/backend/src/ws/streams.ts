@@ -20,12 +20,15 @@ import { aiContextService, resolveSessionKubeAccess, resolveSessionHelmAccess, t
 import {
   toolCatalogForRole,
   isWriteTool,
+  isInvestigationTool,
   requiresDeleteCapability,
   executeReadTool,
   executeWriteTool,
   prepareActionProposal,
+  okList,
   type ToolExecCtx,
 } from '../services/aiToolExecutor.js';
+import { runInvestigation, type InvestigationResult } from '../services/investigationAgent.js';
 import { getLicenseKey } from '../runtime/aiLicenseStore.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
@@ -1162,6 +1165,11 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           return;
         }
 
+        // TEMP diagnostic — remove once we've confirmed which tools the model actually reaches
+        // for on a multi-resource question (tool_call/tool_result today only go out over the
+        // WS, never to the server log, so there's no other way to see this from the backend).
+        logInfo('ai_chat.DEBUG_tool_round', { round, tools: toolUses.map((t) => t.name) });
+
         const assistantContent: ChatMessageContent = [
           ...(assistantText ? [{ type: 'text' as const, text: assistantText }] : []),
           ...toolUses.map((t) => ({ type: 'tool_use' as const, id: t.id, name: t.name, input: t.input })),
@@ -1188,6 +1196,11 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           results: new Map(),
           awaiting: new Set(),
         };
+        // Set if a click of "Stop" aborts an in-flight investigate_resources fan-out (see
+        // below) — the round's tool_result still needs recording (the assistant's tool_use for
+        // it was already pushed to `messages` above, so history must stay balanced), but the
+        // turn itself must end here rather than looping into another relay call.
+        let investigationAborted = false;
 
         for (const t of toolUses) {
           if (isWriteTool(t.name)) {
@@ -1223,6 +1236,29 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
                 diff: proposal.diff,
               }));
             }
+          } else if (isInvestigationTool(t.name)) {
+            ws.send(JSON.stringify({ type: 'tool_call', id: t.id, name: t.name, input: t.input }));
+            // A dedicated controller for the fan-out itself — `currentRelayAbort` (used by the
+            // 'stop' handler) is already null by this point in the round (see its `finally`
+            // above), so without this, clicking Stop while sub-agents are running would do
+            // nothing until the round came back around to the next top-level relay call.
+            const investigationAbort = new AbortController();
+            currentRelayAbort = investigationAbort;
+            let results: InvestigationResult[];
+            try {
+              const rawTargets = Array.isArray((t.input as any)?.targets) ? (t.input as any).targets : [];
+              const targets = rawTargets
+                .filter((x: any) => x && typeof x.kind === 'string' && typeof x.name === 'string')
+                .map((x: any) => ({ kind: x.kind, name: x.name, namespace: typeof x.namespace === 'string' ? x.namespace : undefined }));
+              const question = typeof (t.input as any)?.question === 'string' ? (t.input as any).question : undefined;
+              results = await runInvestigation({ targets, question, turnContext, toolCtx, signal: investigationAbort.signal });
+            } finally {
+              currentRelayAbort = null;
+            }
+            if (investigationAbort.signal.aborted) investigationAborted = true;
+            const toolResult = okList(results as unknown[]);
+            ws.send(JSON.stringify({ type: 'tool_result', id: t.id, name: t.name, output: toolResult.output, isError: toolResult.isError }));
+            thisRound.results.set(t.id, { content: toolResult.output, is_error: toolResult.isError });
           } else {
             ws.send(JSON.stringify({ type: 'tool_call', id: t.id, name: t.name, input: t.input }));
             const result = await executeReadTool(t.name, t.input, toolCtx);
@@ -1238,6 +1274,13 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
             return { type: 'tool_result' as const, tool_use_id: id, content: r.content, is_error: r.is_error };
           });
           messages.push({ role: 'user', content });
+          if (investigationAborted) {
+            // Mirrors the plain streaming-abort branch above: the turn ends here rather than
+            // looping into another relay call, now that the tool_result closing out
+            // investigate_resources' tool_use has been recorded.
+            ws.send(JSON.stringify({ type: 'stopped' }));
+            return;
+          }
           continue;
         }
 

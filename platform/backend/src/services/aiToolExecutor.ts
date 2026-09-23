@@ -78,7 +78,7 @@ function ok(text: string): ToolResult {
 // can no longer JSON.parse it) and shows the user a truncated JSON dump instead. This trims
 // whole items off the end instead, so the result is always valid, always-tabular JSON, with a
 // final synthetic row noting how many items were left out.
-function okList(items: unknown[]): ToolResult {
+export function okList(items: unknown[]): ToolResult {
   const full = JSON.stringify(items, null, 2);
   if (full.length <= MAX_TOOL_OUTPUT_CHARS) return { output: full, isError: false };
 
@@ -335,6 +335,31 @@ export const READ_TOOLS: ToolDefinition[] = [
       required: ['query'],
     },
   },
+  {
+    name: 'investigate_resources',
+    description:
+      'Investigate several resources concurrently — each gets its own focused sub-agent that gathers evidence (logs, events, describe, metrics) and returns a verdict — instead of you looping get_logs/describe_resource yourself one at a time. Use this whenever a question spans multiple resources (e.g. "check every pod in namespace X that is not Running", "why are these 3 services unhealthy"). Investigates at most 4 resources per call; call it again for more.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        targets: {
+          type: 'array',
+          description: 'Up to 4 resources to investigate in parallel.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', description: 'Resource type, plural form (e.g. "pods", "deployments", "services").' },
+              name: { type: 'string', description: 'Resource name.' },
+              namespace: { type: 'string', description: 'Namespace.' },
+            },
+            required: ['kind', 'name'],
+          },
+        },
+        question: { type: 'string', description: 'Optional shared focus for every sub-investigation, e.g. "why is this crashing".' },
+      },
+      required: ['targets'],
+    },
+  },
 ];
 
 export const WRITE_TOOLS: ToolDefinition[] = [
@@ -468,6 +493,13 @@ const WRITE_TOOL_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
 
 export function isWriteTool(name: string): boolean {
   return WRITE_TOOL_NAMES.has(name);
+}
+
+/** investigate_resources fans out into several relay calls of its own (see
+ * services/investigationAgent.ts) — ws/streams.ts needs to recognize it and route it there
+ * instead of through the plain executeReadTool switch, which has no relay/streaming access. */
+export function isInvestigationTool(name: string): boolean {
+  return name === 'investigate_resources';
 }
 
 // Destructive tools that need the `delete` capability specifically, not just `write` — the
