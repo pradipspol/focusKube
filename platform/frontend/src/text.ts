@@ -1003,6 +1003,12 @@
     actionExpired: 'This proposal is no longer active — ask again.',
     actionAutoApprovedNote: '(auto-approved — allowed for this session)',
     pendingActionHint: 'Approve or reject the proposal above before sending another message.',
+    attachImageButton: 'Attach image',
+    dropImageHint: 'Drop image to attach',
+    removeImage: 'Remove image',
+    tooManyImages: (max: number) => `Attach at most ${max} images per message.`,
+    unsupportedImageType: 'Unsupported file — attach a PNG, JPEG, GIF, or WEBP image.',
+    imageTooLarge: (mb: number) => `That image is larger than ${mb}MB.`,
   },
 } as const;
 

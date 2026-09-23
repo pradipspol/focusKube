@@ -10,6 +10,7 @@ import {
   type AiActionDiff,
   type AiChatInboundMessage,
   type AiFocusedResource,
+  type AiImageAttachment,
 } from '../api/aiAssistantApi';
 import { AiEntitlementGate } from './AiEntitlementGate';
 import { uiText } from '../text';
@@ -27,6 +28,15 @@ interface Props {
   onArtifactOpenChange?: (open: boolean) => void;
 }
 
+/** An image attached to a (user) chat message — `dataUrl` is only ever used for the local
+ * `<img>` preview; `mediaType`/`data` are the raw pieces resent verbatim over the wire on an
+ * edit/regenerate (see saveEdit). */
+interface AttachedImage {
+  dataUrl: string;
+  mediaType: AiImageAttachment['mediaType'];
+  data: string;
+}
+
 interface TextChatMessage {
   id: string;
   kind: 'text';
@@ -36,6 +46,8 @@ interface TextChatMessage {
    * `checkpoints` map) so it can later be edited or regenerated without the frontend and
    * backend message arrays needing to otherwise stay in lockstep. */
   turnId?: string;
+  /** Only ever set on a user message. */
+  images?: AttachedImage[];
 }
 
 function createTurnId(): string {
@@ -109,6 +121,24 @@ function SkillsIcon() {
   );
 }
 
+function AttachImageIcon() {
+  return (
+    <svg className="ai-toolbar-icon" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" />
+      <path d="M4 16l5-5 4 4 3-3 5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RemoveImageIcon() {
+  return (
+    <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function StopIcon() {
   return (
     <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
@@ -151,6 +181,50 @@ function CancelIcon() {
 }
 
 let nextMessageId = 1;
+
+// Mirrors the backend's own caps (ws/streams.ts) — kept in sync deliberately, not derived from a
+// shared constant, since one is a client-side UX guard and the other is the real enforcement.
+const MAX_IMAGES_PER_MESSAGE = 3;
+// Anthropic's own documented vision guidance for the long edge, applied uniformly regardless of
+// source format so a raw 4K screenshot never needs the user to think about size at all.
+const IMAGE_MAX_DIMENSION = 1568;
+const IMAGE_JPEG_QUALITY = 0.85;
+// Rejected outright before any resize work — anything this large is almost certainly not a
+// screenshot (a many-times-oversized source photo, a misclick), so failing fast with a clear
+// message beats silently spending a few seconds compressing it anyway.
+const MAX_SOURCE_FILE_BYTES = 20 * 1024 * 1024;
+
+/** Reads an image File, downscales it to fit within IMAGE_MAX_DIMENSION, and re-encodes as JPEG
+ * via an offscreen canvas — this is what actually keeps a message's attachments small regardless
+ * of the source file's original size/format (screenshots from a high-DPI display are routinely
+ * several MB before this). Always re-encodes (even a small PNG) rather than branching on
+ * "already small enough" — one predictable code path, and the quality loss on an already-small
+ * screenshot is not visually meaningful. */
+async function readAndCompressImage(file: File): Promise<Omit<AttachedImage, 'dataUrl'> & { dataUrl: string }> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not read that image file.'));
+      el.src = objectUrl;
+    });
+    const scale = Math.min(1, IMAGE_MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+    const width = Math.max(1, Math.round(img.naturalWidth * scale));
+    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not process that image.');
+    ctx.drawImage(img, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL('image/jpeg', IMAGE_JPEG_QUALITY);
+    const data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    return { dataUrl, mediaType: 'image/jpeg', data };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 const CHAT_SESSIONS_STORAGE_KEY = 'k8sExplorer.aiChatSessions';
 const LEGACY_CHAT_HISTORY_STORAGE_KEY = 'k8sExplorer.aiChatHistory';
@@ -891,6 +965,13 @@ function ChatMessages({
           return (
             <div key={message.id} className="ai-panel-message ai-panel-message-user">
               <div className="ai-panel-message-bubble ai-panel-message-editing">
+                {message.images && message.images.length > 0 && (
+                  <div className="ai-message-images">
+                    {message.images.map((image, index) => (
+                      <img key={index} src={image.dataUrl} alt="" />
+                    ))}
+                  </div>
+                )}
                 <textarea
                   className="ai-message-edit-input"
                   value={editText}
@@ -926,6 +1007,13 @@ function ChatMessages({
           <div key={message.id} className={`ai-panel-message ai-panel-message-${message.role}`}>
             <div className="ai-panel-message-col">
               <div className="ai-panel-message-bubble">
+                {message.images && message.images.length > 0 && (
+                  <div className="ai-message-images">
+                    {message.images.map((image, index) => (
+                      <img key={index} src={image.dataUrl} alt="" />
+                    ))}
+                  </div>
+                )}
                 <MessageContent content={message.content} />
               </div>
               {message.content && (
@@ -1062,6 +1150,9 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const [pickerKind, setPickerKind] = useState('');
   const [pickerNamespace, setPickerNamespace] = useState(scope.namespace ?? 'default');
   const [pickerName, setPickerName] = useState('');
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingIdRef = useRef<string | null>(null);
@@ -1286,9 +1377,37 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     setActiveArtifactId(null);
     onArtifactOpenChange?.(false);
   };
+  const addImageFiles = async (files: File[]) => {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    if (attachedImages.length + imageFiles.length > MAX_IMAGES_PER_MESSAGE) {
+      setError(uiText.aiAssistant.tooManyImages(MAX_IMAGES_PER_MESSAGE));
+      return;
+    }
+    for (const file of imageFiles) {
+      if (file.size > MAX_SOURCE_FILE_BYTES) {
+        setError(uiText.aiAssistant.imageTooLarge(Math.round(MAX_SOURCE_FILE_BYTES / (1024 * 1024))));
+        continue;
+      }
+      try {
+        const image = await readAndCompressImage(file);
+        setAttachedImages((current) =>
+          current.length >= MAX_IMAGES_PER_MESSAGE ? current : [...current, image],
+        );
+        setError(null);
+      } catch {
+        setError(uiText.aiAssistant.unsupportedImageType);
+      }
+    }
+  };
+
+  const removeAttachedImage = (index: number) => {
+    setAttachedImages((current) => current.filter((_, i) => i !== index));
+  };
+
   const sendMessage = () => {
     const text = input.trim();
-    if (!text || hasPendingAction) return;
+    if ((!text && attachedImages.length === 0) || hasPendingAction) return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       // Distinct from the no-op guards above — this is the one the user actually needs to see:
       // without it, a dropped connection (e.g. mid-reconnect) swallowed the send with nothing
@@ -1302,16 +1421,22 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     // id computed before dispatch, not inside the updater — see the 'token' handler's comment
     // above for why mutating nextMessageId inside a setState updater is unsafe under StrictMode.
     const id = `user-${nextMessageId++}`;
-    setMessages((current) => [...current, { id, kind: 'text', role: 'user', content: text, turnId }]);
+    const images = attachedImages;
+    setMessages((current) => [
+      ...current,
+      { id, kind: 'text', role: 'user', content: text, turnId, ...(images.length > 0 ? { images } : {}) },
+    ]);
     wsRef.current.send(
       JSON.stringify({
         type: 'user_message',
         text,
         turnId,
         ...(focusedResource ? { focusedResource } : {}),
+        ...(images.length > 0 ? { images: images.map(({ mediaType, data }) => ({ mediaType, data })) } : {}),
       }),
     );
     setInput('');
+    setAttachedImages([]);
   };
 
   const startEdit = (id: string, content: string) => {
@@ -1344,6 +1469,9 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         turnId: target.turnId,
         text,
         ...(focusedResource ? { focusedResource } : {}),
+        ...(target.images && target.images.length > 0
+          ? { images: target.images.map(({ mediaType, data }) => ({ mediaType, data })) }
+          : {}),
       }),
     );
   };
@@ -1466,7 +1594,30 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
 
       <AiEntitlementGate>
         <div className={`ai-panel${activeArtifact ? ' ai-panel-with-artifact' : ''}`}>
-        <div className="ai-panel-chat-col">
+        <div
+          className={`ai-panel-chat-col${dragOver ? ' ai-panel-chat-col-drag-over' : ''}`}
+          // Drop anywhere in the chat column, not just on the composer — dropping a screenshot
+          // onto the transcript is the natural instinct, and without a handler here the runtime
+          // default (navigating the window to the dropped file) would blow away the whole app view.
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            // dragleave also fires when the pointer crosses into a CHILD element, which would
+            // flicker the highlight off and on across the whole column — ignore those.
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setDragOver(false);
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            setDragOver(false);
+            void addImageFiles(Array.from(e.dataTransfer.files));
+          }}
+        >
+          {dragOver && <div className="ai-panel-drop-hint">{uiText.aiAssistant.dropImageHint}</div>}
           {/* <div className="ai-panel-header">
             <span className={`badge ${connected ? 'ok' : 'warn'}`}>
               {connected ? uiText.aiAssistant.connected : uiText.aiAssistant.disconnected}
@@ -1540,7 +1691,25 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           {hasPendingAction && <div className="ai-panel-pending-hint">{uiText.aiAssistant.pendingActionHint}</div>}
 
           <div className="ai-panel-input-row">
-            <div className="ai-input-shell">
+            <div className={`ai-input-shell${dragOver ? ' ai-input-shell-drag-over' : ''}`}>
+              {attachedImages.length > 0 && (
+                <div className="ai-attached-images">
+                  {attachedImages.map((image, index) => (
+                    <div key={index} className="ai-attached-image-thumb">
+                      <img src={image.dataUrl} alt="" />
+                      <button
+                        type="button"
+                        className="ai-attached-image-remove"
+                        onClick={() => removeAttachedImage(index)}
+                        aria-label={uiText.aiAssistant.removeImage}
+                        title={uiText.aiAssistant.removeImage}
+                      >
+                        <RemoveImageIcon />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 className="ai-panel-input"
@@ -1552,25 +1721,63 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                     sendMessage();
                   }
                 }}
+                onPaste={(e) => {
+                  // `items` rather than `files`: a screenshot copied from a browser or a
+                  // spreadsheet puts BOTH an image and an HTML/text representation on the
+                  // clipboard, and without preventDefault that text lands in the textarea
+                  // alongside the attachment.
+                  const files = Array.from(e.clipboardData.items)
+                    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                    .map((item) => item.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length === 0) return;
+                  e.preventDefault();
+                  void addImageFiles(files);
+                }}
                 placeholder={uiText.aiAssistant.inputPlaceholder}
                 rows={1}
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void addImageFiles(Array.from(e.target.files ?? []));
+                  e.target.value = '';
+                }}
+              />
               <div className="ai-input-toolbar-row">
-                <button
-                  type="button"
-                  className={`ai-skills-button ${skillsOpen ? 'active' : ''}`}
-                  title={uiText.aiAssistant.skillsButton}
-                  aria-label={uiText.aiAssistant.skillsButton}
-                  aria-pressed={skillsOpen}
-                  onClick={() => setSkillsOpen((v) => !v)}
-                >
-                  <SkillsIcon />
-                </button>
+                {/* Grouped so the row stays a two-child flex (left cluster / send) — with the
+                    buttons as three direct children, space-between stranded skills in the middle. */}
+                <div className="ai-input-toolbar-left">
+                  <button
+                    type="button"
+                    className="ai-skills-button"
+                    title={uiText.aiAssistant.attachImageButton}
+                    aria-label={uiText.aiAssistant.attachImageButton}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={attachedImages.length >= MAX_IMAGES_PER_MESSAGE}
+                  >
+                    <AttachImageIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className={`ai-skills-button ${skillsOpen ? 'active' : ''}`}
+                    title={uiText.aiAssistant.skillsButton}
+                    aria-label={uiText.aiAssistant.skillsButton}
+                    aria-pressed={skillsOpen}
+                    onClick={() => setSkillsOpen((v) => !v)}
+                  >
+                    <SkillsIcon />
+                  </button>
+                </div>
                 <button
                   type="button"
                   className={`ai-send-button${busy ? ' ai-send-button-stop' : ''}`}
                   onClick={busy ? stopGenerating : sendMessage}
-                  disabled={busy ? false : !connected || !input.trim() || hasPendingAction}
+                  disabled={busy ? false : !connected || (!input.trim() && attachedImages.length === 0) || hasPendingAction}
                   title={busy ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
                   aria-label={busy ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
                 >

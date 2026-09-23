@@ -7,12 +7,19 @@ import { getLicenseKey } from '../runtime/aiLicenseStore.js';
  * array shows up once a tool round has happened — an assistant's own `tool_use` block(s), or
  * the `tool_result` block a follow-up user turn carries back. Passed through to the relay
  * as-is (see llm/chatProvider.ts's ChatTurnMessage, which is Anthropic.MessageParam). */
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
 export type ChatMessageContent =
   | string
   | Array<
       | { type: 'text'; text: string }
       | { type: 'tool_use'; id: string; name: string; input: unknown }
       | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+      // Mirrors Anthropic's own ImageBlockParam shape exactly (see llm/chatProvider.ts's
+      // ChatTurnMessage = Anthropic.MessageParam on the relay) so it passes through the relay's
+      // Anthropic path with zero transformation, same as the other block types above — only the
+      // Azure OpenAI path (toOpenAiMessages) needs to know how to convert this one.
+      | { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } }
     >;
 
 export interface ChatMessage {

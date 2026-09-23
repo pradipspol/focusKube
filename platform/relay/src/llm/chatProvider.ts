@@ -82,6 +82,7 @@ function toOpenAiMessages(
       // turn. Dropping it here (as this used to) means an appended instruction never reaches
       // the model at all, silently.
       let trailingText = '';
+      const imageParts: OpenAI.Chat.Completions.ChatCompletionContentPartImage[] = [];
       for (const block of m.content) {
         if (block.type === 'tool_result') {
           out.push({
@@ -91,9 +92,25 @@ function toOpenAiMessages(
           });
         } else if (block.type === 'text') {
           trailingText += block.text;
+        } else if (block.type === 'image' && block.source.type === 'base64') {
+          // Anthropic keeps media_type/data as separate fields; OpenAI wants one data URL.
+          imageParts.push({
+            type: 'image_url',
+            image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+          });
         }
       }
-      if (trailingText) out.push({ role: 'user', content: trailingText });
+      if (imageParts.length > 0) {
+        // At least one image in this turn — OpenAI takes mixed text+image content as one
+        // message's content-part array, unlike Anthropic's separate blocks, so text and images
+        // combine into a single user message here instead of trailingText's usual standalone one.
+        out.push({
+          role: 'user',
+          content: [...(trailingText ? [{ type: 'text' as const, text: trailingText }] : []), ...imageParts],
+        });
+      } else if (trailingText) {
+        out.push({ role: 'user', content: trailingText });
+      }
       continue;
     }
 

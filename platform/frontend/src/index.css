@@ -1674,6 +1674,11 @@ a {
   border-top: 1px solid var(--border-subtle);
   padding: 2px 8px 8px;
 }
+.ai-input-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .ai-toolbar-icon {
   width: 16px;
   height: 16px;
@@ -1731,6 +1736,83 @@ a {
 .ai-send-button-stop:hover {
   background: var(--surface-hover);
   transform: none;
+}
+.ai-skills-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
+.ai-input-shell-drag-over {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.ai-panel-chat-col-drag-over {
+  position: relative;
+}
+.ai-panel-drop-hint {
+  position: absolute;
+  inset: 8px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+.ai-attached-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+.ai-attached-image-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+.ai-attached-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ai-attached-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+}
+.ai-attached-image-remove:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.ai-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ai-message-images img {
+  max-width: 160px;
+  max-height: 160px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  object-fit: cover;
 }
 .ai-skills-backdrop {
   position: fixed;

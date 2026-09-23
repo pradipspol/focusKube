@@ -15,7 +15,7 @@ import { logError, logInfo, logWarn } from '../util/logger.js';
 import { handleTerminal } from './terminal.js';
 import { observabilityWss, handleObservabilityUpgrade } from './observability.js';
 import { prepareCliKubeconfig, type PreparedCliKubeconfig } from '../kube/cliKubeconfig.js';
-import { aiService, type ChatMessage, type ChatMessageContent } from '../services/aiService.js';
+import { aiService, type ChatMessage, type ChatMessageContent, type ImageMediaType } from '../services/aiService.js';
 import { aiContextService, resolveSessionKubeAccess, resolveSessionHelmAccess, type ClusterContext } from '../services/aiContextService.js';
 import {
   toolCatalogForRole,
@@ -958,6 +958,13 @@ function aiChatParams(req: any) {
 // enough — it still ends in a real (partial) diagnosis rather than a bare error.
 const MAX_TOOL_ROUNDS = 10;
 
+// Image attachments on a user turn — validated defensively here rather than trusted from the
+// client. Kept comfortably under relay's express.json({limit:'2mb'}) body cap even with 3 of
+// them plus the rest of the turn's payload (context, prior messages, tools).
+const ALLOWED_IMAGE_MEDIA_TYPES = new Set<ImageMediaType>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const MAX_IMAGES_PER_MESSAGE = 3;
+const MAX_IMAGE_DATA_CHARS = 3_000_000;
+
 /** One relay round-trip's `tool_use` blocks — Claude can (and does) request several tools in
  * parallel within a single turn, e.g. reading two pods' logs at once. The Anthropic API
  * requires every tool_use block from one assistant turn to be answered by a tool_result in
@@ -1165,11 +1172,6 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           return;
         }
 
-        // TEMP diagnostic — remove once we've confirmed which tools the model actually reaches
-        // for on a multi-resource question (tool_call/tool_result today only go out over the
-        // WS, never to the server log, so there's no other way to see this from the backend).
-        logInfo('ai_chat.DEBUG_tool_round', { round, tools: toolUses.map((t) => t.name) });
-
         const assistantContent: ChatMessageContent = [
           ...(assistantText ? [{ type: 'text' as const, text: assistantText }] : []),
           ...toolUses.map((t) => ({ type: 'tool_use' as const, id: t.id, name: t.name, input: t.input })),
@@ -1295,16 +1297,46 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
     // Shared by a fresh `user_message` and an `edit_message` replay — the only difference
     // between them is whether `messages`/`checkpoints` got truncated first (see the
     // `edit_message` handler below).
-    const runUserTurn = async (text: string, turnId: unknown, focusedResourceRaw: unknown): Promise<void> => {
+    const runUserTurn = async (text: string, turnId: unknown, focusedResourceRaw: unknown, imagesRaw: unknown): Promise<void> => {
       if (pendingActions.size > 0) {
         ws.send(JSON.stringify({ type: 'error', message: 'Resolve the pending action proposal before sending another message.' }));
         return;
       }
 
+      let images: Array<{ mediaType: ImageMediaType; data: string }> | undefined;
+      if (Array.isArray(imagesRaw) && imagesRaw.length > 0) {
+        if (imagesRaw.length > MAX_IMAGES_PER_MESSAGE) {
+          ws.send(JSON.stringify({ type: 'error', message: `Attach at most ${MAX_IMAGES_PER_MESSAGE} images per message.` }));
+          return;
+        }
+        images = [];
+        for (const raw of imagesRaw) {
+          const mediaType = typeof (raw as any)?.mediaType === 'string' ? (raw as any).mediaType : '';
+          const data = typeof (raw as any)?.data === 'string' ? (raw as any).data : '';
+          if (!ALLOWED_IMAGE_MEDIA_TYPES.has(mediaType as ImageMediaType) || !data || data.length > MAX_IMAGE_DATA_CHARS) {
+            ws.send(JSON.stringify({ type: 'error', message: 'One of the attached images is invalid, an unsupported type, or too large.' }));
+            return;
+          }
+          images.push({ mediaType: mediaType as ImageMediaType, data });
+        }
+      }
+
       if (typeof turnId === 'string' && turnId) {
         checkpoints.set(turnId, messages.length);
       }
-      messages.push({ role: 'user', content: text });
+      messages.push({
+        role: 'user',
+        content:
+          images && images.length > 0
+            ? [
+                { type: 'text' as const, text },
+                ...images.map((img) => ({
+                  type: 'image' as const,
+                  source: { type: 'base64' as const, media_type: img.mediaType, data: img.data },
+                })),
+              ]
+            : text,
+      });
 
       // Reassemble context each turn so it reflects whatever resource the
       // user currently has focused, not just what was open when the socket connected.
@@ -1341,7 +1373,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       }
 
       if (msg.type === 'user_message') {
-        enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource));
+        enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource, msg.images));
         return;
       }
 
@@ -1366,7 +1398,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
               if (idx >= checkpoint) checkpoints.delete(id);
             }
           }
-          await runUserTurn(msg.text, turnId, msg.focusedResource);
+          await runUserTurn(msg.text, turnId, msg.focusedResource, msg.images);
         });
         return;
       }

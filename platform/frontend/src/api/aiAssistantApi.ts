@@ -20,11 +20,20 @@ export interface AiChatMessage {
   content: string;
 }
 
+/** An image attached to a user turn — `data` is raw base64 (no `data:` prefix); the frontend
+ * resizes/re-encodes to JPEG client-side before this is built (see AiAssistantPanel.tsx), so
+ * `mediaType` is normally 'image/jpeg', but the union covers a passthrough of an already-small
+ * source file too. */
+export interface AiImageAttachment {
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  data: string;
+}
+
 /** Wire messages sent to /ws/ai. */
 export type AiChatOutboundMessage =
   /** `turnId` identifies this turn for later editing/regenerating (see `edit_message` below)
    * and is otherwise unused by the backend for a fresh message. */
-  | { type: 'user_message'; text: string; turnId?: string; focusedResource?: AiFocusedResource }
+  | { type: 'user_message'; text: string; turnId?: string; focusedResource?: AiFocusedResource; images?: AiImageAttachment[] }
   /** Approve/reject a write-tool proposal previously received as `action_proposed`. `id` is
    * that proposal's tool_use id, used to correlate the decision back to the paused turn.
    * `remember: true` (only meaningful alongside `approved: true`) additionally tells the
@@ -34,8 +43,9 @@ export type AiChatOutboundMessage =
   /** Rewinds the conversation back to right before the turn identified by `turnId` (dropping
    * everything that turn and any later ones produced) and resends `text` as that turn's user
    * message — used for both "edit a past message" (text differs) and "regenerate" (text is the
-   * original, unchanged). */
-  | { type: 'edit_message'; turnId: string; text: string; focusedResource?: AiFocusedResource }
+   * original, unchanged). `images`, when the original turn had any, are resent verbatim — v1's
+   * edit UI doesn't offer changing attachments, only text. */
+  | { type: 'edit_message'; turnId: string; text: string; focusedResource?: AiFocusedResource; images?: AiImageAttachment[] }
   /** Aborts whichever turn is currently streaming on this connection, if any. A no-op if
    * nothing is in flight. */
   | { type: 'stop' };
