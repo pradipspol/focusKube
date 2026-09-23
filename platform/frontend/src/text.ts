@@ -111,6 +111,7 @@
     settings: 'Settings',
     aiAssistant: 'AI Assistant',
     noClustersFound: 'No clusters found.',
+    account: 'Account',
   },
   minikube: {
     title: 'Minikube Local Cluster',
@@ -936,7 +937,7 @@
     next: 'Next',
   },
   aiAssistant: {
-    title: 'FocusKube Assistant',
+    title: 'FocusKube AI Assistant',
     lockedTitle: 'FocusKube Assistant is a Pro feature',
     lockedCopy:
       "Diagnose issues and get suggested fixes for the resources in this cluster, powered by Claude. The Free plan doesn't include the AI Assistant — start a trial or subscribe to Pro to unlock it.",

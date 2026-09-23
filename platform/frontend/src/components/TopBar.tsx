@@ -16,6 +16,9 @@ interface Props {
   // menu-action listener and Preferences modal mounted.
   hideBar?: boolean;
   onSignOut: () => Promise<void>;
+  /** Bumped by a parent (e.g. the activity bar's account menu) to open the Preferences modal
+   * from outside this component, the same way the desktop native menu's 'preferences' action does. */
+  openSettingsSignal?: number;
 }
 
 export function TopBar({
@@ -25,6 +28,7 @@ export function TopBar({
   onOpenSettings,
   hideBar,
   onSignOut,
+  openSettingsSignal,
 }: Props) {
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -32,6 +36,8 @@ export function TopBar({
   const [selectedLevel, setSelectedLevel] = useState<LogLevel>('info');
   const [selectedTheme, setSelectedTheme] = useState<Theme>(theme);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // Captures the initial value so the effect below only fires on a later bump, not on mount.
+  const lastOpenSettingsSignalRef = useRef(openSettingsSignal);
 
   const logLevelQuery = useQuery({
     queryKey: ['settings', 'log-level'],
@@ -85,6 +91,12 @@ export function TopBar({
     setSettingsOpen(true);
     await queryClient.invalidateQueries({ queryKey: ['settings', 'log-level'] });
   };
+
+  useEffect(() => {
+    if (openSettingsSignal === undefined || openSettingsSignal === lastOpenSettingsSignalRef.current) return;
+    lastOpenSettingsSignalRef.current = openSettingsSignal;
+    void handleOpenSettings();
+  }, [openSettingsSignal]);
 
   useEffect(() => {
     if (!window.desktopMenu) return;

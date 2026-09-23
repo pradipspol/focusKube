@@ -486,7 +486,10 @@ export default function App() {
   // Warms the AI entitlement check right after sign-in rather than waiting for the user to
   // open the AI Assistant tab — AiEntitlementGate's own useAiEntitlement() call shares this
   // same query, so the tab renders from an already-fresh cache instead of a loading flash.
-  useAiEntitlement(!!user);
+  // Also feeds the activity bar's account popup, which shows the same plan/quota.
+  const aiEntitlementQuery = useAiEntitlement(!!user);
+
+  const [openSettingsRequestId, setOpenSettingsRequestId] = useState(0);
 
   const [azureCloudAccount, setAzureCloudAccount] = useState<AzureAccount | null>(null);
   const [awsIdentity, setAwsIdentity] = useState<AwsIdentity | null>(null);
@@ -1228,6 +1231,7 @@ export default function App() {
         onThemeChange={setTheme}
         hideBar={isDesktopBuild}
         onSignOut={handleSignOut}
+        openSettingsSignal={openSettingsRequestId}
       />
       <div
         className={`body ${sidebarHidden ? 'sidebar-hidden' : sidebarCollapsed ? 'sidebar-collapsed' : ''} ${aiPanelOpen ? 'ai-panel-open' : ''}`}
@@ -1253,6 +1257,10 @@ export default function App() {
           }}
           aiActive={aiPanelOpen}
           onToggleAi={() => setAiPanelOpen((current) => !current)}
+          user={user}
+          entitlement={aiEntitlementQuery.data}
+          onOpenSettings={() => setOpenSettingsRequestId((current) => current + 1)}
+          onSignOut={handleSignOut}
         />
         {!sidebarHidden && (sidebarActivity === 'explorer' ? <Sidebar
           view={activeTab?.view}
