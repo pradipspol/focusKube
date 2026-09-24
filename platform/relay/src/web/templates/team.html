@@ -35,7 +35,7 @@
       '<form id="create-team">' +
       '<label>Team name <input type="text" name="name" required placeholder="Acme Inc."></label>' +
       '<label>Number of seats <input type="number" name="seats" min="' + MIN_SEATS + '" max="' + MAX_SEATS + '" value="' + MIN_SEATS + '" required></label>' +
-      '<label>Billing <select name="interval"><option value="month">Monthly</option><option value="year">Annually (10% off)</option></select></label>' +
+      '<label>Billing <select name="interval"><option value="month">Monthly</option><option value="year">Annually ({{ANNUAL_DISCOUNT_PERCENT}}% off)</option></select></label>' +
       '<button type="submit">Continue to checkout</button>' +
       '</form>' +
       '</div>'
@@ -61,8 +61,8 @@
       '<form id="seats-form"><input type="number" name="seats" min="' + MIN_SEATS + '" max="' + MAX_SEATS + '" value="' + s.purchased + '"> <button type="submit" class="secondary">Update seats</button></form>' +
       '</div>' +
       '<div class="button-row">' +
-      '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' +
-      // Once the org's subscription is actually gone at Stripe, org.status flips away from
+      ('{{SUPPORTS_PORTAL}}' === 'true' ? '<form id="portal"><button type="submit" class="secondary">Manage billing</button></form>' : '') +
+      // Once the org's subscription is actually gone at the provider, org.status flips away from
       // 'active' — hide the button rather than let a repeat click hit cancelOrgSubscription
       // with nothing left to cancel.
       (data.org.status === 'active' ? '<form id="cancel-sub"><button type="submit" class="secondary danger">Cancel subscription</button></form>' : '') +

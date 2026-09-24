@@ -1,29 +1,34 @@
-import type Stripe from 'stripe';
 import { config } from '../config.js';
 import { db } from '../db.js';
-import { isStripeConfigured, stripeClient } from '../billing/stripe.js';
-import { buildProLineItem } from '../billing/pricing.js';
-import { adjustOrgPoolForSeatChange, createOrgPoolLicense, getLicenseForUser } from '../licenseStore.js';
-import { isStripeDemoMode, createDemoCheckoutSession } from '../billing/stripe-sim.js';
+import { activeProvider } from '../billing/provider.js';
+import { adjustOrgPoolForSeatChange, getLicenseForUser } from '../licenseStore.js';
 import type { SessionUser } from '../auth/sessions.js';
 import { OrgActionError } from './errors.js';
-import {
-  activateOrg,
-  createPendingOrg,
-  findOrgById,
-  findOrgByOwner,
-  findOrgBySubscriptionId,
-  seatCounts,
-  seatUser,
-  setOrgSeatsPurchased,
-  setOrgStatus,
-} from './store.js';
+import { createPendingOrg, findOrgById, findOrgByOwner, seatCounts, setOrgSeatsPurchased } from './store.js';
 
-/** Creates (or reuses, if checkout was abandoned last time) the org row and starts a Stripe
- * Checkout session for N seats of Pro. The org row is created *before* redirecting to
- * Stripe — client_reference_id keeps meaning "the buying user" (unchanged from the
- * individual flow); the org identity rides in `metadata` instead, so an individual
- * checkout (no such metadata) takes the existing, untouched webhook path. */
+/** A subscription can only be managed through the provider that created it. If a deployment
+ * switches BILLING_PROVIDER while subscriptions from the old one are still live, calling the
+ * new provider's API with a foreign subscription id would fail confusingly (or, worse, match
+ * something unrelated) — this is what the licenses.billing_provider column is for. */
+function assertProviderOwnsSubscription(rowProvider: string | null, activeName: string): void {
+  if (rowProvider && rowProvider !== activeName) {
+    throw new OrgActionError(
+      409,
+      `This subscription was created with ${rowProvider}, which is no longer this server's payment provider. Cancel it in the ${rowProvider} dashboard.`,
+    );
+  }
+}
+
+/**
+ * Owner-facing Team billing actions. Everything here *initiates* something at the active
+ * payment provider; the state changes that follow arrive over webhooks and are applied by
+ * billing/effects.ts (activateOrgSubscription, syncSeatsForSubscription, endSubscription).
+ */
+
+/** Creates (or reuses, if checkout was abandoned last time) the org row and starts a checkout
+ * for N seats of Pro. The org row is created *before* redirecting to the provider — its id
+ * rides in provider metadata (Stripe `metadata`, Razorpay `notes`) so the activation webhook
+ * can tell an org purchase from an individual one. */
 export async function createOrgCheckoutSession(
   user: SessionUser,
   opts: { seats: number; name: string; interval: 'month' | 'year' },
@@ -36,108 +41,26 @@ export async function createOrgCheckoutSession(
 
   const org = findOrgByOwner(user.id) ?? createPendingOrg(user.id, opts.name);
 
-  if (isStripeDemoMode()) {
-    // Demo mode: simulate Stripe checkout without API calls
-    const demoSession = createDemoCheckoutSession({
-      line_items: [buildProLineItem(opts.interval, opts.seats)],
-      customer_email: user.email || 'test@example.com',
-      client_reference_id: user.id,
-      metadata: { fk_purchase: 'org', fk_org_id: org.id, fk_seats: String(opts.seats) },
-      success_url: `${config.publicUrl}/team?checkout=success`,
-      cancel_url: `${config.publicUrl}/team?checkout=cancelled`,
-    });
-    return {
-      url: demoSession.url,
-      demo: true,
-      sessionId: demoSession.id,
-      note: 'Demo mode: call POST /v1/dev/stripe/webhook/checkout-completed with sessionId to simulate completion',
-    } as any;
-  }
-
-  const stripe = stripeClient();
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    line_items: [buildProLineItem(opts.interval, opts.seats)],
-    customer_email: user.email ?? undefined,
-    client_reference_id: user.id,
-    metadata: { fk_purchase: 'org', fk_org_id: org.id, fk_seats: String(opts.seats) },
-    subscription_data: { metadata: { fk_purchase: 'org', fk_org_id: org.id } },
-    success_url: `${config.publicUrl}/team?checkout=success`,
-    cancel_url: `${config.publicUrl}/team?checkout=cancelled`,
+  const result = await activeProvider().createCheckout({
+    user,
+    interval: opts.interval,
+    quantity: opts.seats,
+    purpose: 'org',
+    orgId: org.id,
   });
-  if (!session.url) throw new OrgActionError(502, 'Stripe did not return a checkout URL');
-  return { url: session.url };
+  if (!result.url) throw new OrgActionError(502, 'The payment provider did not return a checkout URL');
+  return result;
 }
 
-function subscriptionItemId(sub: Stripe.Subscription): string | null {
-  return sub.items.data[0]?.id ?? null;
-}
-
-// current_period_end moved from the subscription itself onto the subscription item in
-// recent Stripe API versions — read the item first, fall back to the subscription.
-function subscriptionPeriodEnd(sub: Stripe.Subscription): string | null {
-  const item = sub.items.data[0] as unknown as { current_period_end?: number } | undefined;
-  const seconds = item?.current_period_end ?? (sub as unknown as { current_period_end?: number }).current_period_end;
-  return typeof seconds === 'number' ? new Date(seconds * 1000).toISOString() : null;
-}
-
-/** The `checkout.session.completed` webhook's org branch (see billing/routes.ts) — retrieves
- * the subscription for its item id / quantity / period end (the webhook payload's
- * session.subscription is a bare id), then activates the org, creates the pool license,
- * and seats the owner, all in one transaction. */
-export async function activateOrgFromCheckout(session: Stripe.Checkout.Session): Promise<void> {
-  const orgId = session.metadata?.fk_org_id;
-  if (!orgId) return;
-  const org = findOrgById(orgId);
-  if (!org) return;
-
-  const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
-  if (!subscriptionId) return;
-
-  const stripe = stripeClient();
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-  const seats = subscription.items.data[0]?.quantity ?? Number(session.metadata?.fk_seats ?? '0');
-  const customerId = typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null);
-
-  db.transaction(() => {
-    activateOrg(org.id, seats);
-    createOrgPoolLicense(org.id, {
-      seats,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: subscriptionId,
-      stripeSubscriptionItemId: subscriptionItemId(subscription),
-      currentPeriodEnd: subscriptionPeriodEnd(subscription),
-    });
-    seatUser(org.id, org.owner_user_id, 'owner', null);
-  })();
-}
-
-/** `customer.subscription.updated`'s org hook — a no-op when the subscription isn't an
- * org's. The existing status UPDATE in billing/routes.ts already handles active/inactive;
- * this only reconciles seats_purchased (and the pool's grant) if they drifted, e.g. a
- * change made directly in the Stripe dashboard rather than through updateOrgSeats below. */
-export function syncOrgFromSubscription(subscription: Stripe.Subscription): void {
-  const org = findOrgBySubscriptionId(subscription.id);
-  if (!org) return;
-  const newSeats = subscription.items.data[0]?.quantity ?? org.seats_purchased;
-  if (newSeats !== org.seats_purchased) {
-    adjustOrgPoolForSeatChange(org.id, org.seats_purchased, newSeats);
-    setOrgSeatsPurchased(org.id, newSeats);
-  }
-}
-
-/** `customer.subscription.deleted`'s org hook — a no-op when the subscription isn't an org's. */
-export function markOrgCancelled(subscriptionId: string): void {
-  const org = findOrgBySubscriptionId(subscriptionId);
-  if (!org) return;
-  setOrgStatus(org.id, 'cancelled');
-}
-
-/** Owner-triggered seat count change. Stripe's hosted Customer Portal doesn't cleanly
- * support subscription-quantity edits, so this is a custom route calling the Stripe API
- * directly. Guarded so an owner can never silently evict a seated member, and adjusts the
- * pool's grant by the seat *delta* (not a reset) so a mid-cycle change doesn't hand out a
- * free quota refill. */
+/** Owner-triggered seat count change. Neither provider's hosted portal edits subscription
+ * quantity cleanly, so this calls the provider API directly. Guarded so an owner can never
+ * silently evict a seated member, and adjusts the pool's grant by the seat *delta* (not a
+ * reset) so a mid-cycle change doesn't hand out a free quota refill.
+ *
+ * Razorpay is materially stricter than Stripe here — it refuses quantity changes on UPI and
+ * eMandate subscriptions, and outside the authenticated/active states. Those refusals are
+ * deliberately allowed to propagate to the owner rather than being swallowed: the local pool
+ * must not be adjusted for a seat change the provider never actually made. */
 export async function updateOrgSeats(orgId: string, seats: number): Promise<void> {
   const org = findOrgById(orgId);
   if (!org) throw new OrgActionError(404, 'Team not found');
@@ -151,16 +74,27 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
   }
 
   const licenseRow = db
-    .prepare(`SELECT stripe_subscription_id, stripe_subscription_item_id FROM licenses WHERE org_id = ?`)
-    .get(orgId) as { stripe_subscription_id: string | null; stripe_subscription_item_id: string | null } | undefined;
-  if (!licenseRow?.stripe_subscription_id || !licenseRow.stripe_subscription_item_id) {
+    .prepare(
+      `SELECT stripe_subscription_id, stripe_subscription_item_id, billing_provider FROM licenses WHERE org_id = ?`,
+    )
+    .get(orgId) as
+    | { stripe_subscription_id: string | null; stripe_subscription_item_id: string | null; billing_provider: string | null }
+    | undefined;
+  const provider = activeProvider();
+  if (!licenseRow?.stripe_subscription_id) {
     throw new OrgActionError(400, 'This team has no active subscription to update');
   }
+  // Stripe edits quantity on the subscription *item*, so without that id there is nothing to
+  // update — surface the same clean 400 as a missing subscription rather than a provider error.
+  if (provider.name === 'stripe' && !licenseRow.stripe_subscription_item_id) {
+    throw new OrgActionError(400, 'This team has no active subscription to update');
+  }
+  assertProviderOwnsSubscription(licenseRow.billing_provider, provider.name);
 
-  const stripe = stripeClient();
-  await stripe.subscriptions.update(licenseRow.stripe_subscription_id, {
-    items: [{ id: licenseRow.stripe_subscription_item_id, quantity: seats }],
-    proration_behavior: 'create_prorations',
+  await provider.updateSeats({
+    subscriptionId: licenseRow.stripe_subscription_id,
+    subscriptionItemId: licenseRow.stripe_subscription_item_id,
+    seats,
   });
 
   adjustOrgPoolForSeatChange(orgId, org.seats_purchased, seats);
@@ -170,20 +104,19 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
 /** Owner-triggered subscription cancellation. Marks the subscription to cancel at the
  * end of the current billing period, allowing the team to use remaining credits until then. */
 export async function cancelOrgSubscription(orgId: string): Promise<void> {
-  if (!isStripeConfigured()) throw new OrgActionError(503, 'Billing is not configured on this server');
+  const provider = activeProvider();
+  if (!provider.isConfigured()) throw new OrgActionError(503, 'Billing is not configured on this server');
 
   const org = findOrgById(orgId);
   if (!org) throw new OrgActionError(404, 'Team not found');
 
   const licenseRow = db
-    .prepare(`SELECT stripe_subscription_id FROM licenses WHERE org_id = ?`)
-    .get(orgId) as { stripe_subscription_id: string | null } | undefined;
+    .prepare(`SELECT stripe_subscription_id, billing_provider FROM licenses WHERE org_id = ?`)
+    .get(orgId) as { stripe_subscription_id: string | null; billing_provider: string | null } | undefined;
   if (!licenseRow?.stripe_subscription_id) {
     throw new OrgActionError(400, 'This team has no active subscription to cancel');
   }
+  assertProviderOwnsSubscription(licenseRow.billing_provider, provider.name);
 
-  const stripe = stripeClient();
-  await stripe.subscriptions.update(licenseRow.stripe_subscription_id, {
-    cancel_at_period_end: true,
-  });
+  await provider.cancelAtPeriodEnd(licenseRow.stripe_subscription_id);
 }

@@ -4,7 +4,8 @@ import rateLimit from 'express-rate-limit';
 import { requireSession } from '../auth/sessions.js';
 import { findUserByEmail, markEmailVerified } from '../auth/users.js';
 import { parseInterval } from '../billing/pricing.js';
-import { isStripeConfigured } from '../billing/stripe.js';
+import { BillingConfigError, isBillingConfigured } from '../billing/provider.js';
+import { RazorpayError } from '../billing/razorpay.js';
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { getLicenseForUser } from '../licenseStore.js';
@@ -114,7 +115,7 @@ router.get('/', requireSession, (req, res) => {
 });
 
 router.post('/checkout', requireSession, async (req, res) => {
-  if (!isStripeConfigured()) {
+  if (!isBillingConfigured()) {
     res.status(503).json({ error: 'Team plans require billing to be configured on this server' });
     return;
   }
@@ -144,7 +145,7 @@ router.post('/checkout', requireSession, async (req, res) => {
     });
     res.json(result);
   } catch (err) {
-    if (err instanceof OrgActionError) {
+    if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
       res.status(err.status).json({ error: err.message });
       return;
     }
@@ -173,7 +174,7 @@ router.post('/seats', requireSession, requireOrgOwner, async (req, res) => {
     await updateOrgSeats(req.org!.id, seatCount);
     res.json({ ok: true });
   } catch (err) {
-    if (err instanceof OrgActionError) {
+    if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
       res.status(err.status).json({ error: err.message });
       return;
     }
@@ -186,7 +187,7 @@ router.post('/cancel-subscription', requireSession, requireOrgOwner, async (req,
     await cancelOrgSubscription(req.org!.id);
     res.json({ ok: true });
   } catch (err) {
-    if (err instanceof OrgActionError) {
+    if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
       res.status(err.status).json({ error: err.message });
       return;
     }

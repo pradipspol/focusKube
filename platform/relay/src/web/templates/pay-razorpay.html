@@ -1,0 +1,52 @@
+<h1>Complete your payment</h1>
+<p class="sub">You'll be asked to authorise the subscription with Razorpay. Your plan activates as soon as the payment is confirmed.</p>
+
+<div class="card">
+  <div id="pay-status">Opening Razorpay&hellip;</div>
+  <div class="button-row" style="margin-top:16px;">
+    <button type="button" id="pay-open">Pay with Razorpay</button>
+    <a href="{{RETURN_TO}}"><button type="button" class="secondary">Cancel</button></a>
+  </div>
+</div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+  const statusEl = document.getElementById('pay-status');
+
+  // Entitlement is granted by the subscription.activated webhook, never here — this handler
+  // only decides where to send the customer next.
+  function openCheckout() {
+    if (typeof Razorpay === 'undefined') {
+      statusEl.innerHTML = '<div class="error">Could not reach Razorpay. Check your connection and try again.</div>';
+      return;
+    }
+    statusEl.textContent = 'Waiting for Razorpay…';
+    const checkout = new Razorpay({
+      key: '{{RAZORPAY_KEY_ID}}',
+      subscription_id: '{{SUBSCRIPTION_ID}}',
+      name: 'FocusKube',
+      description: 'FocusKube Pro subscription',
+      handler: function () {
+        statusEl.innerHTML = '<div class="notice">Payment received — activating your plan…</div>';
+        location.href = '{{RETURN_TO}}?checkout=success';
+      },
+      modal: {
+        ondismiss: function () {
+          statusEl.innerHTML = '<div class="notice">Payment cancelled. You can try again whenever you’re ready.</div>';
+        },
+      },
+    });
+    checkout.on('payment.failed', function (response) {
+      const reason = (response && response.error && response.error.description) || 'The payment could not be completed.';
+      // textContent, not innerHTML: this string comes from Razorpay, not from us.
+      const box = document.createElement('div');
+      box.className = 'error';
+      box.textContent = reason;
+      statusEl.replaceChildren(box);
+    });
+    checkout.open();
+  }
+
+  document.getElementById('pay-open').addEventListener('click', openCheckout);
+  openCheckout();
+</script>

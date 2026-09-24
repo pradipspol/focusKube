@@ -97,6 +97,36 @@ db.exec(`
     processed_at TEXT NOT NULL
   );
 
+  -- Webhook de-duplication for BOTH payment providers (ids stored as "<provider>:<event-id>";
+  -- Stripe's own event id, Razorpay's x-razorpay-event-id header). Supersedes stripe_events
+  -- above, which is left in place untouched rather than migrated — its rows are only dedupe
+  -- markers for events already processed.
+  CREATE TABLE IF NOT EXISTS billing_events (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+  );
+
+  -- Razorpay subscriptions must reference a pre-created Plan object (no Stripe-style inline
+  -- price_data), so plans are created on demand and cached here by interval+currency+amount —
+  -- otherwise every checkout would mint another duplicate plan at Razorpay.
+  CREATE TABLE IF NOT EXISTS razorpay_plans (
+    plan_key TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  -- Who started each Razorpay checkout. A subscription has no local row until its
+  -- activation webhook arrives, so this is what lets /pay/razorpay/:id prove the visitor
+  -- owns the subscription it is about to open a payment modal for (that modal carries the
+  -- buyer's contact details). Recorded locally rather than read back from Razorpay so the
+  -- payment page doesn't depend on a live API call at the moment of paying.
+  CREATE TABLE IF NOT EXISTS razorpay_checkouts (
+    subscription_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
+
   -- Team (multi-seat) licensing. An org's pooled credit balance lives as a row in
   -- the licenses table itself (org_id set, user_id NULL — already legal today, see
   -- seedDevLicenseIfEmpty's NULL user_id row), not a separate table, so the existing
@@ -193,6 +223,11 @@ ensureColumn('licenses', 'quota_granted', 'quota_granted INTEGER NOT NULL DEFAUL
 // the subscription itself (org/billing.ts's updateOrgSeats).
 ensureColumn('licenses', 'stripe_subscription_item_id', 'stripe_subscription_item_id TEXT');
 ensureColumn('licenses', 'current_period_end', 'current_period_end TEXT');
+// Which payment provider owns this row's subscription. The stripe_* id columns above are
+// reused as "the active provider's ids" rather than renamed (Razorpay leaves
+// stripe_subscription_item_id NULL — it carries quantity on the subscription itself), so
+// this column is what disambiguates them. See billing/provider.ts.
+ensureColumn('licenses', 'billing_provider', 'billing_provider TEXT');
 
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_licenses_org ON licenses(org_id) WHERE org_id IS NOT NULL`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_licenses_subscription ON licenses(stripe_subscription_id)`);

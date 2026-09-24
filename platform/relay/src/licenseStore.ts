@@ -206,10 +206,11 @@ export function refundQuota(key: string): void {
 }
 
 /** Resets a license's quota_remaining back to its quota_granted at the start of each
- * billing cycle (see billing/routes.ts's new 'invoice.paid' webhook case) — for a Team
+ * billing cycle (driven by billing/effects.ts's renewSubscriptionQuota, which both providers'
+ * webhooks call — Stripe's 'invoice.paid' and Razorpay's renewal 'subscription.charged') — for a Team
  * pool, quota_granted is also recomputed from the org's *current* seat count first, so a
  * seat-count change since the last cycle is picked up correctly. Trial licenses have no
- * stripe_subscription_id, so this is never called for them — the one-time trial grant is
+ * subscription id, so this is never called for them — the one-time trial grant is
  * unaffected. */
 export function resetQuotaForSubscription(subscriptionId: string): void {
   const now = new Date().toISOString();
@@ -259,14 +260,18 @@ export function createLicenseForUser(
 
 /** The Team counterpart to createLicenseForUser above: issues (or replaces) the one pooled
  * license row an org can hold — org_id set, user_id NULL (see db.ts's schema comment on
- * this being already-legal). Used by org/billing.ts's activateOrgFromCheckout. */
+ * this being already-legal). Used by billing/effects.ts's activateOrgSubscription.
+ *
+ * The id options are provider-neutral (Stripe or Razorpay); they land in the stripe_*-named
+ * columns, which db.ts documents as "the active provider's ids". subscriptionItemId is
+ * Stripe-only — Razorpay carries quantity on the subscription itself and passes null. */
 export function createOrgPoolLicense(
   orgId: string,
   opts: {
     seats: number;
-    stripeCustomerId: string | null;
-    stripeSubscriptionId: string | null;
-    stripeSubscriptionItemId: string | null;
+    customerId: string | null;
+    subscriptionId: string | null;
+    subscriptionItemId: string | null;
     currentPeriodEnd: string | null;
   },
 ): string {
@@ -284,9 +289,9 @@ export function createOrgPoolLicense(
       TEAM_PLAN,
       granted,
       granted,
-      opts.stripeCustomerId,
-      opts.stripeSubscriptionId,
-      opts.stripeSubscriptionItemId,
+      opts.customerId,
+      opts.subscriptionId,
+      opts.subscriptionItemId,
       opts.currentPeriodEnd,
       now,
       orgId,
@@ -304,9 +309,9 @@ export function createOrgPoolLicense(
       TEAM_PLAN,
       granted,
       granted,
-      opts.stripeCustomerId,
-      opts.stripeSubscriptionId,
-      opts.stripeSubscriptionItemId,
+      opts.customerId,
+      opts.subscriptionId,
+      opts.subscriptionItemId,
       opts.currentPeriodEnd,
       now,
       now,

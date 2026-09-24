@@ -9,6 +9,7 @@ import { streamChatTurn, type ChatTool, type ChatTurnMessage } from './llm/chatP
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
 import { billingRouter, handleStripeWebhook } from './billing/routes.js';
+import { handleRazorpayWebhook } from './billing/razorpayWebhook.js';
 import { orgRouter } from './org/routes.js';
 import { devRouter } from './dev/routes.js';
 import { webRouter } from './web/pages.js';
@@ -25,6 +26,11 @@ app.use(cors());
 // must be registered — with express.raw(), not express.json() — before the app-wide JSON
 // body parser below runs for every other route.
 app.post('/v1/billing/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
+// Same raw-body requirement for Razorpay, whose signature is an HMAC over the exact bytes
+// (see billing/razorpayWebhook.ts). Only one provider is active per deployment, but both
+// endpoints stay mounted so switching BILLING_PROVIDER needs no route change.
+app.post('/v1/billing/webhook/razorpay', express.raw({ type: 'application/json' }), handleRazorpayWebhook);
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());

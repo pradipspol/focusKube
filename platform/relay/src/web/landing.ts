@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { proUnitAmountCents } from '../billing/pricing.js';
+import { formatProMonthlyEquivalent } from '../billing/pricing.js';
 import { config } from '../config.js';
 import { FREE_TRIAL_DURATION_DAYS, FREE_TRIAL_QUOTA } from '../licenseStore.js';
 import { landingPage, renderTemplate } from './layout.js';
@@ -15,8 +15,10 @@ router.get('/focusKube', (_req, res) => {
     TRIAL_QUOTA: String(FREE_TRIAL_QUOTA),
     TRIAL_DAYS: String(FREE_TRIAL_DURATION_DAYS),
     PRO_QUOTA: String(config.pricing.proQuota),
-    PRO_PRICE_MONTHLY: (config.pricing.proPriceMonthlyCents / 100).toFixed(2),
-    PRO_PRICE_ANNUAL_PER_MONTH: (proUnitAmountCents('year') / 12 / 100).toFixed(2),
+    // Already formatted with the active provider's currency symbol ($19.99 / ₹1999) —
+    // the template must not prepend one of its own.
+    PRO_PRICE_MONTHLY: formatProMonthlyEquivalent('month'),
+    PRO_PRICE_ANNUAL_PER_MONTH: formatProMonthlyEquivalent('year'),
     PRO_ANNUAL_DISCOUNT_PERCENT: String(config.pricing.annualDiscountPercent),
     ORG_MIN_SEATS: String(config.org.minSeats),
   });

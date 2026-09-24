@@ -1,6 +1,14 @@
 import 'dotenv/config';
 import path from 'node:path';
 
+/** parseInt returns NaN for a malformed value, which would otherwise travel all the way to
+ * the payment provider as a plan amount or billing-cycle count. Money-path env vars use
+ * this instead so a typo falls back to the default. */
+function intEnv(raw: string | undefined, fallback: number): number {
+  const parsed = parseInt(raw ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const publicUrl = process.env.RELAY_PUBLIC_URL ?? 'http://localhost:4001';
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 
@@ -63,6 +71,24 @@ export const config = {
     demoMode: process.env.STRIPE_DEMO_MODE === 'true' || (!process.env.STRIPE_SECRET_KEY && nodeEnv === 'development'),
   },
 
+  // Which payment provider handles subscriptions on this deployment. Exactly one is active
+  // at a time — see billing/provider.ts's activeProvider(). Stripe stays the default so an
+  // existing deployment keeps working with no env change.
+  billing: {
+    provider: (process.env.BILLING_PROVIDER === 'razorpay' ? 'razorpay' : 'stripe') as 'stripe' | 'razorpay',
+  },
+
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID ?? '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
+    // The webhook signing secret from the Razorpay dashboard — NOT the API key secret above.
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+    // Razorpay has no open-ended subscription: total_count (how many billing cycles to run)
+    // is required at creation, so "forever" is expressed as ~100 years' worth of cycles.
+    totalCountMonthly: intEnv(process.env.RAZORPAY_TOTAL_COUNT_MONTHLY, 1200),
+    totalCountYearly: intEnv(process.env.RAZORPAY_TOTAL_COUNT_YEARLY, 100),
+  },
+
   // The Pro plan's price and quota — used to build Stripe Checkout line items on the fly
   // (see billing/pricing.ts) rather than pointing at a pre-created Stripe Price object, so
   // changing a number here takes effect on the next checkout with no Stripe dashboard step.
@@ -70,6 +96,11 @@ export const config = {
     proPriceMonthlyCents: parseInt(process.env.PRO_PRICE_MONTHLY_CENTS ?? '1999', 10),
     annualDiscountPercent: parseInt(process.env.PRO_ANNUAL_DISCOUNT_PERCENT ?? '10', 10),
     proQuota: parseInt(process.env.PRO_PLAN_QUOTA ?? '2000', 10),
+    // Prices above are authored in USD. Razorpay bills in INR, so the INR amount is this
+    // multiple of the USD figure ($19.99 -> ₹1999 at the default 100) rather than a live FX
+    // rate: a Razorpay Plan's amount is immutable, so a drifting rate would mint a new plan
+    // per change and leave customers on different prices. Bump this env to re-price.
+    usdToInrRate: intEnv(process.env.USD_TO_INR_RATE, 100),
   },
 
   // Team (multi-seat) licensing — an org owner buys N Pro seats and invites teammates by
