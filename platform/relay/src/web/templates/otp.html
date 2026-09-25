@@ -31,7 +31,7 @@
     channel = destination.includes('@') ? 'email' : 'sms';
     const res = await fetch('/v1/auth/otp/request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ destination, channel }) });
     const body = await res.json();
-    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }
     requestForm.style.display = 'none';
     verifyForm.style.display = 'grid';
     document.getElementById('sent-to').textContent = 'Code sent to ' + destination;
@@ -41,7 +41,7 @@
     const data = Object.fromEntries(new FormData(e.target));
     const res = await fetch('/v1/auth/otp/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ destination, channel, code: data.code }) });
     const body = await res.json();
-    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }
     location.href = validNext || '/account';
   });
 </script>

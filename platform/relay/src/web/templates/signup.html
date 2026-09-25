@@ -86,7 +86,7 @@
     delete body.confirmPassword;
     const res = await fetch('/v1/auth/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const data = await res.json();
-    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
     location.href = validNext || '/account';
   });
 </script>

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { currentNonce } from '../security/csp.js';
 
 const templatesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'templates');
 
@@ -17,6 +18,10 @@ export function renderTemplate(name: string, substitutions?: Record<string, stri
   for (const [key, value] of Object.entries(substitutions ?? {})) {
     html = html.replaceAll(`{{${key}}}`, value);
   }
+  // Stamp the CSP nonce onto this template's own inline <script> tag(s) so it runs under a
+  // script-src that otherwise has no 'unsafe-inline' — leaves `<script src="...">` (e.g.
+  // pay-razorpay.html's Razorpay SDK tag) alone, since those are allowed by host instead.
+  html = html.replace(/<script>/g, `<script nonce="${currentNonce()}">`);
   return html;
 }
 
@@ -235,7 +240,7 @@ function sidebar(currentPath: string): string {
  * (e.g. '/account'), not req.path, since query strings shouldn't affect the match. */
 export function page(title: string, body: string, currentPath: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} — FocusKube</title><style>${styles}</style></head><body>${nav()}<div class="layout-shell">${sidebar(currentPath)}<div class="page-container">${body}</div></div><script>${navScript}</script></body></html>`;
+<title>${title} — FocusKube</title><style nonce="${currentNonce()}">${styles}</style><script nonce="${currentNonce()}" src="/static/security.js"></script></head><body>${nav()}<div class="layout-shell">${sidebar(currentPath)}<div class="page-container">${body}</div></div><script nonce="${currentNonce()}">${navScript}</script></body></html>`;
 }
 
 /** Bare-bones nav for landingPage() below — brand plus Log in/Sign up only, no Download
@@ -257,7 +262,7 @@ function landingNav(): string {
  * (account, profile, download, support, /home) uses and always renders the full sidebar. */
 export function landingPage(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} — FocusKube</title><style>${styles}</style></head><body>${landingNav()}<div class="landing-container">${body}</div></body></html>`;
+<title>${title} — FocusKube</title><style nonce="${currentNonce()}">${styles}</style><script nonce="${currentNonce()}" src="/static/security.js"></script></head><body>${landingNav()}<div class="landing-container">${body}</div></body></html>`;
 }
 
 /** Login/signup: same bare nav as landingPage(), but the body renders as a single card
@@ -265,5 +270,5 @@ export function landingPage(title: string, body: string): string {
  * the "FOCUSKUBE" eyebrow above the card matches the desktop app's own SignInGate. */
 export function authPage(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} — FocusKube</title><style>${styles}</style></head><body><div class="auth-shell">${landingNav()}<div class="auth-center"><div class="auth-card"><div class="auth-brand">FocusKube</div>${body}</div></div></div></body></html>`;
+<title>${title} — FocusKube</title><style nonce="${currentNonce()}">${styles}</style><script nonce="${currentNonce()}" src="/static/security.js"></script></head><body><div class="auth-shell">${landingNav()}<div class="auth-center"><div class="auth-card"><div class="auth-brand">FocusKube</div>${body}</div></div></div></body></html>`;
 }

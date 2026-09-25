@@ -1,9 +1,10 @@
 import http from 'node:http';
 import express from 'express';
-import cors from 'cors';
+import compression from 'compression';
 import 'express-async-errors';
 import { rateLimit } from 'express-rate-limit';
 import { config } from './config.js';
+import { applySecurityMiddleware } from './security/security.js';
 import { HttpError } from './util/httpError.js';
 import { contextsRouter } from './routes/contexts.js';
 import { resourcesRouter } from './routes/resources.js';
@@ -43,11 +44,11 @@ const limiter = rateLimit({
 // apply rate limiter to all requests
 app.use(limiter);
 
+// Picks Brotli when the browser's Accept-Encoding advertises it, else falls back to gzip.
+app.use(compression());
 
-app.use(cors({
-  origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(','),
-  credentials: true,
-}));
+applySecurityMiddleware(app, { corsOrigin: config.corsOrigin });
+
 app.use(express.json({ limit: '5mb' }));
 // The SAML ACS endpoint receives a form-encoded POST from the IdP.
 app.use(express.urlencoded({ extended: false, limit: '5mb' }));

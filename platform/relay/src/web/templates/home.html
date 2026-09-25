@@ -53,7 +53,7 @@
       // Covered by a team's pooled plan — full management lives on /team, not here.
       const org = acct.license.org;
       planHtml =
-        '<p>Covered by <strong>' + org.name + '</strong>&rsquo;s team plan &middot; ' + acct.license.quotaRemaining + ' of ' + acct.license.quotaGranted + ' pooled credits left</p>' +
+        '<p>Covered by <strong>' + esc(org.name) + '</strong>&rsquo;s team plan &middot; ' + acct.license.quotaRemaining + ' of ' + acct.license.quotaGranted + ' pooled credits left</p>' +
         '<p class="links"><a href="/team">' + (org.role === 'owner' ? 'Manage your team' : 'View team details') + ' &rarr;</a></p>';
     } else if (acct.license) {
       const trialNotice = acct.license.trialEndsAt
@@ -75,7 +75,7 @@
         trialNotice +
         '<div class="license-row">' +
         '<div class="license-field">' +
-        '<input type="password" class="license-input" id="license-key" readonly value="' + acct.license.key.replace(/"/g, '&quot;') + '">' +
+        '<input type="password" class="license-input" id="license-key" readonly value="' + esc(acct.license.key) + '">' +
         '<button type="button" class="license-toggle" id="license-toggle" aria-label="Show key" title="Show key">' + EYE_ICON + '</button>' +
         '</div>' +
         '<form id="regen"><button type="submit" class="secondary">Regenerate key</button></form>' +

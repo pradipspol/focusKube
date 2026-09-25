@@ -1,9 +1,12 @@
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
-import cors from 'cors';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import 'express-async-errors';
 import { config } from './config.js';
+import { applySecurityMiddleware } from './security/security.js';
 import { devLicenseKey, licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota } from './licenseStore.js';
 import { streamChatTurn, type ChatTool, type ChatTurnMessage } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
@@ -19,8 +22,18 @@ import { searchDocs } from './docs/search.js';
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_MAX_TOKENS = 12048;
 
+const staticDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'web', 'static');
+
 const app = express();
-app.use(cors());
+// Picks Brotli when the browser's Accept-Encoding advertises it, else falls back to gzip.
+app.use(compression());
+
+applySecurityMiddleware(app);
+
+// The shared client-side esc() helper (web/static/security.js) loaded by every page shell
+// (see web/layout.ts) — served plainly, no auth, same as the CSP itself.
+app.use('/static', express.static(staticDir));
+
 
 // Stripe's signature check needs the exact raw bytes of the request body, so this route
 // must be registered — with express.raw(), not express.json() — before the app-wide JSON

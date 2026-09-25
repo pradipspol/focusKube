@@ -10,8 +10,7 @@
     const profileRes = await fetch('/v1/account/profile');
     const { user } = await profileRes.json();
 
-    const esc = (value) => (value || '').replace(/"/g, '&quot;');
-    const avatarSrc = user.avatarDataUrl || '';
+    const avatarSrc = esc(user.avatarDataUrl || '');
 
     document.getElementById('content').innerHTML =
       '<div class="card">' +
@@ -125,7 +124,7 @@
       };
       if (pendingAvatarDataUrl !== undefined) body.avatarDataUrl = pendingAvatarDataUrl;
       const res = await fetch('/v1/account/profile', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      if (!res.ok) { const data = await res.json(); document.getElementById('profile-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      if (!res.ok) { const data = await res.json(); document.getElementById('profile-err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
       document.getElementById('profile-err').innerHTML = '<div class="notice">Saved.</div>';
     });
   })();

@@ -23,7 +23,6 @@
   const MIN_SEATS = {{MIN_SEATS}};
   const MAX_SEATS = {{MAX_SEATS}};
 
-  const esc = (value) => (value == null ? '' : String(value)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
 
   function noTeamCard() {
@@ -132,7 +131,7 @@
         body.seats = Number(body.seats);
         const res = await fetch('/v1/org/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const result = await res.json();
-        if (!res.ok) { document.getElementById('create-err').innerHTML = '<div class="error">' + result.error + '</div>'; return; }
+        if (!res.ok) { document.getElementById('create-err').innerHTML = '<div class="error">' + esc(result.error) + '</div>'; return; }
         if (result.url) location.href = result.url;
       });
       return;
@@ -186,7 +185,7 @@
       const seats = Number(new FormData(e.target).get('seats'));
       const res = await fetch('/v1/org/seats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seats }) });
       const body = await res.json();
-      if (!res.ok) { document.getElementById('seats-err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('seats-err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }
       location.reload();
     });
 
@@ -196,7 +195,7 @@
       const email = new FormData(e.target).get('email');
       const res = await fetch('/v1/org/invites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
       const body = await res.json();
-      if (!res.ok) { document.getElementById('invite-err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('invite-err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }
       location.reload();
     });
 

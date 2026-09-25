@@ -1,7 +1,5 @@
 <div id="content">Loading&hellip;</div>
 <script>
-  const esc = (value) => (value == null ? '' : String(value)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
   (async () => {
     const token = new URLSearchParams(location.search).get('token');
     const content = document.getElementById('content');
@@ -50,7 +48,7 @@
     document.getElementById('accept').addEventListener('click', async () => {
       const res = await fetch('/v1/org/invites/by-token/' + encodeURIComponent(token) + '/accept', { method: 'POST' });
       const body = await res.json();
-      if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + body.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }
       location.href = '/home';
     });
   })();

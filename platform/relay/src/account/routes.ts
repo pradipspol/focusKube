@@ -13,6 +13,7 @@ import {
 import { createLicenseForUser, getLicenseForUser, grantFreeTrial, hasHadTrial } from '../licenseStore.js';
 import { getEffectiveLicenseForUser } from '../org/entitlement.js';
 import { findActiveMembership, findOrgByOwner, regenerateMemberKey, removeMember } from '../org/store.js';
+import { isValidAvatarDataUrl, isValidEmail } from '../security/validation.js';
 import { db } from '../db.js';
 
 const router = Router();
@@ -99,6 +100,10 @@ router.patch('/profile', requireSession, (req, res) => {
     res.status(400).json({ error: 'Image is too large — please use a file under 1MB' });
     return;
   }
+  if (typeof avatarDataUrl === 'string' && avatarDataUrl.length > 0 && !isValidAvatarDataUrl(avatarDataUrl)) {
+    res.status(400).json({ error: 'Invalid image data' });
+    return;
+  }
 
   const trim = (value: string | null | undefined): string | null | undefined =>
     typeof value === 'string' ? value.trim() || null : value;
@@ -137,7 +142,7 @@ router.post('/password', requireSession, async (req, res) => {
 router.post('/email', requireSession, async (req, res) => {
   const { newEmail, currentPassword } = req.body as { newEmail?: string; currentPassword?: string };
   const normalized = newEmail?.trim().toLowerCase();
-  if (!normalized || !normalized.includes('@')) {
+  if (!isValidEmail(normalized)) {
     res.status(400).json({ error: 'A valid email is required' });
     return;
   }

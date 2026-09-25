@@ -3,6 +3,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireSession } from '../auth/sessions.js';
 import { findUserByEmail, markEmailVerified } from '../auth/users.js';
+import { isValidEmail, validateOrgName } from '../security/validation.js';
 import { parseInterval } from '../billing/pricing.js';
 import { BillingConfigError, isBillingConfigured } from '../billing/provider.js';
 import { RazorpayError } from '../billing/razorpay.js';
@@ -37,10 +38,6 @@ import {
 
 const router = Router();
 export const orgRouter = router;
-
-// Deliberately permissive, same rationale as auth/routes.ts's own EMAIL_RE — a coarse
-// server-side sanity check, not the source of truth for "is this a real address."
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const publicInviteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -132,15 +129,16 @@ router.post('/checkout', requireSession, async (req, res) => {
     res.status(400).json({ error: `Seats must be between ${config.org.minSeats} and ${config.org.maxSeats}` });
     return;
   }
-  if (!name || !name.trim()) {
-    res.status(400).json({ error: 'A team name is required' });
+  const validatedName = validateOrgName(name);
+  if (typeof validatedName !== 'string') {
+    res.status(400).json(validatedName);
     return;
   }
 
   try {
     const result = await createOrgCheckoutSession(req.user!, {
       seats: seatCount,
-      name: name.trim(),
+      name: validatedName,
       interval: parseInterval(interval),
     });
     res.json(result);
@@ -155,11 +153,12 @@ router.post('/checkout', requireSession, async (req, res) => {
 
 router.patch('/', requireSession, requireOrgOwner, (req, res) => {
   const { name } = req.body as { name?: string };
-  if (!name || !name.trim()) {
-    res.status(400).json({ error: 'A team name is required' });
+  const validatedName = validateOrgName(name);
+  if (typeof validatedName !== 'string') {
+    res.status(400).json(validatedName);
     return;
   }
-  renameOrg(req.org!.id, name.trim());
+  renameOrg(req.org!.id, validatedName);
   res.json({ ok: true });
 });
 
@@ -198,7 +197,7 @@ router.post('/cancel-subscription', requireSession, requireOrgOwner, async (req,
 router.post('/invites', requireSession, requireOrgOwner, async (req, res) => {
   const { email } = req.body as { email?: string };
   const normalized = email?.trim().toLowerCase();
-  if (!normalized || !EMAIL_RE.test(normalized)) {
+  if (!isValidEmail(normalized)) {
     res.status(400).json({ error: 'A valid email address is required' });
     return;
   }

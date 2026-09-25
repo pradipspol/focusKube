@@ -8,7 +8,7 @@
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('./dist', { recursive: true, force: true })\"",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/web/templates', 'dist/web/templates', { recursive: true })\"",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/web/templates', 'dist/web/templates', { recursive: true }); require('fs').cpSync('src/web/static', 'dist/web/static', { recursive: true })\"",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "ingest:k8s-docs": "tsx scripts/ingest-k8s-docs.ts"
@@ -17,6 +17,7 @@
     "@anthropic-ai/sdk": "^0.124.0",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^13.0.3",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
@@ -24,6 +25,7 @@
     "express-async-errors": "^3.1.1",
     "express-rate-limit": "^8.7.0",
     "google-auth-library": "^11.0.2",
+    "helmet": "^8.1.0",
     "nodemailer": "^10.0.1",
     "openai": "^7.15.0",
     "stripe": "^22.6.1",
@@ -32,6 +34,7 @@
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",

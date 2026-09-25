@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { config } from '../config.js';
 import { db } from '../db.js';
+import { isValidEmail } from '../security/validation.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../notify/email.js';
 import { sendOtpSms } from '../notify/sms.js';
 import { randomToken, sha256 } from './crypto.js';
@@ -35,11 +36,6 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-// Deliberately permissive (matches the HTML5 type="email" spirit) — this only guards
-// against obviously malformed input server-side; the client's own check (signup.html)
-// is what gives the user immediate feedback.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 router.post('/signup', authLimiter, async (req, res) => {
   const { email, password, firstName, lastName } = req.body as {
     email?: string;
@@ -47,7 +43,7 @@ router.post('/signup', authLimiter, async (req, res) => {
     firstName?: string;
     lastName?: string;
   };
-  if (!email || !EMAIL_RE.test(email)) {
+  if (!isValidEmail(email)) {
     res.status(400).json({ error: 'A valid email address is required' });
     return;
   }

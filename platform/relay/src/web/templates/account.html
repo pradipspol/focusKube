@@ -56,11 +56,11 @@
     if (!meRes.ok) { location.href = '/login'; return; }
     const profileRes = await fetch('/v1/account/profile');
     const { user } = await profileRes.json();
-    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+    const fullName = esc([user.firstName, user.lastName].filter(Boolean).join(' '));
     let tfaEnabled = !!user.twoFactorEnabled;
 
     document.getElementById('content').innerHTML =
-      '<p class="sub">Signed in as ' + (fullName ? fullName + ' &middot; ' : '') + (user.email || user.phone) + '</p>' +
+      '<p class="sub">Signed in as ' + (fullName ? fullName + ' &middot; ' : '') + esc(user.email || user.phone) + '</p>' +
 
       '<div class="card">' +
       '<h2>Username</h2>' +
@@ -95,8 +95,8 @@
 
       '<div class="card">' +
       '<h2>Connected sign-in methods</h2>' +
-      '<p class="sub">Email: ' + (user.email || '—') + (user.email ? (user.emailVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
-      '<p class="sub">Phone: ' + (user.phone || 'Not set') + (user.phone ? (user.phoneVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
+      '<p class="sub">Email: ' + (user.email ? esc(user.email) : '—') + (user.email ? (user.emailVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
+      '<p class="sub">Phone: ' + (user.phone ? esc(user.phone) : 'Not set') + (user.phone ? (user.phoneVerified ? ' (verified)' : ' (unverified)') : '') + '</p>' +
       '<p class="sub">Google: ' + (user.hasGoogle ? 'Linked' : 'Not linked') + '</p>' +
       '</div>' +
 
@@ -117,7 +117,7 @@
       const body = Object.fromEntries(new FormData(e.target));
       const res = await fetch('/v1/account/email', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
-      if (!res.ok) { document.getElementById('email-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('email-err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
       document.getElementById('email-err').innerHTML = '<div class="notice">Saved.</div>';
     });
 
@@ -132,7 +132,7 @@
       delete body.confirmPassword;
       const res = await fetch('/v1/account/password', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
-      if (!res.ok) { document.getElementById('pw-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('pw-err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
       e.target.reset();
       document.getElementById('pw-err').innerHTML = '<div class="notice">Password saved.</div>';
     });
@@ -142,7 +142,7 @@
       const nextEnabled = !tfaEnabled;
       const res = await fetch('/v1/account/2fa', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled: nextEnabled }) });
       const data = await res.json();
-      if (!res.ok) { document.getElementById('tfa-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('tfa-err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
       tfaEnabled = nextEnabled;
       const status = document.getElementById('tfa-status');
       status.textContent = tfaEnabled ? 'Enabled' : 'Disabled';
@@ -157,7 +157,7 @@
       if (typed !== 'DELETE') return;
       const res = await fetch('/v1/account/delete', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ confirm: typed }) });
       const data = await res.json();
-      if (!res.ok) { document.getElementById('delete-err').innerHTML = '<div class="error">' + data.error + '</div>'; return; }
+      if (!res.ok) { document.getElementById('delete-err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
       location.href = '/focusKube';
     });
   })();
