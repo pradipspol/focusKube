@@ -2,6 +2,7 @@ type StartPayload = {
   context?: string;
   namespace?: string;
   plural: string;
+  resourceVersion?: string;
 };
 
 type InboundMessage =
@@ -176,7 +177,7 @@ self.onmessage = (event: MessageEvent<InboundMessage>) => {
     disposed = false;
     reconnectAttempts = 0;
     isForbidden = false;
-    lastResourceVersion = undefined;
+    lastResourceVersion = msg.payload.resourceVersion;
     activePayload = msg.payload;
     clearReconnect();
     cleanupSocket();

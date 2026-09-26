@@ -22,6 +22,8 @@ export interface KubeAccessOptions {
 export interface PagedResourceList {
   items: any[];
   continue?: string;
+  resourceVersion?: string;
+  remainingItemCount?: number;
 }
 
 /** Registry of resource kinds the explorer can browse generically. */
@@ -137,39 +139,50 @@ export async function listResourcePage(
   plural: string,
   context?: string,
   namespace?: string,
-  options: KubeAccessOptions & { limit?: number; continue?: string; attributes?: string[] } = {},
+  options: KubeAccessOptions & {
+    limit?: number;
+    continue?: string;
+    attributes?: string[];
+  } = {},
 ): Promise<PagedResourceList> {
   const rk = resolveKind(plural);
-  const attributes = options.attributes;
-  if (plural !== 'configmaps' && plural !== 'secrets') {
-    return { items: await listResource(plural, context, namespace, options) };
-  }
-
   const kubeConfig = await kube.rawConfig(context, options);
-  const api = kubeConfig.makeApiClient(k8s.CoreV1Api);
+  const api = k8s.KubernetesObjectApi.makeApiClient(kubeConfig);
   const isNamespaced = !!rk.namespaced && !!namespace;
-  const _continue = options.continue;
-  const limit = options.limit;
-
-  const res = await callK8s(() => {
-    if (plural === 'configmaps') {
-      return isNamespaced
-        ? api.listNamespacedConfigMap(namespace!, undefined, undefined, _continue, undefined, undefined, limit)
-        : api.listConfigMapForAllNamespaces(undefined, _continue, undefined, undefined, limit);
-    }
-    return isNamespaced
-      ? api.listNamespacedSecret(namespace!, undefined, undefined, _continue, undefined, undefined, limit)
-      : api.listSecretForAllNamespaces(undefined, _continue, undefined, undefined, limit);
-  }, { action: 'list', plural: rk.plural, context, namespace: isNamespaced ? namespace : undefined, azureConfigDir: options.azureConfigDir }, {
+  const res = await callK8s(
+    () => api.list(
+      rk.apiVersion,
+      rk.kind,
+      isNamespaced ? namespace : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      options.limit,
+      options.continue,
+    ),
+    { action: 'list', plural: rk.plural, context, namespace: isNamespaced ? namespace : undefined, azureConfigDir: options.azureConfigDir }, {
     timeoutMs: config.k8sListTimeoutMs,
   });
 
   const body = unwrapBody<any>(res);
-  let items = Array.isArray(body.items) ? body.items.map((item: any) => sanitizeListObject(item, plural)) : [];
+  let items = Array.isArray(body.items) ? body.items : [];
+  if (plural === 'configmaps' || plural === 'secrets') {
+    items = items.map((item: any) => sanitizeListObject(item, plural));
+  }
+  const attributes = options.attributes;
   if (attributes && attributes.length > 0) {
     items = items.map((item: any) => selectAttributes(item, attributes));
   }
-  return { items, continue: body.metadata?.continue || undefined };
+  return {
+    items,
+    continue: body.metadata?._continue ?? body.metadata?.continue ?? undefined,
+    resourceVersion: body.metadata?.resourceVersion || undefined,
+    remainingItemCount: typeof body.metadata?.remainingItemCount === 'number'
+      ? body.metadata.remainingItemCount
+      : undefined,
+  };
 }
 
 function selectAttributes(item: any, attributes: string[]): any {

@@ -18,7 +18,7 @@ import {
 import { callK8s } from '../util/k8sError.js';
 import { badRequest, HttpError } from '../util/httpError.js';
 
-const POD_METRICS_BATCH_CONCURRENCY = 10;
+const POD_METRICS_NAMESPACE_CONCURRENCY = 4;
 
 function isForbidden(error: unknown): boolean {
   return error instanceof HttpError && error.status === 403
@@ -384,8 +384,6 @@ export class ResourcesService {
     context: string | undefined,
     options: KubeOptions,
   ): Promise<{ items: Array<{ name: string; namespace?: string; snapshot?: any; error?: string }> }> {
-    const api = (await kube.rawConfig(context, options)).makeApiClient(k8s.CustomObjectsApi);
-
     const pods = podsInput.map((pod) => {
       if (typeof pod === 'string') {
         return { name: pod, namespace: defaultNamespace };
@@ -398,35 +396,41 @@ export class ResourcesService {
     }
 
     const uniquePods = Array.from(new Map(pods.map((pod) => [`${pod.namespace}/${pod.name}`, pod] as const)).values());
-    const items: Array<{ name: string; namespace?: string; snapshot?: any; error?: string }> = [];
+    if (uniquePods.length === 0) return { items: [] };
 
-    for (let i = 0; i < uniquePods.length; i += POD_METRICS_BATCH_CONCURRENCY) {
-      const chunk = uniquePods.slice(i, i + POD_METRICS_BATCH_CONCURRENCY);
-      const chunkItems = await Promise.all(
-        chunk.map(async (pod) => {
-          try {
-            const metricsRes = await callK8s(
-              () => api.getNamespacedCustomObject('metrics.k8s.io', 'v1beta1', pod.namespace!, 'pods', pod.name),
-              { action: 'read', plural: 'pods', context, namespace: pod.namespace, name: pod.name, azureConfigDir: options.azureConfigDir },
-            );
-            return {
-              name: pod.name,
-              namespace: pod.namespace,
-              snapshot: buildPodMetricsSnapshot((metricsRes as any).body ?? metricsRes),
-            };
-          } catch (err) {
-            return {
-              name: pod.name,
-              namespace: pod.namespace,
-              error: err instanceof Error ? err.message : String(err),
-            };
+    const api = (await kube.rawConfig(context, options)).makeApiClient(k8s.CustomObjectsApi);
+    const namespaces = Array.from(new Set(uniquePods.map((pod) => pod.namespace!)));
+    const metricsByNamespace = new Map<string, Map<string, any> | Error>();
+
+    for (let index = 0; index < namespaces.length; index += POD_METRICS_NAMESPACE_CONCURRENCY) {
+      const chunk = namespaces.slice(index, index + POD_METRICS_NAMESPACE_CONCURRENCY);
+      await Promise.all(chunk.map(async (namespace) => {
+        try {
+          const metricsRes = await callK8s(
+            () => api.listNamespacedCustomObject('metrics.k8s.io', 'v1beta1', namespace, 'pods'),
+            { action: 'list', plural: 'pods', context, namespace, azureConfigDir: options.azureConfigDir },
+          );
+          const body = (metricsRes as any).body ?? metricsRes;
+          const metrics = new Map<string, any>();
+          for (const item of Array.isArray(body?.items) ? body.items : []) {
+            if (item.metadata?.name) metrics.set(item.metadata.name, buildPodMetricsSnapshot(item));
           }
-        }),
-      );
-      items.push(...chunkItems);
+          metricsByNamespace.set(namespace, metrics);
+        } catch (err) {
+          metricsByNamespace.set(namespace, err instanceof Error ? err : new Error(String(err)));
+        }
+      }));
     }
 
-    return { items };
+    return { items: uniquePods.map((pod) => {
+      const metrics = metricsByNamespace.get(pod.namespace!);
+      const snapshot = metrics instanceof Map ? metrics.get(pod.name) : undefined;
+      return {
+        name: pod.name,
+        namespace: pod.namespace,
+        ...(snapshot ? { snapshot } : { error: metrics instanceof Error ? metrics.message : 'Pod metrics not available' }),
+      };
+    }) };
   }
 
   async listResources(
@@ -449,10 +453,19 @@ export class ResourcesService {
           .filter((a) => a)
       : undefined;
 
-    if (args.rawLimit || args.rawContinue) {
-      const limit = args.rawLimit ? Math.max(1, Math.min(250, Number(args.rawLimit))) : undefined;
+    if (args.rawLimit !== undefined || args.rawContinue !== undefined) {
+      const parsedLimit = args.rawLimit === undefined ? undefined : Number(args.rawLimit);
+      if (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+        throw badRequest('limit must be a positive integer');
+      }
+      const limit = parsedLimit === undefined ? undefined : Math.min(250, parsedLimit);
       try {
-        return await listResourcePage(plural, context, namespace, { ...options, attributes, limit, continue: args.rawContinue });
+        return await listResourcePage(plural, context, namespace, {
+          ...options,
+          attributes,
+          limit,
+          continue: args.rawContinue,
+        });
       } catch (err) {
         await maybeWrapAbortAsAzureAuthRequired(err, args.selectedScope, args.selectedKubeconfigPath);
         wrapInteractiveAzureAuthError(err, args.selectedScope);

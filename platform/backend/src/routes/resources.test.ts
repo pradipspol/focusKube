@@ -102,6 +102,21 @@ test('GET /api/resources/:plural lists resources', async (t) => {
   assert.deepEqual(res.body, { items: [{ metadata: { name: 'a' } }] });
 });
 
+test('GET /api/resources/:plural forwards page parameters and returns continuation metadata', async (t) => {
+  let forwardedArgs: any[] = [];
+  t.mock.method(resourcesService, 'listResources', async (...args: any[]) => {
+    forwardedArgs = args;
+    return { items: [{ metadata: { name: 'a' } }], continue: 'next-page', resourceVersion: 'rv-123' };
+  });
+
+  const res = await request(app()).get('/api/resources/pods?limit=25&continue=previous-page');
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { items: [{ metadata: { name: 'a' } }], continue: 'next-page', resourceVersion: 'rv-123' });
+  assert.equal(forwardedArgs[4].rawLimit, '25');
+  assert.equal(forwardedArgs[4].rawContinue, 'previous-page');
+});
+
 test('GET /api/resources/:plural/:name returns a single resource', async (t) => {
   t.mock.method(resourcesService, 'getResource', async () => ({ metadata: { name: 'a' } }));
 

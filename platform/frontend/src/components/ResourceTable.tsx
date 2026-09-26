@@ -403,11 +403,17 @@ function isForbiddenError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403;
 }
 
-type ResourceListResult = { items: K8sObject[] };
-type PagedResourceListResult = { items: K8sObject[]; continue?: string };
+type PagedResourceListResult = { items: K8sObject[]; continue?: string; resourceVersion?: string; remainingItemCount?: number; namespaceIndex: number };
+type ResourcePageParam = { namespaceIndex: number; continue?: string };
+type PodHealthDetails = {
+  pod: K8sObject;
+  severity: 'warning' | 'error';
+  statusText: string;
+  reasons: string[];
+};
 
 type WatchWorkerInbound =
-  | { type: 'start'; payload: { context?: string; namespace?: string; plural: string; email?: string } }
+  | { type: 'start'; payload: { context?: string; namespace?: string; plural: string; email?: string; resourceVersion?: string } }
   | { type: 'stop' };
 
 type WatchWorkerOutbound =
@@ -439,6 +445,7 @@ export function ResourceTable({
   const { canWrite, canDelete } = usePermissions();
   const confirm = useConfirm();
   const [selected, setSelected] = useState<{ obj: K8sObject; tab?: string } | null>(null);
+  const [warningDetails, setWarningDetails] = useState<PodHealthDetails | null>(null);
   const [filter, setFilter] = useState('');
   const [eventTimeRange, setEventTimeRange] = useState<EventTimeRange>('all');
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
@@ -454,6 +461,7 @@ export function ResourceTable({
   const seenPodRowsRef = useRef<Set<string>>(new Set());
   const watchWorkerRef = useRef<Worker | null>(null);
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [watchState, setWatchState] = useState<WatchState>('connecting');
   const [, setAgeTick] = useState(0);
   const [exportOpen, setExportOpen] = useState(false);
@@ -470,66 +478,55 @@ export function ResourceTable({
   const lazyLoadPageSize = 50;
   const isClusterScoped = CLUSTER_SCOPED_TYPES.has(plural);
   const effectiveScope = isClusterScoped ? { ...scope, namespace: undefined } : scope;
-  const isConfigMaps = plural === 'configmaps';
-  const isSecrets = plural === 'secrets';
-  const usesLazyPaging = isConfigMaps || isSecrets;
   const namespaceSelectionValues = useMemo(
     () => Array.from(new Set(selectedNamespaces.filter((value) => value.trim().length > 0))).sort(),
     [selectedNamespaces],
   );
   const namespaceSelectionSignature = namespaceSelectionValues.join('|');
-  const queryKey = ['resource', plural, scope.context, scope.namespace, namespaceSelectionSignature];
-  const pagedQueryKey = [...queryKey, 'paged'];
-  const listNamespaces = async (namespacesToFetch: string[]) => {
-    const responses = await Promise.allSettled(
-      namespacesToFetch.map(async (namespaceName) => {
-        const data = await api.listResource(plural, { ...effectiveScope, namespace: namespaceName });
-        return data.items;
-      }),
-    );
-    // Best-effort merge: a namespace the user can't access (403) shouldn't
-    // block the ones they can — just skip it rather than failing the whole list.
-    const items = responses.flatMap((result) => (result.status === 'fulfilled' ? result.value : []));
-    return Array.from(
-      new Map(
-        items.map((item) => {
-          const key = item.metadata?.uid ?? `${item.metadata?.namespace ?? ''}/${item.metadata?.name ?? ''}`;
-          return [key, item] as const;
-        }),
-      ).values(),
-    );
-  };
-  const plainList = useQuery({
-    queryKey,
-    queryFn: async () => {
-      if (isClusterScoped) {
-        return api.listResource(plural, effectiveScope);
+  const queryKey = useMemo(
+    () => ['resource', plural, scope.context, scope.namespace, namespaceSelectionSignature],
+    [plural, scope.context, scope.namespace, namespaceSelectionSignature],
+  );
+  const pagedQueryKey = useMemo(() => [...queryKey, 'paged'], [queryKey]);
+  const pagedList = useInfiniteQuery<PagedResourceListResult, Error>({
+    queryKey: pagedQueryKey,
+    enabled: !!scope.context,
+    initialPageParam: { namespaceIndex: 0 } as ResourcePageParam,
+    queryFn: async ({ pageParam }) => {
+      const pageNamespaces = isClusterScoped
+        ? [undefined]
+        : scope.namespace
+          ? [scope.namespace]
+          : namespaceSelectionValues.length > 0
+            ? namespaceSelectionValues
+            : [undefined];
+      let namespaceIndex = (pageParam as ResourcePageParam).namespaceIndex;
+      let continuation = (pageParam as ResourcePageParam).continue;
+      while (namespaceIndex < pageNamespaces.length) {
+        const namespace = pageNamespaces[namespaceIndex];
+        try {
+          const page = await api.listResourcePage(plural, { ...effectiveScope, namespace }, {
+            limit: lazyLoadPageSize,
+            continue: continuation,
+          });
+          return { ...page, namespaceIndex };
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 403 && namespaceSelectionValues.length > 0)) throw error;
+          namespaceIndex += 1;
+          continuation = undefined;
+        }
       }
-
-      if (scope.namespace) {
-        return api.listResource(plural, { ...effectiveScope, namespace: scope.namespace });
-      }
-
-      if (namespaceSelectionValues.length > 0) {
-        const items = await listNamespaces(namespaceSelectionValues);
-        return { items };
-      }
-
-      return await api.listResource(plural, effectiveScope);
+      return { items: [], namespaceIndex };
     },
-    enabled: !!scope.context && !usesLazyPaging,
-    // We drive retry cadence ourselves via refetchInterval, so disable the
-    // per-fetch retries to make the failure count predictable.
+    getNextPageParam: (lastPage) => {
+      if (lastPage.continue) return { namespaceIndex: lastPage.namespaceIndex, continue: lastPage.continue };
+      const pageNamespaceCount = isClusterScoped ? 1 : scope.namespace ? 1 : namespaceSelectionValues.length || 1;
+      return lastPage.namespaceIndex + 1 < pageNamespaceCount
+        ? { namespaceIndex: lastPage.namespaceIndex + 1 }
+        : undefined;
+    },
     retry: false,
-    // Cluster-scoped resources (namespaces, nodes, storage classes, etc.) change
-    // rarely and aren't worth polling — load once and let the user hit Refresh.
-    // Live-watch kinds (pods, deployments, ...) are already kept current by the
-    // websocket worker below once it's live, so refetching on focus would just
-    // repeat a GET the worker has already covered — only do it as a safety net
-    // while the watch itself isn't live yet.
-    refetchOnWindowFocus: isClusterScoped ? false : LIVE_WATCH_PLURALS.has(plural) ? watchState !== 'live' : true,
-    // Kinds outside the live-watch allowlist (configmaps, secrets, endpoints, etc.)
-    // fetch once and rely on the user hitting Refresh, same as cluster-scoped kinds.
+    refetchOnWindowFocus: false,
     refetchInterval:
       connectionState === 'stopped'
         ? false
@@ -537,30 +534,12 @@ export function ResourceTable({
           ? RETRY_INTERVAL_MS
           : isClusterScoped || !LIVE_WATCH_PLURALS.has(plural)
             ? false
-            // For live-watch resources, poll only while websocket isn't live yet.
-            // Once watch is live, websocket events become the source of truth.
             : (watchState === 'live' || hasInitialSnapshot ? false : WATCH_FALLBACK_POLL_MS),
-  });
-
-  useAzureAuthRequiredEffect(plainList.error, onAzureAuthRequired);
-
-  const pagedList = useInfiniteQuery<PagedResourceListResult, Error>({
-    queryKey: pagedQueryKey,
-    enabled: !!scope.context && usesLazyPaging,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      api.listResourcePage(plural, effectiveScope, {
-        // limit: lazyLoadPageSize,
-        continue: pageParam as string | undefined,
-      }),
-    getNextPageParam: (lastPage) => lastPage.continue ?? undefined,
-    retry: false,
-    refetchOnWindowFocus: true,
   });
 
   useAzureAuthRequiredEffect(pagedList.error, onAzureAuthRequired);
 
-  const list = usesLazyPaging ? pagedList : plainList;
+  const list = pagedList;
 
   const del = useMutation({
     mutationFn: (o: K8sObject) =>
@@ -570,7 +549,7 @@ export function ResourceTable({
       }),
     onSuccess: () => {
       onToast('success', uiText.resource.resourceDeleted);
-      qc.invalidateQueries({ queryKey });
+      void qc.resetQueries({ queryKey: pagedQueryKey });
     },
     onError: (error) => onToast('error', (error as Error).message, 4200),
   });
@@ -606,7 +585,7 @@ export function ResourceTable({
     setConnectionState('ok');
     setWatchRetryToken((token) => token + 1);
     void qc.invalidateQueries({ queryKey: ['namespaces', scope.context, scope.source] });
-    list.refetch();
+    void qc.resetQueries({ queryKey: pagedQueryKey });
   };
 
   useEffect(() => {
@@ -615,13 +594,12 @@ export function ResourceTable({
     lastAuthRecoveryTokenRef.current = authRecoveryRefreshToken;
 
     setAuthRecoveryRefreshing(true);
-    const refetch = usesLazyPaging ? pagedList.refetch : plainList.refetch;
-    refetch()
+    qc.resetQueries({ queryKey: pagedQueryKey })
       .catch(() => {
         // Keep existing error handling path; this refetch is best-effort.
       })
       .finally(() => setAuthRecoveryRefreshing(false));
-  }, [authRecoveryRefreshToken, scope.context, usesLazyPaging, pagedList.refetch, plainList.refetch]);
+  }, [authRecoveryRefreshToken, scope.context, qc, pagedQueryKey]);
 
   const restartDeployment = useMutation({
     mutationFn: (o: K8sObject) =>
@@ -635,7 +613,7 @@ export function ResourceTable({
     onSuccess: (deployment) => {
       setWatchedRollout(deployment.metadata?.name ?? null);
       onToast('info', uiText.resource.restartRequested(deployment.metadata?.name ?? ''));
-      qc.invalidateQueries({ queryKey });
+      void qc.resetQueries({ queryKey: pagedQueryKey });
     },
     onError: (error) => onToast('error', (error as Error).message),
   });
@@ -644,9 +622,27 @@ export function ResourceTable({
     () => new Set(selectedNamespaces.filter((value) => value.trim().length > 0)),
     [selectedNamespaces],
   );
-  const loadedItems = usesLazyPaging
-    ? (pagedList.data?.pages ?? []).flatMap((page) => page.items)
-    : (plainList.data?.items ?? []);
+  const loadedItems = (pagedList.data?.pages ?? []).flatMap((page) => page.items);
+  const totalResourceCount = useMemo(() => {
+    const pages = pagedList.data?.pages ?? [];
+    if (pages.length > 0 && !pagedList.hasNextPage && !pagedList.isFetchingNextPage) return loadedItems.length;
+
+    const firstPagesByNamespace = new Map<number, PagedResourceListResult>();
+    for (const page of pages) {
+      if (!firstPagesByNamespace.has(page.namespaceIndex)) firstPagesByNamespace.set(page.namespaceIndex, page);
+    }
+    const namespaceCount = isClusterScoped ? 1 : scope.namespace ? 1 : namespaceSelectionValues.length || 1;
+    if (firstPagesByNamespace.size < namespaceCount) return undefined;
+
+    let total = 0;
+    for (const page of firstPagesByNamespace.values()) {
+      if (typeof page.remainingItemCount === 'number') total += page.items.length + page.remainingItemCount;
+      else if (!page.continue) total += page.items.length;
+      else return undefined;
+    }
+    return total;
+  }, [isClusterScoped, loadedItems.length, namespaceSelectionValues.length, pagedList.data?.pages, pagedList.hasNextPage, pagedList.isFetchingNextPage, scope.namespace]);
+  const snapshotResourceVersion = pagedList.data?.pages[0]?.resourceVersion;
   const eventCutoffMs =
     plural === 'events' && eventTimeRange !== 'all' ? Date.now() - EVENT_TIME_RANGE_MS[eventTimeRange] : null;
   const items = loadedItems.filter(
@@ -657,6 +653,9 @@ export function ResourceTable({
       return namespaceMatches && nameMatches && timeMatches;
     }
   );
+  const isSearchingRemainingPages = filter.trim().length > 0
+    && items.length === 0
+    && (pagedList.hasNextPage || pagedList.isFetchingNextPage);
 
   const showStatus = HAS_STATUS.includes(plural);
   const isPods = plural === 'pods';
@@ -809,30 +808,58 @@ export function ResourceTable({
   }, [exportOpen]);
 
   useEffect(() => {
-    if (!usesLazyPaging) return;
-    const host = listWrapperRef.current;
-    if (!host) return;
+    const target = loadMoreRef.current;
+    if (!target || !pagedList.hasNextPage || pagedList.isFetchingNextPage) return;
 
-    const onScroll = () => {
-      if (!pagedList.hasNextPage || pagedList.isFetchingNextPage) return;
-      const thresholdPx = 320;
-      const remaining = host.scrollHeight - host.scrollTop - host.clientHeight;
-      if (remaining <= thresholdPx) {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
         void pagedList.fetchNextPage();
       }
-    };
+    }, { rootMargin: '320px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [pagedList.fetchNextPage, pagedList.hasNextPage, pagedList.isFetchingNextPage, loadedItems.length]);
 
-    host.addEventListener('scroll', onScroll, { passive: true });
-    return () => host.removeEventListener('scroll', onScroll);
-  }, [pagedList, usesLazyPaging]);
+  useEffect(() => {
+    if (!filter.trim() || items.length > 0 || !pagedList.hasNextPage || pagedList.isFetchingNextPage) return;
+
+    const timer = window.setTimeout(() => {
+      void pagedList.fetchNextPage();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [filter, items.length, pagedList.fetchNextPage, pagedList.hasNextPage, pagedList.isFetchingNextPage]);
 
   useEffect(() => {
     if (!scope.context || !LIVE_WATCH_PLURALS.has(plural)) return;
+    if (!isClusterScoped && namespaceSelectionValues.length > 1) {
+      setWatchState('disconnected');
+      return;
+    }
+    if (!snapshotResourceVersion) return;
+
+    const watchNamespace = isClusterScoped ? undefined : effectiveScope.namespace ?? namespaceSelectionValues[0];
 
     setWatchState('connecting');
 
     const worker = getWatchWorker(watchKey ?? `${plural}:${scope.context ?? ''}:${effectiveScope.namespace ?? ''}`);
     watchWorkerRef.current = worker;
+    let pendingResyncTimer: number | null = null;
+
+    const requestSnapshotReset = () => {
+      const now = Date.now();
+      const elapsed = now - lastResyncInvalidateAtRef.current;
+      if (elapsed >= WATCH_RESYNC_THROTTLE_MS) {
+        lastResyncInvalidateAtRef.current = now;
+        void qc.resetQueries({ queryKey: pagedQueryKey });
+        return;
+      }
+      if (pendingResyncTimer !== null) return;
+      pendingResyncTimer = window.setTimeout(() => {
+        pendingResyncTimer = null;
+        lastResyncInvalidateAtRef.current = Date.now();
+        void qc.resetQueries({ queryKey: pagedQueryKey });
+      }, WATCH_RESYNC_THROTTLE_MS - elapsed);
+    };
 
     const onMessage = (event: MessageEvent<WatchWorkerOutbound>) => {
       const payload = event.data;
@@ -846,19 +873,18 @@ export function ResourceTable({
         return;
       }
       if (payload.type === 'resync') {
-        const now = Date.now();
-        if (now - lastResyncInvalidateAtRef.current < WATCH_RESYNC_THROTTLE_MS) {
-          return;
-        }
-        lastResyncInvalidateAtRef.current = now;
         // Force a full list refresh when the watch stream asks for reset,
         // so local cache catches up with any missed events.
         setLastUpdateAt(Date.now());
-        void qc.invalidateQueries({ queryKey });
+        requestSnapshotReset();
         return;
       }
       if (payload.type === 'event' && payload.object) {
-        applyWatchEventToCache(qc, queryKey, payload.eventType, payload.object);
+        if (payload.eventType === 'ADDED' || payload.eventType === 'DELETED') {
+          requestSnapshotReset();
+        } else if (payload.eventType === 'MODIFIED') {
+          applyWatchEventToPagedCache(qc, pagedQueryKey, payload.eventType, payload.object);
+        }
         setLastUpdateAt(Date.now());
       }
     };
@@ -868,8 +894,9 @@ export function ResourceTable({
       type: 'start',
       payload: {
         context: scope.context,
-        namespace: effectiveScope.namespace,
+        namespace: watchNamespace,
         plural,
+        resourceVersion: snapshotResourceVersion,
       },
     };
     worker.postMessage(startMsg);
@@ -877,6 +904,7 @@ export function ResourceTable({
     return () => {
       const current = watchWorkerRef.current;
       if (!current) return;
+      if (pendingResyncTimer !== null) window.clearTimeout(pendingResyncTimer);
       const stopMsg: WatchWorkerInbound = { type: 'stop' };
       current.postMessage(stopMsg);
       current.removeEventListener('message', onMessage as EventListener);
@@ -891,7 +919,7 @@ export function ResourceTable({
     // watching a single namespace or the whole cluster, so a stale watch left
     // over from a different namespace selection can otherwise keep patching
     // cross-namespace events into the newly filtered view.
-  }, [plural, qc, scope.context, effectiveScope.namespace, namespaceSelectionSignature, watchKey, watchRetryToken]);
+  }, [plural, qc, scope.context, effectiveScope.namespace, isClusterScoped, namespaceSelectionValues, namespaceSelectionSignature, watchKey, watchRetryToken, snapshotResourceVersion, pagedQueryKey]);
 
   useEffect(() => {
     // Re-enable responsive auto-fit and reset the connection budget whenever
@@ -1177,15 +1205,25 @@ export function ResourceTable({
   return (
     <>
       <div className="toolbar">
-        <input
+          <input
           className="resource-filter"
           placeholder={isPods ? uiText.resource.searchPods : uiText.resource.filterByName}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
         {/* <h2 className="resource-title">{plural}{scope.context ? ` - ${scope.context}` : ''}</h2> */}
-        <span className="dim">{items.length} {uiText.resource.itemsCountSuffix}</span>
+        <span className="dim">
+          {loadedItems.length} / {totalResourceCount === undefined
+            ? uiText.resource.unknownTotal
+            : pagedList.hasNextPage ? `${totalResourceCount}` : totalResourceCount} {uiText.resource.resourcesCountSuffix}
+        </span>
+        {filter.trim() && <span className="dim">{uiText.resource.matchesCount(items.length)}</span>}
         <span className="dim">{uiText.resource.lastUpdatePrefix} {lastUpdatedLabel}</span>
+        {isSearchingRemainingPages && (
+          <span className="dim">
+            <span className="tiny-spinner" aria-hidden="true" /> {uiText.resource.searchingRemaining}
+          </span>
+        )}
         {authRecoveryRefreshing && (
           <span className="dim" title={uiText.resource.refreshingResourcesAfterAuth}>
             <span className="tiny-spinner" aria-label={uiText.resource.refreshingResourcesAfterAuth} /> {uiText.resource.refreshing}
@@ -1267,7 +1305,9 @@ export function ResourceTable({
       )}
       {list.isLoading && <LoadingOverlay message={uiText.resource.loading} />}
 
-      {!list.isLoading && items.length === 0 && <div className="empty">{uiText.resource.noResourcesFound}</div>}
+      {!list.isLoading && !isSearchingRemainingPages && items.length === 0 && (
+        <div className="empty">{uiText.resource.noResourcesFound}</div>
+      )}
 
       {items.length > 0 && (
         <div className={`data-table-wrapper ${hasManualResize ? 'allow-x-scroll' : 'lock-x-scroll'}`} ref={tableWrapperRef}>
@@ -1363,6 +1403,8 @@ export function ResourceTable({
               const owner = ownerRefs[0];
               const rowKey = o.metadata?.uid ?? `${o.metadata?.namespace}/${o.metadata?.name}`;
               const podKey = podRowKey(o);
+              const resourceName = o.metadata?.name ?? '';
+              const podHealth = isPods ? currentPodHealth(o) : null;
               const podMetric = podMetrics.data?.get(`${o.metadata?.namespace ?? ''}/${o.metadata?.name ?? ''}`);
               const cpuCell = formatPodCpuCell(podMetric?.cpuMillicores, o);
               const memoryCell = formatPodMemoryCell(podMetric?.memoryBytes, o);
@@ -1396,7 +1438,26 @@ export function ResourceTable({
                       case 'select':
                         return <td key={column.key}><input type="checkbox" title={uiText.resource.selectRow} /></td>;
                       case 'name':
-                        return <td key={column.key} className="clickable mono" title={o.metadata?.name ?? ''} onClick={() => setSelected({ obj: o })}>{o.metadata?.name}</td>;
+                        return (
+                          <td key={column.key} className="mono">
+                            <span className="resource-name-cell">
+                              <button type="button" className="resource-name-link" title={resourceName} onClick={() => setSelected({ obj: o })}>
+                                {resourceName}
+                              </button>
+                              {podHealth && (
+                                <button
+                                  type="button"
+                                  className={`resource-health-indicator ${podHealth.severity}`}
+                                  title={uiText.resource.inspectHealth}
+                                  aria-label={uiText.resource.inspectHealth}
+                                  onClick={() => setWarningDetails(podHealth)}
+                                >
+                                  <span aria-hidden="true">{podHealth.severity === 'error' ? '!' : '⚠'}</span>
+                                </button>
+                              )}
+                            </span>
+                          </td>
+                        );
                       case 'namespace':
                         return <td key={column.key} className="dim">{o.metadata?.namespace ?? uiText.resourceDetail.dash}</td>;
                       case 'labels': {
@@ -1603,14 +1664,7 @@ export function ResourceTable({
             })}
           </tbody>
         </table>
-        {usesLazyPaging && pagedList.isFetchingNextPage && (
-          <div className="empty" style={{ padding: '10px 0' }}>{uiText.resource.loadingMore}</div>
-        )}
-        {usesLazyPaging && pagedList.hasNextPage && !pagedList.isFetchingNextPage && (
-          <div className="dim" style={{ padding: '10px 0', textAlign: 'center' }}>
-            {uiText.resource.scrollToLoadMore}
-          </div>
-        )}
+        {pagedList.hasNextPage && <div ref={loadMoreRef} aria-hidden="true" style={{ height: 1 }} />}
         </div>
       )}
 
@@ -1621,11 +1675,52 @@ export function ResourceTable({
           initialTab={selected.tab}
           scope={scope}
           onClose={() => setSelected(null)}
-          onChanged={() => qc.invalidateQueries({ queryKey })}
+          onChanged={() => qc.resetQueries({ queryKey: pagedQueryKey })}
           onOpenPodTerminal={onOpenPodTerminal}
           onOpenPodLogsTerminal={onOpenPodLogsTerminal}
           onOpenDeploymentLogsTerminal={onOpenDeploymentLogsTerminal}
         />
+      )}
+
+      {warningDetails && (
+        <div className="resource-health-backdrop" onMouseDown={() => setWarningDetails(null)}>
+          <section
+            className="resource-health-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="resource-health-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="resource-health-dialog-header">
+              <div>
+                <span className={`resource-health-indicator ${warningDetails.severity}`} aria-hidden="true">
+                  {warningDetails.severity === 'error' ? '!' : '⚠'}
+                </span>
+                <h2 id="resource-health-title">
+                  {warningDetails.severity === 'error' ? 'Error' : 'Warning'}: {uiText.resource.healthDetailsTitle}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setWarningDetails(null)} aria-label={uiText.common.close}>
+                {uiText.common.close}
+              </button>
+            </header>
+            <div className="resource-health-dialog-body">
+              <p className="resource-health-resource-name">
+                {warningDetails.pod.metadata?.namespace
+                  ? `${warningDetails.pod.metadata.namespace}/`
+                  : ''}{warningDetails.pod.metadata?.name}
+              </p>
+              <p><strong>{uiText.resource.healthStatusLabel}:</strong> {warningDetails.statusText}</p>
+              {warningDetails.reasons.length > 0 && (
+                <div className="resource-health-reasons">
+                  {warningDetails.reasons.map((reason) => (
+                    <p className="resource-health-reason" key={reason}>{reason}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       )}
     </>
   );
@@ -1633,6 +1728,44 @@ export function ResourceTable({
 
 function podRowKey(o: K8sObject): string {
   return o.metadata?.uid ?? `${o.metadata?.namespace ?? ''}/${o.metadata?.name ?? ''}`;
+}
+
+function currentPodHealth(pod: K8sObject): PodHealthDetails | null {
+  const status = statusOf('pods', pod);
+  if (pod.status?.phase === 'Succeeded' && !pod.metadata?.deletionTimestamp) return null;
+  const reasons = new Set<string>();
+  let hasCurrentError = status.tone === 'danger';
+  if (pod.status?.reason || pod.status?.message) {
+    reasons.add([pod.status.reason, pod.status.message].filter(Boolean).join(': '));
+  }
+  for (const container of [...(pod.status?.initContainerStatuses ?? []), ...(pod.status?.containerStatuses ?? [])]) {
+    const state = container.state?.waiting ?? container.state?.terminated;
+    if (!state) continue;
+    const failedExitCode = typeof state.exitCode === 'number' && state.exitCode !== 0;
+    if (state.reason || state.message || failedExitCode) {
+      const detail = [state.reason, state.message].filter(Boolean).join(': ') || `Exit code ${state.exitCode}`;
+      reasons.add(`${container.name ?? 'Container'}: ${detail}`);
+    }
+    if (/error|failed|backoff|crashloop/i.test(String(state.reason ?? '')) || failedExitCode) {
+      hasCurrentError = true;
+    }
+  }
+  let hasCurrentCondition = false;
+  for (const condition of pod.status?.conditions ?? []) {
+    if (condition.status === 'True') continue;
+    hasCurrentCondition = true;
+    const description = [condition.reason, condition.message].filter(Boolean).join(': ');
+    reasons.add(`${condition.type ?? 'Condition'}: ${description || condition.status || 'Unknown'}`);
+    if (/error|failed|backoff|crashloop/i.test(String(condition.reason ?? ''))) hasCurrentError = true;
+  }
+  if (status.tone !== 'warn' && !hasCurrentError && !hasCurrentCondition) return null;
+
+  return {
+    pod,
+    severity: hasCurrentError ? 'error' : 'warning',
+    statusText: status.text,
+    reasons: [...reasons],
+  };
 }
 
 function deploymentRolloutProgress(o: K8sObject): string | null {
@@ -1645,33 +1778,32 @@ function deploymentRolloutProgress(o: K8sObject): string | null {
   return `${updated}/${desired} updated`;
 }
 
-function applyWatchEventToCache(
+function applyWatchEventToPagedCache(
   qc: ReturnType<typeof useQueryClient>,
   queryKey: Array<string | undefined>,
   eventType: string,
   object: K8sObject,
 ) {
-  qc.setQueryData<ResourceListResult | undefined>(queryKey, (current) => {
-    if (!current) return current;
+  qc.setQueryData<any>(queryKey, (current: any) => {
+    if (!current?.pages || !current.pageParams) return current;
     const key = objectIdentity(object);
     if (!key) return current;
 
-    if (eventType === 'DELETED') {
-      return { items: current.items.filter((item) => objectIdentity(item) !== key) };
-    }
+    if (eventType !== 'MODIFIED') return current;
 
-    if (eventType !== 'ADDED' && eventType !== 'MODIFIED') {
-      return current;
-    }
+    const pageIndex = current.pages.findIndex((page: PagedResourceListResult) =>
+      page.items.some((item) => objectIdentity(item) === key),
+    );
+    if (pageIndex === -1) return current;
 
-    const index = current.items.findIndex((item) => objectIdentity(item) === key);
-    if (index === -1) {
-      return { items: [object, ...current.items] };
-    }
-
-    const nextItems = current.items.slice();
-    nextItems[index] = object;
-    return { items: nextItems };
+    const pages = current.pages.slice();
+    const page = pages[pageIndex] as PagedResourceListResult;
+    const itemIndex = page.items.findIndex((item) => objectIdentity(item) === key);
+    if (itemIndex === -1) return current;
+    const items = page.items.slice();
+    items[itemIndex] = object;
+    pages[pageIndex] = { ...page, items };
+    return { ...current, pages };
   });
 }
 
@@ -1686,25 +1818,34 @@ function objectIdentity(object: K8sObject): string | undefined {
 function getContainerDetails(
   pod: K8sObject,
 ): Array<{ name: string; ready: boolean; restarts: number; state: string; stateType: 'ready' | 'running' | 'waiting' | 'terminated' | 'not-started' | 'unknown' }> {
-  const specContainers = Array.isArray(pod.spec?.containers)
-    ? (pod.spec.containers as Array<{ name?: string }>)
-    : [];
-  const statuses = Array.isArray(pod.status?.containerStatuses)
-    ? (pod.status.containerStatuses as Array<{
-        name?: string;
-        ready?: boolean;
-        restartCount?: number;
-        state?: { waiting?: { reason?: string }; running?: unknown; terminated?: { reason?: string } };
-      }>)
-    : [];
+  const specContainers = [
+    ...(Array.isArray(pod.spec?.initContainers) ? pod.spec.initContainers : []),
+    ...(Array.isArray(pod.spec?.containers) ? pod.spec.containers : []),
+  ] as Array<{ name?: string }>;
+  const statuses = [
+    ...(Array.isArray(pod.status?.initContainerStatuses) ? pod.status.initContainerStatuses : []),
+    ...(Array.isArray(pod.status?.containerStatuses) ? pod.status.containerStatuses : []),
+  ] as Array<{
+    name?: string;
+    ready?: boolean;
+    restartCount?: number;
+    state?: { waiting?: { reason?: string }; running?: unknown; terminated?: { reason?: string } };
+  }>;
+  const containerNames = new Set(specContainers.map((container) => container.name).filter(Boolean));
+  for (const status of statuses) {
+    if (status.name && !containerNames.has(status.name)) {
+      specContainers.push({ name: status.name });
+      containerNames.add(status.name);
+    }
+  }
   const byName = new Map(statuses.map((status) => [status.name ?? '', status]));
 
   return specContainers.map((container) => {
     const status = byName.get(container.name ?? '');
     const stateType =
       !status ? 'not-started'
-      : status.ready ? 'ready'
       : status.state?.terminated ? 'terminated'
+      : status.ready ? 'ready'
       : status.state?.waiting ? 'waiting'
       : status.state?.running ? 'running'
       : 'unknown';

@@ -171,7 +171,11 @@ export const api = {
     const search = params.toString();
     return request<ClusterOverviewResponse>(`/resources/overview${search ? `?${search}` : ''}`);
   },
-  listResourcePage: (plural: string, scope: Scope, page?: { limit?: number; continue?: string }) => {
+  listResourcePage: (
+    plural: string,
+    scope: Scope,
+    page?: { limit?: number; continue?: string },
+  ) => {
     const params = new URLSearchParams();
     if (scope.context) params.set('context', scope.context);
     if (scope.namespace) params.set('namespace', scope.namespace);
@@ -180,7 +184,7 @@ export const api = {
     if (page?.limit !== undefined) params.set('limit', String(page.limit));
     if (page?.continue) params.set('continue', page.continue);
     const search = params.toString();
-    return request<{ items: K8sObject[]; continue?: string }>(`/resources/${plural}${search ? `?${search}` : ''}`);
+    return request<{ items: K8sObject[]; continue?: string; resourceVersion?: string; remainingItemCount?: number }>(`/resources/${plural}${search ? `?${search}` : ''}`);
   },
   getResourceYaml: (plural: string, name: string, scope: Scope) =>
     request<{ yaml: string }>(`/resources/${plural}/${name}/yaml${qs(scope)}`),
