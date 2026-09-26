@@ -13,7 +13,9 @@ export function isValidEmail(value: string | null | undefined): value is string 
 }
 
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/g;
+// U+200B–U+200D and U+FEFF are invisible zero-width characters. `String#trim` leaves
+// them intact, which previously allowed an apparently blank organization name through.
+const CONTROL_CHARS_RE = /[\x00-\x1f\x7f\u200b-\u200d\ufeff]/g;
 const MAX_ORG_NAME_LENGTH = 140;
 
 /** Trims, strips control/zero-width characters, and length-caps a team/org name (rendered

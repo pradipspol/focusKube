@@ -9,7 +9,9 @@
     "build:bundle": "tsc --noEmit && node ./scripts/build-esbuild.mjs",
     "lint": "eslint src",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
+    "@playwright/test": "^1.63.0",
     "@types/dagre": "^0.7.54",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

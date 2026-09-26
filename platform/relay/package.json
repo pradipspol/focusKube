@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/web/templates', 'dist/web/templates', { recursive: true }); require('fs').cpSync('src/web/static', 'dist/web/static', { recursive: true })\"",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
     "ingest:k8s-docs": "tsx scripts/ingest-k8s-docs.ts"
   },
   "dependencies": {
