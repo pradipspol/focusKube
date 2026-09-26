@@ -10,7 +10,7 @@ import {
   type KubeAccessOptions,
 } from '../kube/resources.js';
 import { fetchDeploymentLogsOnce, fetchPodLogsOnce } from '../kube/podLogsOnce.js';
-import { badRequest } from '../util/httpError.js';
+import { badRequest, HttpError } from '../util/httpError.js';
 import { describeK8sError } from '../util/k8sError.js';
 import { buildResourceDetail, filterAndSortEvents, pluralForKind, type HelmExecCtx } from './aiContextService.js';
 import { workloadsService } from './workloadsService.js';
@@ -47,6 +47,8 @@ export interface ToolResult {
 
 export interface ActionProposal {
   summary: string;
+  /** Set when the requested create operation must not proceed to user approval. */
+  blocked?: string;
   /** Populated only for apply_manifest — the user should see what changes, not a blind manifest. */
   diff?: { before?: string; after: string };
 }
@@ -569,20 +571,28 @@ export async function prepareActionProposal(name: string, input: any, ctx: ToolE
 
   if (name === 'apply_manifest') {
     const manifest = input?.manifest;
-    if (!manifest || typeof manifest !== 'object') return { summary };
+    if (!manifest || typeof manifest !== 'object') return { summary, blocked: 'The manifest could not be validated, so no apply was proposed.' };
 
     const after = JSON.stringify(manifest, null, 2);
     const plural = manifest.kind ? pluralForKind(String(manifest.kind)) : undefined;
     const resourceName = manifest.metadata?.name;
-    if (!plural || !resourceName) return { summary, diff: { after } };
+    if (!plural || !resourceName) {
+      return { summary, blocked: 'The manifest must include a recognized kind and metadata.name before its existence can be checked.' };
+    }
 
     try {
       const existing = await getResource(plural, String(resourceName), ctx.context, manifest.metadata?.namespace, ctx.kubeOptions);
       const before = JSON.stringify(sanitizeForEdit(redactIfSensitive(existing, plural)), null, 2);
-      return { summary, diff: { before, after } };
-    } catch {
-      // Doesn't exist yet (or couldn't be fetched) — apply_manifest will create it.
-      return { summary, diff: { after } };
+      return {
+        summary,
+        blocked: `${manifest.kind} "${resourceName}" already exists${manifest.metadata?.namespace ? ` in namespace "${manifest.metadata.namespace}"` : ''}; no create/apply was proposed.`,
+        diff: { before, after },
+      };
+    } catch (err) {
+      // Only a confirmed NotFound is safe to treat as a new resource. Auth, network,
+      // validation, and server errors must never fall through to an unverified proposal.
+      if (err instanceof HttpError && err.status === 404) return { summary, diff: { after } };
+      return { summary, blocked: `Could not verify whether ${manifest.kind} "${resourceName}" exists: ${await describeK8sError(err)}. No apply was proposed.` };
     }
   }
 
@@ -614,20 +624,26 @@ export async function prepareActionProposal(name: string, input: any, ctx: ToolE
     }
   }
 
-  if (name === 'helm_install' && ctx.helm) {
+  if (name === 'helm_install') {
+    if (!ctx.helm) return { summary, blocked: HELM_ACCESS_UNAVAILABLE };
+    const releaseName = String(input?.releaseName ?? '');
+    const namespace = String(input?.namespace ?? '');
+    if (!releaseName || !namespace) return { summary, blocked: 'Release name and namespace are required to check for an existing Helm release.' };
     try {
+      const releases = await helmService.listReleases(ctx.helm.session, ctx.helm.scoped, namespace);
+      if (releases.some((release) => release?.name === releaseName && release?.namespace === namespace)) {
+        return { summary, blocked: `Helm release "${releaseName}" already exists in namespace "${namespace}"; no install was proposed. Use helm_upgrade if you intend to change it.` };
+      }
       const after = await helmService.previewInstall(ctx.helm.session, ctx.helm.scoped, {
         chart: String(input?.chart ?? ''),
-        releaseName: String(input?.releaseName ?? ''),
-        namespace: String(input?.namespace ?? ''),
+        releaseName,
+        namespace,
         version: input?.version ? String(input.version) : undefined,
         values: input?.values ? String(input.values) : undefined,
       });
       return { summary, diff: { after } };
-    } catch {
-      // The dry-run itself can fail (bad chart ref, etc.) — the approval card still shows the
-      // summary; the real error will surface once the tool actually runs.
-      return { summary };
+    } catch (err) {
+      return { summary, blocked: `Could not verify or preview Helm release "${releaseName}" in namespace "${namespace}": ${await describeK8sError(err)}. No install was proposed.` };
     }
   }
 

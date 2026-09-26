@@ -4,6 +4,7 @@ import { HttpError } from '../util/httpError.js';
 import { logError, logInfo } from '../util/logger.js';
 import { getEntitlementState } from '../runtime/aiLicenseStore.js';
 import { getSessionToken } from '../runtime/accountStore.js';
+import { aiChatSessionStore } from '../services/aiChatSessionStore.js';
 
 const router = Router();
 
@@ -16,6 +17,11 @@ interface EntitlementResponse {
 }
 
 export const aiRouter = router;
+
+function chatContext(req: Request): string {
+  const requested = req.query.context;
+  return typeof requested === 'string' && requested ? requested : (req as any).userSession?.activeContext || 'default';
+}
 
 // GET /api/ai/entitlement — Check if the signed-in account has an active AI license.
 router.get('/entitlement', async (_req: Request, res: Response<EntitlementResponse>, next: NextFunction) => {
@@ -70,6 +76,81 @@ router.post('/checkout', async (_req: Request, res: Response, next: NextFunction
 
     logInfo('ai_checkout.started', {});
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/sessions', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.authUser?.id;
+    if (!userId) throw new HttpError(401, 'Not signed in');
+    res.json({
+      sessions: aiChatSessionStore
+        .list(userId, chatContext(req))
+        .map(({ id, title, messages, updatedAt }) => ({ id, title, messages, updatedAt })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/sessions/:id', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.authUser?.id;
+    if (!userId) throw new HttpError(401, 'Not signed in');
+    const { title, messages } = req.body ?? {};
+    if (
+      typeof req.params.id !== 'string' ||
+      req.params.id.length > 128 ||
+      typeof title !== 'string' ||
+      !Array.isArray(messages) ||
+      messages.length > 1000 ||
+      JSON.stringify(messages).length > 4_000_000 ||
+      messages.some((message: any) => !message || typeof message.id !== 'string' || !['text', 'tool', 'action'].includes(message.kind))
+    ) {
+      throw new HttpError(400, 'Invalid chat session transcript');
+    }
+    const session = aiChatSessionStore.saveTranscript(userId, chatContext(req), req.params.id, title, messages);
+    res.json({ id: session.id, title: session.title, messages: session.messages, updatedAt: session.updatedAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/sessions/:id/import', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.authUser?.id;
+    if (!userId) throw new HttpError(401, 'Not signed in');
+    const { title, messages, modelMessages } = req.body ?? {};
+    if (
+      typeof req.params.id !== 'string' ||
+      req.params.id.length > 128 ||
+      typeof title !== 'string' ||
+      !Array.isArray(messages) ||
+      !Array.isArray(modelMessages) ||
+      messages.length > 1000 ||
+      modelMessages.length > 500 ||
+      JSON.stringify(messages).length > 4_000_000 ||
+      JSON.stringify(modelMessages).length > 500_000 ||
+      messages.some((message: any) => !message || typeof message.id !== 'string' || !['text', 'tool', 'action'].includes(message.kind)) ||
+      modelMessages.some((message: any) => !message || !['user', 'assistant'].includes(message.role))
+    ) {
+      throw new HttpError(400, 'Invalid chat session import');
+    }
+    const session = aiChatSessionStore.importSession(userId, chatContext(req), req.params.id, title, messages, modelMessages);
+    res.json({ id: session.id, title: session.title, messages: session.messages, updatedAt: session.updatedAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/sessions/:id', (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.authUser?.id;
+    if (!userId) throw new HttpError(401, 'Not signed in');
+    aiChatSessionStore.delete(userId, chatContext(req), req.params.id);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

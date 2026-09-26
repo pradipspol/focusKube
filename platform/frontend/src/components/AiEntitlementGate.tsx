@@ -6,6 +6,7 @@ import { uiText } from '../text';
 interface Props {
   /** Rendered once the signed-in account has an active license. */
   children: React.ReactNode;
+  sessionTitle?: string;
 }
 
 function openCheckoutUrl(url: string): void {
@@ -22,7 +23,7 @@ function openCheckoutUrl(url: string): void {
  * counterpart, routes/ai.ts). Also carries the data-handling disclosure required before
  * a user opts into the one feature that sends cluster data off this machine.
  */
-export function AiEntitlementGate({ children }: Props) {
+export function AiEntitlementGate({ children, sessionTitle }: Props) {
   const queryClient = useQueryClient();
   const { data: entitlement, isLoading } = useAiEntitlement();
   const requestCheckout = useRequestCheckout();
@@ -62,27 +63,30 @@ export function AiEntitlementGate({ children }: Props) {
     return (
       <div className="ai-gate-enabled">
         <div className="ai-gate-enabled-bar">
-          <span className="ai-gate-plan">
-            {uiText.aiAssistant.planLabel}: {entitlement.plan ?? '—'}
-          </span>
-          {typeof entitlement.quotaRemaining === 'number' && (
-            <span className="ai-gate-quota">
-              {uiText.aiAssistant.quotaRemainingLabel}: {entitlement.quotaRemaining}
-              <span className="ai-gate-quota-info" title={uiText.aiAssistant.quotaExplainer} aria-label={uiText.aiAssistant.quotaExplainer}>
-                ⓘ
-              </span>
+          {sessionTitle && <span className="ai-gate-session-title" title={sessionTitle}>{sessionTitle}</span>}
+          <div className="ai-gate-session-meta">
+            <span className="ai-gate-plan">
+              {uiText.aiAssistant.planLabel}: {entitlement.plan ?? '—'}
             </span>
-          )}
-          {isTrial && !checkoutOpened && (
-            <button
-              type="button"
-              className="primary ai-gate-upgrade-button"
-              onClick={handleUpgrade}
-              disabled={requestCheckout.isPending}
-            >
-              {requestCheckout.isPending ? uiText.aiAssistant.startingCheckout : uiText.aiAssistant.upgradeToProButton}
-            </button>
-          )}
+            {typeof entitlement.quotaRemaining === 'number' && (
+              <span className="ai-gate-quota">
+                {uiText.aiAssistant.quotaRemainingLabel}: {entitlement.quotaRemaining}
+                <span className="ai-gate-quota-info" title={uiText.aiAssistant.quotaExplainer} aria-label={uiText.aiAssistant.quotaExplainer}>
+                  ⓘ
+                </span>
+              </span>
+            )}
+            {isTrial && !checkoutOpened && (
+              <button
+                type="button"
+                className="primary ai-gate-upgrade-button"
+                onClick={handleUpgrade}
+                disabled={requestCheckout.isPending}
+              >
+                {requestCheckout.isPending ? uiText.aiAssistant.startingCheckout : uiText.aiAssistant.upgradeToProButton}
+              </button>
+            )}
+          </div>
         </div>
         {isTrial && checkoutOpened && <div className="ai-gate-upgrade-notice">{uiText.aiAssistant.checkoutOpenedNotice}</div>}
         {isTrial && billingUnavailable && <div className="ai-gate-upgrade-notice">{uiText.aiAssistant.billingNotConfiguredNotice}</div>}

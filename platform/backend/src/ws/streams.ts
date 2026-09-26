@@ -30,6 +30,7 @@ import {
 } from '../services/aiToolExecutor.js';
 import { runInvestigation, type InvestigationResult } from '../services/investigationAgent.js';
 import { getLicenseKey } from '../runtime/aiLicenseStore.js';
+import { aiChatSessionStore } from '../services/aiChatSessionStore.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
 const execWss = new WebSocketServer({ noServer: true });
@@ -1021,6 +1022,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
     // connection only (never persisted), same lifetime as `messages`/`pendingActions` above.
     // A tool in this set skips the approval card entirely and executes like a read tool.
     const sessionAutoApprovedTools = new Set<string>();
+    let activeChatSessionId: string | null = null;
     // client turnId -> messages.length right before that turn's user content was pushed —
     // lets `edit_message` rewind `messages` back to right before a past turn and replay it with
     // different (or, for "regenerate", identical) text. Entries for turns made unreachable by a
@@ -1041,6 +1043,17 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       });
     };
 
+    const persistModelHistory = (): void => {
+      if (!activeChatSessionId) return;
+      aiChatSessionStore.saveModelHistory(
+        session.userId,
+        requestedContext || session.activeContext || 'default',
+        activeChatSessionId,
+        messages,
+        [...checkpoints].map(([turnId, index]) => ({ turnId, index })),
+      );
+    };
+
     // Once every write call in a round has been decided, combine all of that round's tool
     // results (reads computed immediately, writes filled in as decisions arrive) into one
     // user turn, in original order, and resume the relay round-trip loop.
@@ -1053,7 +1066,9 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
         return { type: 'tool_result' as const, tool_use_id: id, content: r.content, is_error: r.is_error };
       });
       messages.push({ role: 'user', content });
+      persistModelHistory();
       await runTurn(round.turnContext, round.toolCtx);
+      persistModelHistory();
     };
 
     // Runs (and, for read-only rounds, loops) one or more relay round-trips until the
@@ -1361,6 +1376,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       const toolCtx: ToolExecCtx | null = kubeOptions && role ? { context, kubeOptions, role, helm: helmCtx } : null;
 
       await runTurn(turnContext, toolCtx);
+      persistModelHistory();
     };
 
     ws.on('message', (data) => {
@@ -1374,6 +1390,58 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
 
       if (msg.type === 'user_message') {
         enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource, msg.images));
+        return;
+      }
+
+      if (msg.type === 'restore_session') {
+        currentRelayAbort?.abort();
+        enqueue(async () => {
+          const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId.slice(0, 128) : '';
+          if (!sessionId) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid chat session ID.' }));
+            return;
+          }
+          const chatContext = requestedContext || session.activeContext || 'default';
+          const stored = aiChatSessionStore.get(session.userId, sessionId, chatContext);
+          if (!stored) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Chat session not found.' }));
+            return;
+          }
+          messages.splice(0, messages.length, ...stored.modelMessages);
+          activeChatSessionId = sessionId;
+          checkpoints.clear();
+          for (const checkpoint of stored.checkpoints ?? []) checkpoints.set(checkpoint.turnId, checkpoint.index);
+          const resolvedToolUseIds = new Set<string>();
+          for (const message of messages) {
+            if (message.role === 'user' && Array.isArray(message.content)) {
+              for (const block of message.content) {
+                if (block.type === 'tool_result') resolvedToolUseIds.add(block.tool_use_id);
+              }
+            }
+          }
+          const interruptedToolUses: string[] = [];
+          for (const message of messages) {
+            if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+            for (const block of message.content) {
+              if (block.type === 'tool_use' && !resolvedToolUseIds.has(block.id)) interruptedToolUses.push(block.id);
+            }
+          }
+          if (interruptedToolUses.length > 0) {
+            messages.push({
+              role: 'user',
+              content: interruptedToolUses.map((toolUseId) => ({
+                type: 'tool_result' as const,
+                tool_use_id: toolUseId,
+                content: 'This action proposal was interrupted when the connection ended and was not executed.',
+                is_error: true,
+              })),
+            });
+          }
+          pendingActions.clear();
+          pendingRounds.clear();
+          sessionAutoApprovedTools.clear();
+          ws.send(JSON.stringify({ type: 'session_restored', sessionId }));
+        });
         return;
       }
 
@@ -1460,6 +1528,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           round.awaiting.delete(id);
 
           await finishRoundIfReady(pending.roundId);
+          persistModelHistory();
         });
         return;
       }

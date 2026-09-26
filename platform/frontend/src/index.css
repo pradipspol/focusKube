@@ -819,6 +819,22 @@ a {
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }
+.ai-gate-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-gate-session-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-md);
+  margin-left: auto;
+}
 .ai-gate-quota {
   display: inline-flex;
   align-items: center;
@@ -837,7 +853,6 @@ a {
   border: 1px solid var(--border-subtle);
 }
 .ai-gate-upgrade-button {
-  margin-left: auto;
   padding: 4px 12px;
   font-size: var(--fs-sm);
 }

@@ -958,7 +958,7 @@
     inputPlaceholder: 'Ask about resource…',
     send: 'Send',
     thinking: 'Thinking…',
-    emptyState: 'Select a resource, then ask what might be wrong with it or how to fix it.',
+    emptyState: 'FocusKube AI Assistant is ready to help you diagnose issues and suggest fixes for your cluster resources.',
     connected: 'connected',
     disconnected: 'disconnected',
     noLicenseError: 'AI feature not enabled — get a license to use it.',

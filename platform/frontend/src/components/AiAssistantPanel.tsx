@@ -5,12 +5,15 @@ import remarkGfm from 'remark-gfm';
 import { api } from '../api/client';
 import type { Scope } from '../api/client';
 import {
+  aiAssistantApi,
   openAiChatSocket,
   useAiEntitlement,
   type AiActionDiff,
+  type AiChatMessage,
   type AiChatInboundMessage,
   type AiFocusedResource,
   type AiImageAttachment,
+  type AiChatSession,
 } from '../api/aiAssistantApi';
 import { AiEntitlementGate } from './AiEntitlementGate';
 import { uiText } from '../text';
@@ -254,6 +257,12 @@ function normalizeStoredMessage(m: ChatMessage): ChatMessage {
   return (m as any).kind ? m : ({ ...m, kind: 'text' } as ChatMessage);
 }
 
+function expirePendingActions(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) =>
+    message.kind === 'action' && message.status === 'pending' ? { ...message, status: 'expired' } : message,
+  );
+}
+
 function createSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -263,6 +272,45 @@ function deriveSessionTitle(messages: ChatMessage[]): string {
   const raw = firstUser?.content.trim().replace(/\s+/g, ' ') ?? '';
   if (!raw) return 'New chat';
   return raw.length > 42 ? `${raw.slice(0, 42)}…` : raw;
+}
+
+function buildSessionHistory(messages: ChatMessage[]): AiChatMessage[] {
+  const history: AiChatMessage[] = [];
+  const append = (role: AiChatMessage['role'], content: string) => {
+    if (!content) return;
+    const previous = history[history.length - 1];
+    if (previous?.role === role) previous.content += `\n\n${content}`;
+    else history.push({ role, content });
+  };
+
+  for (const message of messages) {
+    if (message.kind === 'text') {
+      append(message.role, `${message.content}${message.images?.length ? '\n[Image attachment from this earlier turn is not available in restored context.]' : ''}`);
+    } else if (message.kind === 'tool') {
+      append('user', `[Earlier tool result: ${message.name}]\n${message.output ?? 'No result was recorded.'}`);
+    } else {
+      append('assistant', `[Earlier proposed action: ${message.name}] ${message.summary}`);
+      if (message.status !== 'pending' && message.status !== 'expired') {
+        append('user', `[Earlier action ${message.status}]${message.output ? `\n${message.output}` : ''}`);
+      }
+    }
+  }
+
+  const maxHistoryChars = 100_000;
+  let remaining = maxHistoryChars;
+  const bounded: AiChatMessage[] = [];
+  for (const message of history.reverse()) {
+    if (remaining <= 0) break;
+    const content = message.content.slice(-remaining);
+    bounded.unshift({ role: message.role, content });
+    remaining -= content.length;
+  }
+  return bounded;
+}
+
+function restoreSession(ws: WebSocket | null, sessionId: string): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'restore_session', sessionId }));
 }
 
 function freshSession(): ChatSession {
@@ -316,14 +364,6 @@ function loadStoredSessions(): { sessions: ChatSession[]; activeSessionId: strin
   }
   const session = freshSession();
   return { sessions: [session], activeSessionId: session.id };
-}
-
-function persistSessions(sessions: ChatSession[], activeSessionId: string): void {
-  try {
-    localStorage.setItem(CHAT_SESSIONS_STORAGE_KEY, JSON.stringify({ sessions, activeSessionId }));
-  } catch {
-    // best effort — e.g. storage quota exceeded. Chat still works for this session.
-  }
 }
 
 interface Skill {
@@ -1119,6 +1159,7 @@ function SkillsMenu({ onSelect, onClose }: { onSelect: (skill: Skill) => void; o
 }
 
 export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props) {
+  const chatContext = scope.context;
   const initialRef = useRef<{ sessions: ChatSession[]; activeSessionId: string } | null>(null);
   if (initialRef.current === null) {
     const loaded = loadStoredSessions();
@@ -1136,9 +1177,15 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
 
   const [sessions, setSessions] = useState<ChatSession[]>(initial.sessions);
   const [activeSessionId, setActiveSessionId] = useState<string>(initial.activeSessionId);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     return initial.sessions.find((s) => s.id === initial.activeSessionId)?.messages ?? [];
   });
+  const activeSessionTitle = deriveSessionTitle(messages);
+  const legacyImportAttemptedRef = useRef(false);
+  const sessionSnapshotRef = useRef({ sessionId: initial.activeSessionId, messages });
+  sessionSnapshotRef.current = { sessionId: activeSessionId, messages };
+  const sessionReadyRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -1153,6 +1200,8 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingIdRef = useRef<string | null>(null);
@@ -1179,9 +1228,67 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     [kindsData],
   );
 
-  // Keeps the active session's snapshot inside `sessions` in sync with the live `messages`
-  // state (including mid-stream token updates) — the persistence effect below reacts to that.
   useEffect(() => {
+    let cancelled = false;
+    setSessionsLoaded(false);
+    const loadSessions = async () => {
+      try {
+        let stored = await aiAssistantApi.getChatSessions(chatContext);
+        if (!legacyImportAttemptedRef.current && stored.length === 0 && initial.sessions.some((session) => session.messages.length > 0)) {
+          legacyImportAttemptedRef.current = true;
+          for (const legacy of initial.sessions) {
+            await aiAssistantApi.importChatSession(legacy, buildSessionHistory(legacy.messages), chatContext);
+          }
+          stored = await aiAssistantApi.getChatSessions(chatContext);
+        }
+
+        let restored: ChatSession[] = stored.map((session) => ({
+          ...session,
+          messages: session.messages.filter(isValidMessage).map((message) => normalizeStoredMessage(message as ChatMessage)),
+        }));
+        if (restored.length === 0) {
+          const fresh = freshSession();
+          await aiAssistantApi.saveChatSession(fresh, chatContext);
+          restored = [fresh];
+        }
+        if (cancelled) return;
+
+        const selectedId = restored.some((session) => session.id === initial.activeSessionId)
+          ? initial.activeSessionId
+          : restored[0].id;
+        const selected = restored.find((session) => session.id === selectedId)!;
+        sessionSnapshotRef.current = { sessionId: selectedId, messages: selected.messages };
+        setSessions(restored);
+        setActiveSessionId(selectedId);
+        setMessages(selected.messages);
+        localStorage.removeItem(CHAT_SESSIONS_STORAGE_KEY);
+        localStorage.removeItem(LEGACY_CHAT_HISTORY_STORAGE_KEY);
+        const maxId = restored.reduce((max, session) =>
+          session.messages.reduce((messageMax, message) => {
+            const match = /-(\d+)$/.exec(message.id);
+            const n = match ? Number(match[1]) : 0;
+            return Number.isFinite(n) ? Math.max(messageMax, n) : messageMax;
+          }, max), 0);
+        if (maxId >= nextMessageId) nextMessageId = maxId + 1;
+        setSessionsLoaded(true);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load chat sessions');
+      }
+    };
+    void loadSessions();
+    return () => {
+      cancelled = true;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [chatContext]);
+
+  // Keeps the active session's snapshot inside `sessions` in sync with the live `messages`
+  // state (including mid-stream token updates) — the backend persistence effect below reacts to that.
+  useEffect(() => {
+    if (!sessionsLoaded) {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      return;
+    }
     setSessions((current) => {
       const idx = current.findIndex((s) => s.id === activeSessionId);
       const updated: ChatSession = { id: activeSessionId, title: deriveSessionTitle(messages), messages, updatedAt: Date.now() };
@@ -1190,18 +1297,26 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       next[idx] = updated;
       return next;
     });
-  }, [messages, activeSessionId]);
+  }, [messages, activeSessionId, sessionsLoaded]);
 
   useEffect(() => {
-    persistSessions(sessions, activeSessionId);
-  }, [sessions, activeSessionId]);
+    if (!sessionsLoaded) return;
+    const active = sessions.find((session) => session.id === activeSessionId);
+    if (!active) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveQueueRef.current = saveQueueRef.current
+        .then(() => aiAssistantApi.saveChatSession(active, chatContext))
+        .catch((err) => setError(err instanceof Error ? err.message : 'Failed to save chat session'));
+    }, 250);
+  }, [sessions, activeSessionId, sessionsLoaded, chatContext]);
 
   useEffect(() => {
     // Don't attempt a connection at all while unlicensed — AiEntitlementGate is showing the
     // locked/checkout screen instead of this panel anyway. Once entitlement flips to true
     // (e.g. right after a trial/checkout completes), this effect re-runs and connects fresh,
     // rather than leaving a stale "AI feature not enabled" error from an earlier attempt.
-    if (!entitled) return;
+    if (!entitled || !sessionsLoaded) return;
 
     // Reconnects automatically if the socket drops for a reason unrelated to this effect
     // tearing down (a backend restart during dev, a network blip) — without this, a dropped
@@ -1223,19 +1338,18 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       // expire it (a terminal status, unlike 'pending') so it stops blocking hasPendingAction
       // forever. Sweep every stored session, not just the one currently displayed, since a
       // stale card may be sitting in a session the user hasn't switched back to yet.
-      const expirePending = (msgs: ChatMessage[]): ChatMessage[] =>
-        msgs.map((m) => (m.kind === 'action' && m.status === 'pending' ? { ...m, status: 'expired' } : m));
-      setMessages((current) => expirePending(current));
-      setSessions((current) => current.map((s) => ({ ...s, messages: expirePending(s.messages) })));
+      setMessages((current) => expirePendingActions(current));
+      setSessions((current) => current.map((s) => ({ ...s, messages: expirePendingActions(s.messages) })));
 
       const ws = openAiChatSocket(scope.context);
       wsRef.current = ws;
       ws.onopen = () => {
-        setConnected(true);
-        setError(null);
+        sessionReadyRef.current = false;
+        restoreSession(ws, sessionSnapshotRef.current.sessionId);
       };
       ws.onclose = () => {
         setConnected(false);
+        sessionReadyRef.current = false;
         if (cancelled) return;
         reconnectTimer = setTimeout(connect, 2000);
       };
@@ -1248,7 +1362,19 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           console.error('[ai-chat] failed to parse WS message', event.data, err);
           return;
         }
-        if (msg.type === 'token') {
+        if (msg.type === 'session_restored') {
+          if (msg.sessionId === sessionSnapshotRef.current.sessionId) {
+            sessionReadyRef.current = true;
+            setConnected(true);
+            setError(null);
+          }
+        } else if (msg.type === 'error') {
+          streamingIdRef.current = null;
+          setBusy(false);
+          setError(msg.message);
+        } else if (!sessionReadyRef.current) {
+          return;
+        } else if (msg.type === 'token') {
           setBusy(true);
           // The id decision (and the nextMessageId/ref mutation it requires) happens here,
           // exactly once per WS frame — never inside the setMessages updater below. React 18
@@ -1275,10 +1401,6 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           // place and end the "thinking" state without showing an error banner.
           streamingIdRef.current = null;
           setBusy(false);
-        } else if (msg.type === 'error') {
-          streamingIdRef.current = null;
-          setBusy(false);
-          setError(msg.message);
         } else if (msg.type === 'tool_call') {
           // A read tool starting also marks the end of whatever text bubble was streaming —
           // tokens after the tool result land in a new bubble rather than this one.
@@ -1338,7 +1460,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       if (reconnectTimer) clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, [scope.context, entitled]);
+  }, [scope.context, entitled, sessionsLoaded]);
 
   // Grows the input with its content (up to the CSS max-height, after which it scrolls
   // internally) — plain textareas don't do this on their own, and a fixed height clips
@@ -1408,7 +1530,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const sendMessage = () => {
     const text = input.trim();
     if ((!text && attachedImages.length === 0) || hasPendingAction) return;
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    if (!sessionReadyRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       // Distinct from the no-op guards above — this is the one the user actually needs to see:
       // without it, a dropped connection (e.g. mid-reconnect) swallowed the send with nothing
       // to explain why nothing happened.
@@ -1462,7 +1584,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     // new turn's tokens try to append to a bubble that no longer exists (see the `token`
     // handler above, which only ever appends to an existing id) instead of starting a fresh one.
     streamingIdRef.current = null;
-    setMessages((current) => [...current.slice(0, idx), { ...target, content: text }]);
+    setMessages([...messages.slice(0, idx), { ...target, content: text }]);
     wsRef.current.send(
       JSON.stringify({
         type: 'edit_message',
@@ -1518,12 +1640,28 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     if (activeArtifactId) closeArtifact();
   };
 
-  const startNewChat = () => {
+  const startNewChat = async () => {
     // Drop any other empty drafts before creating a new one, so repeated "+" clicks with
     // nothing typed don't pile up as duplicate "New chat" entries in the history list.
-    setSessions((current) => current.filter((s) => s.messages.length > 0));
-    setActiveSessionId(createSessionId());
+    setSessions((current) =>
+      current
+        .map((session) => ({ ...session, messages: expirePendingActions(session.messages) }))
+        .filter((session) => session.messages.length > 0),
+    );
+    const sessionId = createSessionId();
+    const fresh = { ...freshSession(), id: sessionId };
+    try {
+      await aiAssistantApi.saveChatSession(fresh, chatContext);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create chat session');
+      return;
+    }
+    sessionSnapshotRef.current = { sessionId, messages: [] };
+    setActiveSessionId(sessionId);
     setMessages([]);
+    sessionReadyRef.current = false;
+    setConnected(false);
+    restoreSession(wsRef.current, sessionId);
     resetTransientState();
     setHistoryOpen(false);
   };
@@ -1533,27 +1671,56 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     if (id === activeSessionId) return;
     const target = sessions.find((s) => s.id === id);
     if (!target) return;
+    const restoredMessages = expirePendingActions(target.messages);
+    sessionSnapshotRef.current = { sessionId: id, messages: restoredMessages };
+    setSessions((current) =>
+      current.map((session) => ({ ...session, messages: expirePendingActions(session.messages) })),
+    );
     setActiveSessionId(id);
-    setMessages(target.messages);
+    setMessages(restoredMessages);
+    sessionReadyRef.current = false;
+    setConnected(false);
+    restoreSession(wsRef.current, id);
     resetTransientState();
   };
 
-  const deleteSession = (id: string, evt: React.MouseEvent) => {
+  const deleteSession = async (id: string, evt: React.MouseEvent) => {
     evt.stopPropagation();
+    try {
+      await aiAssistantApi.deleteChatSession(id, chatContext);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete chat session');
+      return;
+    }
     const remaining = sessions.filter((s) => s.id !== id);
     if (id !== activeSessionId) {
       setSessions(remaining);
       return;
     }
     if (remaining.length > 0) {
-      setSessions(remaining);
+      const restoredMessages = expirePendingActions(remaining[0].messages);
+      sessionSnapshotRef.current = { sessionId: remaining[0].id, messages: restoredMessages };
+      setSessions(remaining.map((session) => ({ ...session, messages: expirePendingActions(session.messages) })));
       setActiveSessionId(remaining[0].id);
-      setMessages(remaining[0].messages);
+      setMessages(restoredMessages);
+      sessionReadyRef.current = false;
+      setConnected(false);
+      restoreSession(wsRef.current, remaining[0].id);
     } else {
       const fresh = freshSession();
+      try {
+        await aiAssistantApi.saveChatSession(fresh, chatContext);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to create chat session');
+        return;
+      }
+      sessionSnapshotRef.current = { sessionId: fresh.id, messages: [] };
       setSessions([fresh]);
       setActiveSessionId(fresh.id);
       setMessages([]);
+      sessionReadyRef.current = false;
+      setConnected(false);
+      restoreSession(wsRef.current, fresh.id);
     }
     resetTransientState();
   };
@@ -1592,7 +1759,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         />
       )}
 
-      <AiEntitlementGate>
+      <AiEntitlementGate sessionTitle={activeSessionTitle === 'New chat' ? undefined : activeSessionTitle}>
         <div className={`ai-panel${activeArtifact ? ' ai-panel-with-artifact' : ''}`}>
         <div
           className={`ai-panel-chat-col${dragOver ? ' ai-panel-chat-col-drag-over' : ''}`}

@@ -3,8 +3,10 @@ import { expect, test, type Page, type WebSocketRoute } from '@playwright/test';
 type OutboundMessage = { type: string; [key: string]: unknown };
 
 async function mockAssistantApi(page: Page): Promise<void> {
+  const sessions = new Map<string, { id: string; title: string; messages: unknown[]; updatedAt: number }>();
   await page.route('**/api/**', async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url());
+    const pathname = url.pathname;
     if (!pathname.startsWith('/api/')) {
       await route.fallback();
       return;
@@ -15,6 +17,28 @@ async function mockAssistantApi(page: Page): Promise<void> {
     }
     if (pathname === '/api/resources/_kinds') {
       await route.fulfill({ json: [] });
+      return;
+    }
+    if (pathname === '/api/ai/sessions') {
+      await route.fulfill({ json: { sessions: [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt) } });
+      return;
+    }
+    if (pathname.startsWith('/api/ai/sessions/')) {
+      const segments = pathname.split('/');
+      const id = decodeURIComponent(segments[4] ?? '');
+      const key = `${url.searchParams.get('context') ?? 'default'}:${id}`;
+      if (route.request().method() === 'DELETE') {
+        sessions.delete(key);
+        await route.fulfill({ status: 204 });
+        return;
+      }
+      const body = route.request().postDataJSON() as { title: string; messages: unknown[] };
+      if (route.request().method() === 'POST') {
+        if (!sessions.has(key)) sessions.set(key, { id, ...body, updatedAt: Date.now() });
+      } else {
+        sessions.set(key, { id, ...body, updatedAt: Date.now() });
+      }
+      await route.fulfill({ json: sessions.get(key) });
       return;
     }
     await route.fulfill({ json: {} });
@@ -30,6 +54,9 @@ async function mockAssistantSocket(
     socket.onMessage((raw) => {
       const message = JSON.parse(raw.toString()) as OutboundMessage;
       sent.push(message);
+      if (message.type === 'restore_session') {
+        socket.send(JSON.stringify({ type: 'session_restored', sessionId: message.sessionId }));
+      }
       onMessage(socket, message);
     });
   });
@@ -60,7 +87,7 @@ test('sends a prompt and renders a streamed Markdown answer incrementally', asyn
   await input.fill('Is checkout healthy?');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.getByText('Is checkout healthy?')).toBeVisible();
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Is checkout healthy?' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Diagnosis' })).toBeVisible();
   await expect(page.getByText('checkout-api', { exact: true })).toBeVisible();
   await expect.poll(() => sent).toContainEqual(expect.objectContaining({ type: 'user_message', text: 'Is checkout healthy?' }));
@@ -80,11 +107,58 @@ test('submits a prompt with Enter and sends its text over the assistant socket',
   await input.fill('Why is checkout unavailable?');
   await input.press('Enter');
 
-  await expect(page.getByText('Why is checkout unavailable?')).toBeVisible();
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Why is checkout unavailable?' })).toBeVisible();
   await expect(page.getByText('I will check the cluster state.')).toBeVisible();
   await expect.poll(() => sent).toContainEqual(
     expect.objectContaining({ type: 'user_message', text: 'Why is checkout unavailable?' }),
   );
+});
+
+test('imports old browser history once and restores by backend session ID', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, () => undefined);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'k8sExplorer.aiChatSessions',
+      JSON.stringify({
+        activeSessionId: 'session-prior',
+        sessions: [
+          {
+            id: 'session-prior',
+            title: 'Earlier diagnosis',
+            updatedAt: 1,
+            messages: [
+              { id: 'u1', kind: 'text', role: 'user', content: 'Why did checkout fail?' },
+              { id: 'a1', kind: 'text', role: 'assistant', content: 'I found a failed readiness probe.' },
+              { id: 't1', kind: 'tool', name: 'get_events', input: {}, status: 'done', output: 'Readiness probe failed' },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  await openAssistant(page);
+
+  await expect.poll(() => sent).toContainEqual(
+    expect.objectContaining({
+      type: 'restore_session',
+      sessionId: 'session-prior',
+    }),
+  );
+  expect(sent.find((message) => message.type === 'restore_session')).not.toHaveProperty('history');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('k8sExplorer.aiChatSessions'))).toBeNull();
+});
+
+test('shows a session restore error instead of remaining in the connecting state', async ({ page }) => {
+  await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'restore_session') {
+      socket.send(JSON.stringify({ type: 'error', message: 'Chat session not found.' }));
+    }
+  });
+  await openAssistant(page);
+
+  await expect(page.getByText('Chat session not found.')).toBeVisible();
+  await expect(page.getByText('Connecting to the AI assistant…')).toHaveCount(0);
 });
 
 test('shows a stream error and allows the user to try another prompt', async ({ page }) => {
@@ -225,7 +299,7 @@ for (const [skill, expectedPrompt] of skillPrompts) {
 }
 
 test('keeps Shift+Enter in the draft instead of submitting the message', async ({ page }) => {
-  const sent = await mockAssistantSocket(page, (_socket, _message) => undefined);
+  const sent = await mockAssistantSocket(page, () => undefined);
   await openAssistant(page);
 
   const input = page.getByPlaceholder('Ask about resource…');
@@ -233,11 +307,11 @@ test('keeps Shift+Enter in the draft instead of submitting the message', async (
   await input.press('Shift+Enter');
 
   await expect(input).toHaveValue('Check the pod status\n');
-  expect(sent).toHaveLength(0);
+  expect(sent.filter((message) => message.type === 'user_message')).toHaveLength(0);
   await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
 });
 
-test('persists chat history across reload and supports editing a sent turn', async ({ page }) => {
+test('restores backend chat history across reload and supports editing a sent turn', async ({ page }) => {
   const sent = await mockAssistantSocket(page, (socket, message) => {
     if (message.type === 'user_message' || message.type === 'edit_message') {
       socket.send(JSON.stringify({ type: 'token', token: 'The pod is pending.' }));
@@ -245,14 +319,22 @@ test('persists chat history across reload and supports editing a sent turn', asy
     }
   });
   await openAssistant(page);
+  await expect(page.locator('.ai-gate-session-title')).toHaveCount(0);
 
+  const saveResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/ai/sessions/') &&
+    response.request().method() === 'PUT' &&
+    response.ok() &&
+    response.request().postDataJSON()?.messages?.some((message: { content?: string }) => message.content === 'Why is api-0 pending?'),
+  );
   await page.getByPlaceholder('Ask about resource…').fill('Why is api-0 pending?');
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText('The pod is pending.')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('k8sExplorer.aiChatSessions'))).toContain('Why is api-0 pending?');
+  await saveResponse;
 
   await page.reload();
-  await expect(page.getByText('Why is api-0 pending?')).toBeVisible();
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Why is api-0 pending?' })).toBeVisible();
+  await expect(page.locator('.ai-gate-session-title')).toHaveText('Why is api-0 pending?');
   await page.getByRole('button', { name: 'Edit' }).click();
   await page.locator('.ai-message-edit-input').fill('Why is api-1 pending?');
   await page.getByRole('button', { name: 'Save' }).click();
@@ -281,7 +363,7 @@ test('starts a separate chat, reopens a saved session, and deletes it from histo
   const savedSession = page.getByRole('button', { name: /Inspect checkout deployment/ });
   await expect(savedSession).toBeVisible();
   await savedSession.click();
-  await expect(page.getByText('Inspect checkout deployment')).toBeVisible();
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Inspect checkout deployment' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Chat history' }).click();
   await page.getByRole('button', { name: /Inspect checkout deployment/ }).getByLabel('Delete chat').click();

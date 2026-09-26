@@ -1,15 +1,45 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+
+const realResources = await import('../kube/resources.js');
+const realHelmService = await import('./helmService.js');
+let getResourceMock: (...args: any[]) => Promise<any> = realResources.getResource;
+let listReleasesMock: (...args: any[]) => Promise<any[]> = realHelmService.listReleases;
+let previewInstallMock: (...args: any[]) => Promise<string> = realHelmService.previewInstall;
+
+mock.module('../kube/resources.js', {
+  namedExports: {
+    ...realResources,
+    getResource: (...args: any[]) => getResourceMock(...args),
+  },
+});
+mock.module('./helmService.js', {
+  namedExports: {
+    ...realHelmService,
+    listReleases: (...args: any[]) => listReleasesMock(...args),
+    previewInstall: (...args: any[]) => previewInstallMock(...args),
+  },
+});
+
+const { HttpError } = await import('../util/httpError.js');
+const {
   READ_TOOLS,
   WRITE_TOOLS,
   describeProposedAction,
   isInvestigationTool,
   isWriteTool,
   okList,
+  prepareActionProposal,
   requiresDeleteCapability,
   toolCatalogForRole,
-} from './aiToolExecutor.js';
+} = await import('./aiToolExecutor.js');
+
+const proposalContext = {
+  context: 'test-context',
+  kubeOptions: {} as any,
+  role: 'admin' as const,
+  helm: null,
+};
 
 test('AI tool catalog never offers mutation tools to read-only roles', () => {
   for (const role of ['viewer', undefined, null] as const) {
@@ -54,4 +84,72 @@ test('write proposals always identify the exact target and scope', () => {
     describeProposedAction('scale_deployment', { name: 'checkout', namespace: 'payments', replicas: 0 }),
     'Scale deployment "checkout" in namespace "payments" to 0 replica(s)',
   );
+});
+
+test('apply_manifest blocks approval when the target already exists', async () => {
+  getResourceMock = async () => ({ kind: 'ConfigMap', metadata: { name: 'settings' } });
+
+  const proposal = await prepareActionProposal('apply_manifest', {
+    manifest: { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'settings', namespace: 'team' } },
+  }, proposalContext);
+
+  assert.match(proposal.blocked ?? '', /already exists/);
+  assert.ok(proposal.diff?.before);
+});
+
+test('apply_manifest proposes approval only after a confirmed not-found lookup', async () => {
+  getResourceMock = async () => { throw new HttpError(404, 'Not found'); };
+
+  const proposal = await prepareActionProposal('apply_manifest', {
+    manifest: { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'settings', namespace: 'team' } },
+  }, proposalContext);
+
+  assert.equal(proposal.blocked, undefined);
+  assert.ok(proposal.diff?.after);
+});
+
+test('apply_manifest blocks approval when existence cannot be verified', async () => {
+  getResourceMock = async () => { throw new HttpError(403, 'Forbidden'); };
+
+  const proposal = await prepareActionProposal('apply_manifest', {
+    manifest: { apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'settings', namespace: 'team' } },
+  }, proposalContext);
+
+  assert.match(proposal.blocked ?? '', /Could not verify/);
+  assert.equal(proposal.diff, undefined);
+});
+
+test('helm_install blocks approval when the release already exists', async () => {
+  listReleasesMock = async () => [{ name: 'demo', namespace: 'team' }];
+  previewInstallMock = async () => { throw new Error('preview should not run'); };
+
+  const proposal = await prepareActionProposal('helm_install', {
+    chart: 'example/demo', releaseName: 'demo', namespace: 'team',
+  }, { ...proposalContext, helm: { session: {} as any, scoped: {} as any } });
+
+  assert.match(proposal.blocked ?? '', /already exists/);
+  assert.match(proposal.blocked ?? '', /helm_upgrade/);
+});
+
+test('helm_install proposes approval after a successful check finds no release', async () => {
+  listReleasesMock = async () => [];
+  previewInstallMock = async () => 'kind: Deployment';
+
+  const proposal = await prepareActionProposal('helm_install', {
+    chart: 'example/demo', releaseName: 'demo', namespace: 'team',
+  }, { ...proposalContext, helm: { session: {} as any, scoped: {} as any } });
+
+  assert.equal(proposal.blocked, undefined);
+  assert.equal(proposal.diff?.after, 'kind: Deployment');
+});
+
+test('helm_install blocks approval when release existence cannot be checked', async () => {
+  listReleasesMock = async () => { throw new Error('cluster unavailable'); };
+
+  const proposal = await prepareActionProposal('helm_install', {
+    chart: 'example/demo', releaseName: 'demo', namespace: 'team',
+  }, { ...proposalContext, helm: { session: {} as any, scoped: {} as any } });
+
+  assert.match(proposal.blocked ?? '', /Could not verify or preview/);
+  assert.equal(proposal.diff, undefined);
 });

@@ -20,6 +20,13 @@ export interface AiChatMessage {
   content: string;
 }
 
+export interface AiChatSession {
+  id: string;
+  title: string;
+  messages: unknown[];
+  updatedAt: number;
+}
+
 /** An image attached to a user turn — `data` is raw base64 (no `data:` prefix); the frontend
  * resizes/re-encodes to JPEG client-side before this is built (see AiAssistantPanel.tsx), so
  * `mediaType` is normally 'image/jpeg', but the union covers a passthrough of an already-small
@@ -31,6 +38,8 @@ export interface AiImageAttachment {
 
 /** Wire messages sent to /ws/ai. */
 export type AiChatOutboundMessage =
+  /** Loads server-owned model history for the selected chat session. */
+  | { type: 'restore_session'; sessionId: string }
   /** `turnId` identifies this turn for later editing/regenerating (see `edit_message` below)
    * and is otherwise unused by the backend for a fresh message. */
   | { type: 'user_message'; text: string; turnId?: string; focusedResource?: AiFocusedResource; images?: AiImageAttachment[] }
@@ -59,6 +68,7 @@ export interface AiActionDiff {
 
 /** Wire messages received from /ws/ai. */
 export type AiChatInboundMessage =
+  | { type: 'session_restored'; sessionId: string }
   | { type: 'token'; token: string }
   | { type: 'stop' }
   /** The turn ended because the user clicked Stop — distinct from `stop` (a normal end-of-turn)
@@ -89,6 +99,10 @@ export type AiChatInboundMessage =
     };
 
 const AI_API_BASE = '/api/ai';
+
+function contextQuery(context?: string): string {
+  return context ? `?context=${encodeURIComponent(context)}` : '';
+}
 
 async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -121,6 +135,45 @@ export const aiAssistantApi = {
     const res = await fetch(`${AI_API_BASE}/checkout`, { method: 'POST' });
     if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to start checkout'));
     return res.json();
+  },
+
+  async getChatSessions(context?: string): Promise<AiChatSession[]> {
+    const res = await fetch(`${AI_API_BASE}/sessions${contextQuery(context)}`, { credentials: 'include', cache: 'no-store' });
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to load chat sessions'));
+    const body = (await res.json()) as { sessions: AiChatSession[] };
+    return body.sessions;
+  },
+
+  async saveChatSession(session: Pick<AiChatSession, 'id' | 'title' | 'messages'>, context?: string): Promise<void> {
+    const res = await fetch(`${AI_API_BASE}/sessions/${encodeURIComponent(session.id)}${contextQuery(context)}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: session.title, messages: session.messages }),
+    });
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to save chat session'));
+  },
+
+  async importChatSession(
+    session: Pick<AiChatSession, 'id' | 'title' | 'messages'>,
+    modelMessages: AiChatMessage[],
+    context?: string,
+  ): Promise<void> {
+    const res = await fetch(`${AI_API_BASE}/sessions/${encodeURIComponent(session.id)}/import${contextQuery(context)}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: session.title, messages: session.messages, modelMessages }),
+    });
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to import chat session'));
+  },
+
+  async deleteChatSession(id: string, context?: string): Promise<void> {
+    const res = await fetch(`${AI_API_BASE}/sessions/${encodeURIComponent(id)}${contextQuery(context)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to delete chat session'));
   },
 };
 
