@@ -14,8 +14,8 @@
 }
 
 .loading-overlay-spinner {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border: 4px solid var(--subtle-border-strong);
   border-top-color: var(--accent-bright);
   border-radius: 50%;
