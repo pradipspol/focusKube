@@ -459,7 +459,6 @@ export function ResourceTable({
   const [watchedRollout, setWatchedRollout] = useState<string | null>(null);
   const [highlightedPodRows, setHighlightedPodRows] = useState<Record<string, true>>({});
   const seenPodRowsRef = useRef<Set<string>>(new Set());
-  const watchWorkerRef = useRef<Worker | null>(null);
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [watchState, setWatchState] = useState<WatchState>('connecting');
@@ -483,6 +482,8 @@ export function ResourceTable({
     [selectedNamespaces],
   );
   const namespaceSelectionSignature = namespaceSelectionValues.join('|');
+  const isMultiNamespaceSelection =
+    !isClusterScoped && !effectiveScope.namespace && namespaceSelectionValues.length > 1;
   const queryKey = useMemo(
     () => ['resource', plural, scope.context, scope.namespace, namespaceSelectionSignature],
     [plural, scope.context, scope.namespace, namespaceSelectionSignature],
@@ -534,7 +535,33 @@ export function ResourceTable({
           ? RETRY_INTERVAL_MS
           : isClusterScoped || !LIVE_WATCH_PLURALS.has(plural)
             ? false
+            : isMultiNamespaceSelection
+              ? watchState === 'live' ? false : RETRY_INTERVAL_MS
             : (watchState === 'live' || hasInitialSnapshot ? false : WATCH_FALLBACK_POLL_MS),
+  });
+  const namespaceCountQueryKey = useMemo(
+    () => ['resource-count', plural, scope.context, scope.source, namespaceSelectionSignature],
+    [plural, scope.context, scope.source, namespaceSelectionSignature],
+  );
+  const namespaceCountQuery = useQuery<number | undefined>({
+    queryKey: namespaceCountQueryKey,
+    enabled: isMultiNamespaceSelection && !!scope.context,
+    retry: false,
+    queryFn: async () => {
+      const pages = await Promise.all(namespaceSelectionValues.map(async (namespace) => {
+        try {
+          return await api.listResourcePage(plural, { ...effectiveScope, namespace }, { limit: 1 });
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 403) return null;
+          throw error;
+        }
+      }));
+      if (pages.some((page) => page?.continue && typeof page.remainingItemCount !== 'number')) return undefined;
+      return pages.reduce((total, page) => {
+        if (!page) return total;
+        return total + page.items.length + (page.remainingItemCount ?? 0);
+      }, 0);
+    },
   });
 
   useAzureAuthRequiredEffect(pagedList.error, onAzureAuthRequired);
@@ -586,6 +613,7 @@ export function ResourceTable({
     setWatchRetryToken((token) => token + 1);
     void qc.invalidateQueries({ queryKey: ['namespaces', scope.context, scope.source] });
     void qc.resetQueries({ queryKey: pagedQueryKey });
+    void qc.resetQueries({ queryKey: namespaceCountQueryKey });
   };
 
   useEffect(() => {
@@ -623,7 +651,7 @@ export function ResourceTable({
     [selectedNamespaces],
   );
   const loadedItems = (pagedList.data?.pages ?? []).flatMap((page) => page.items);
-  const totalResourceCount = useMemo(() => {
+  const pagedTotalResourceCount = useMemo(() => {
     const pages = pagedList.data?.pages ?? [];
     if (pages.length > 0 && !pagedList.hasNextPage && !pagedList.isFetchingNextPage) return loadedItems.length;
 
@@ -642,6 +670,7 @@ export function ResourceTable({
     }
     return total;
   }, [isClusterScoped, loadedItems.length, namespaceSelectionValues.length, pagedList.data?.pages, pagedList.hasNextPage, pagedList.isFetchingNextPage, scope.namespace]);
+  const totalResourceCount = namespaceCountQuery.data ?? pagedTotalResourceCount;
   const snapshotResourceVersion = pagedList.data?.pages[0]?.resourceVersion;
   const eventCutoffMs =
     plural === 'events' && eventTimeRange !== 'all' ? Date.now() - EVENT_TIME_RANGE_MS[eventTimeRange] : null;
@@ -831,19 +860,33 @@ export function ResourceTable({
 
   useEffect(() => {
     if (!scope.context || !LIVE_WATCH_PLURALS.has(plural)) return;
-    if (!isClusterScoped && namespaceSelectionValues.length > 1) {
-      setWatchState('disconnected');
-      return;
-    }
     if (!snapshotResourceVersion) return;
 
-    const watchNamespace = isClusterScoped ? undefined : effectiveScope.namespace ?? namespaceSelectionValues[0];
+    const watchNamespaces = isClusterScoped
+      ? [undefined]
+      : effectiveScope.namespace
+        ? [effectiveScope.namespace]
+        : namespaceSelectionValues.length > 0
+          ? namespaceSelectionValues
+          : [undefined];
 
     setWatchState('connecting');
 
-    const worker = getWatchWorker(watchKey ?? `${plural}:${scope.context ?? ''}:${effectiveScope.namespace ?? ''}`);
-    watchWorkerRef.current = worker;
     let pendingResyncTimer: number | null = null;
+    const namespaceStates = new Map<string, WatchState>();
+    const watchSubscriptions: Array<{ key: string; worker: Worker; onMessage: (event: MessageEvent<WatchWorkerOutbound>) => void }> = [];
+
+    const updateNamespaceState = (key: string, state: WatchState) => {
+      namespaceStates.set(key, state);
+      const states = [...namespaceStates.values()];
+      setWatchState(
+        states.every((value) => value === 'live')
+          ? 'live'
+          : states.some((value) => value === 'disconnected')
+            ? 'disconnected'
+            : 'connecting',
+      );
+    };
 
     const requestSnapshotReset = () => {
       const now = Date.now();
@@ -851,6 +894,7 @@ export function ResourceTable({
       if (elapsed >= WATCH_RESYNC_THROTTLE_MS) {
         lastResyncInvalidateAtRef.current = now;
         void qc.resetQueries({ queryKey: pagedQueryKey });
+        void qc.resetQueries({ queryKey: namespaceCountQueryKey });
         return;
       }
       if (pendingResyncTimer !== null) return;
@@ -858,68 +902,65 @@ export function ResourceTable({
         pendingResyncTimer = null;
         lastResyncInvalidateAtRef.current = Date.now();
         void qc.resetQueries({ queryKey: pagedQueryKey });
+        void qc.resetQueries({ queryKey: namespaceCountQueryKey });
       }, WATCH_RESYNC_THROTTLE_MS - elapsed);
     };
 
-    const onMessage = (event: MessageEvent<WatchWorkerOutbound>) => {
-      const payload = event.data;
-      if (!payload) return;
-      if (payload.type === 'state') {
-        setWatchState(payload.state);
-        return;
-      }
-      if (payload.type === 'error') {
-        setWatchState('disconnected');
-        return;
-      }
-      if (payload.type === 'resync') {
-        // Force a full list refresh when the watch stream asks for reset,
-        // so local cache catches up with any missed events.
-        setLastUpdateAt(Date.now());
-        requestSnapshotReset();
-        return;
-      }
-      if (payload.type === 'event' && payload.object) {
-        if (payload.eventType === 'ADDED' || payload.eventType === 'DELETED') {
-          requestSnapshotReset();
-        } else if (payload.eventType === 'MODIFIED') {
-          applyWatchEventToPagedCache(qc, pagedQueryKey, payload.eventType, payload.object);
+    for (const namespace of watchNamespaces) {
+      const key = `${watchKey ?? `${plural}:${scope.context}:${effectiveScope.namespace ?? ''}`}:namespace:${namespace ?? '*'}`;
+      namespaceStates.set(key, 'connecting');
+      const worker = getWatchWorker(key);
+      const onMessage = (event: MessageEvent<WatchWorkerOutbound>) => {
+        const payload = event.data;
+        if (!payload) return;
+        if (payload.type === 'state') {
+          updateNamespaceState(key, payload.state);
+          return;
         }
-        setLastUpdateAt(Date.now());
-      }
-    };
-    worker.addEventListener('message', onMessage as EventListener);
+        if (payload.type === 'error') {
+          updateNamespaceState(key, 'disconnected');
+          return;
+        }
+        if (payload.type === 'resync') {
+          setLastUpdateAt(Date.now());
+          requestSnapshotReset();
+          return;
+        }
+        if (payload.type === 'event' && payload.object) {
+          if (payload.eventType === 'ADDED' || payload.eventType === 'DELETED') {
+            requestSnapshotReset();
+          } else if (payload.eventType === 'MODIFIED') {
+            applyWatchEventToPagedCache(qc, pagedQueryKey, payload.eventType, payload.object);
+          }
+          setLastUpdateAt(Date.now());
+        }
+      };
+      worker.addEventListener('message', onMessage as EventListener);
+      watchSubscriptions.push({ key, worker, onMessage });
 
-    const startMsg: WatchWorkerInbound = {
-      type: 'start',
-      payload: {
-        context: scope.context,
-        namespace: watchNamespace,
-        plural,
-        resourceVersion: snapshotResourceVersion,
-      },
-    };
-    worker.postMessage(startMsg);
+      const startMsg: WatchWorkerInbound = {
+        type: 'start',
+        payload: {
+          context: scope.context,
+          namespace,
+          plural,
+          resourceVersion: snapshotResourceVersion,
+        },
+      };
+      worker.postMessage(startMsg);
+    }
 
     return () => {
-      const current = watchWorkerRef.current;
-      if (!current) return;
       if (pendingResyncTimer !== null) window.clearTimeout(pendingResyncTimer);
-      const stopMsg: WatchWorkerInbound = { type: 'stop' };
-      current.postMessage(stopMsg);
-      current.removeEventListener('message', onMessage as EventListener);
-      if (watchKey) {
-        releaseWatchWorker(watchKey);
+      for (const { key, worker, onMessage } of watchSubscriptions) {
+        worker.postMessage({ type: 'stop' } satisfies WatchWorkerInbound);
+        worker.removeEventListener('message', onMessage as EventListener);
+        releaseWatchWorker(key);
       }
-      watchWorkerRef.current = null;
     };
     // watchRetryToken is included so a user-initiated retry restarts the worker.
-    // namespaceSelectionSignature is included so multi-namespace checkbox
-    // changes tear down and restart the watch too - the worker only supports
-    // watching a single namespace or the whole cluster, so a stale watch left
-    // over from a different namespace selection can otherwise keep patching
-    // cross-namespace events into the newly filtered view.
-  }, [plural, qc, scope.context, effectiveScope.namespace, isClusterScoped, namespaceSelectionValues, namespaceSelectionSignature, watchKey, watchRetryToken, snapshotResourceVersion, pagedQueryKey]);
+    // Namespace selection changes tear down and restart all scoped watches.
+  }, [plural, qc, scope.context, effectiveScope.namespace, isClusterScoped, isMultiNamespaceSelection, namespaceSelectionValues, namespaceSelectionSignature, watchKey, watchRetryToken, snapshotResourceVersion, pagedQueryKey]);
 
   useEffect(() => {
     // Re-enable responsive auto-fit and reset the connection budget whenever
