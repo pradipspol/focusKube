@@ -5,6 +5,9 @@ import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
+import { Notice } from './Notice';
+import { IconActionButton } from './IconActionButton';
+import { List, RotateCw } from 'lucide-react';
 
 interface Props {
   deployment: K8sObject;
@@ -97,14 +100,12 @@ export function DeploymentActions({ deployment, scope, onChanged, onOpenLogs }: 
 
   return (
     <div style={{ padding: 14, overflow: 'auto' }}>
-      {message && <div className="notice">{message}</div>}
-      {!canWrite && <div className="notice">{uiText.deployment.readOnlyNotice}</div>}
+      {message && <Notice>{message}</Notice>}
+      {!canWrite && <Notice>{uiText.deployment.readOnlyNotice}</Notice>}
 
       <div className="actions-bar" style={{ marginBottom: 14 }}>
         {onOpenLogs && (
-          <button className="drawer-action-icon" type="button" title={uiText.resourceDetail.logs} onClick={onOpenLogs}>
-            ≣
-          </button>
+          <IconActionButton title={uiText.resourceDetail.logs} onClick={onOpenLogs}><List size={16} aria-hidden="true" /></IconActionButton>
         )}
       </div>
 
@@ -112,7 +113,7 @@ export function DeploymentActions({ deployment, scope, onChanged, onOpenLogs }: 
         <>
           <h4>{uiText.deployment.restart}</h4>
           <button onClick={() => restart.mutate()} disabled={restart.isPending}>
-            ⟳ {uiText.deployment.rolloutRestart}
+            <><RotateCw size={14} aria-hidden="true" /> {uiText.deployment.rolloutRestart}</>
           </button>
 
           <h4 style={{ marginTop: 20 }}>{uiText.deployment.scale}</h4>
@@ -134,7 +135,7 @@ export function DeploymentActions({ deployment, scope, onChanged, onOpenLogs }: 
 
       <h4 style={{ marginTop: 20 }}>{uiText.deployment.rolloutHistory}</h4>
       {history.isLoading && <div className="dim">{uiText.deployment.loadingHistory}</div>}
-      {history.isError && <div className="notice error">{(history.error as Error).message}</div>}
+      {history.isError && <Notice variant="error">{(history.error as Error).message}</Notice>}
       {revisions.length > 0 && (
         <table>
           <thead>

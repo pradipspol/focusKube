@@ -10,11 +10,20 @@ import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
 import { LoadingOverlay } from './LoadingOverlay';
 import { ResourceDetail } from './ResourceDetail';
+import { EmptyState } from './EmptyState';
+import { RefreshButton } from './RefreshButton';
+import { Notice } from './Notice';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
+import { AnchoredMenu } from './AnchoredMenu';
 import { useConfirm, type ConfirmFn } from './ConfirmDialog';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import type { OpenDeploymentLogsTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
+import { ActionMenuTrigger } from './ActionMenuTrigger';
+import { CloseButton } from './CloseButton';
+import { IconActionButton } from './IconActionButton';
+import { ArrowDown, ArrowUp, CircleAlert, Download, Ellipsis, LayoutDashboard, List, Pencil, Plus, RotateCw, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
 
 interface Props {
   watchKey?: string;
@@ -72,7 +81,7 @@ function eventTimestampOf(o: K8sObject): number {
 type ActionItem = {
   label: string;
   title: string;
-  quickIcon?: string;
+  quickIcon?: LucideIcon;
   danger?: boolean;
   onClick: () => void;
   disabled?: boolean;
@@ -318,23 +327,23 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
     case 'common.showDetails':
       return { label: uiText.resource.showDetails, title: uiText.resource.openDetailsTitle, onClick: () => ctx.setSelected({ obj: o }) };
     case 'pods.logs':
-      return { label: uiText.resource.viewLogs, title: uiText.resource.openPodLogsTitle, quickIcon: '≣', onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
+      return { label: uiText.resource.viewLogs, title: uiText.resource.openPodLogsTitle, quickIcon: List, onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
     case 'pods.shell':
-      return { label: uiText.resource.openShell, title: uiText.resource.openExecShellTitle, quickIcon: '>_', onClick: () => ctx.setSelected({ obj: o, tab: 'exec' }) };
+      return { label: uiText.resource.openShell, title: uiText.resource.openExecShellTitle, quickIcon: Terminal, onClick: () => ctx.setSelected({ obj: o, tab: 'exec' }) };
     case 'deploy.restart':
       return {
         label: uiText.resource.restartDeploymentAction,
         title: uiText.resource.triggerRolloutRestart,
-        quickIcon: '↻',
+        quickIcon: RotateCw,
         onClick: () => ctx.restartDeployment.mutate(o),
         disabled: ctx.restartDeployment.isPending,
       };
     case 'deploy.overview':
-      return { label: uiText.resourceDetail.overview, title: uiText.resource.openDeploymentOverview, quickIcon: '◫', onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }) };
+      return { label: uiText.resourceDetail.overview, title: uiText.resource.openDeploymentOverview, quickIcon: LayoutDashboard, onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }) };
     case 'deploy.logs':
-      return { label: uiText.resourceDetail.logs, title: uiText.resource.openDeploymentLogs, quickIcon: '≣', onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
+      return { label: uiText.resourceDetail.logs, title: uiText.resource.openDeploymentLogs, quickIcon: List, onClick: () => ctx.setSelected({ obj: o, tab: 'logs' }) };
     case 'deploy.actions':
-      return { label: uiText.resourceDetail.actionsTab, title: uiText.resource.openDeploymentActions, quickIcon: '⚙', onClick: () => ctx.setSelected({ obj: o, tab: 'actions' }) };
+      return { label: uiText.resourceDetail.actionsTab, title: uiText.resource.openDeploymentActions, quickIcon: Ellipsis, onClick: () => ctx.setSelected({ obj: o, tab: 'actions' }) };
     case 'workload.overview':
       return {
         label: uiText.resourceDetail.overview,
@@ -342,7 +351,7 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
         onClick: () => ctx.setSelected({ obj: o, tab: 'overview' }),
       };
     case 'common.editYaml':
-      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
+      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: Pencil, onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
     case 'common.delete': {
       const name = o.metadata?.name;
       return {
@@ -360,7 +369,7 @@ function actionFactory(key: string, ctx: ActionContext): ActionItem {
       };
     }
     default:
-      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: '✎', onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
+      return { label: uiText.resourceDetail.editYaml, title: uiText.resource.editYamlTitle, quickIcon: Pencil, onClick: () => ctx.setSelected({ obj: o, tab: 'yaml' }) };
   }
 }
 
@@ -449,8 +458,7 @@ export function ResourceTable({
   const [filter, setFilter] = useState('');
   const [eventTimeRange, setEventTimeRange] = useState<EventTimeRange>('all');
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
-  const [openMenuDirection, setOpenMenuDirection] = useState<'down' | 'up'>('down');
-  const [openMenuPos, setOpenMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const rowActionAnchorRef = useRef<HTMLElement | null>(null);
   const [sortKey, setSortKey] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
@@ -548,19 +556,8 @@ export function ResourceTable({
     enabled: isMultiNamespaceSelection && !!scope.context,
     retry: false,
     queryFn: async () => {
-      const pages = await Promise.all(namespaceSelectionValues.map(async (namespace) => {
-        try {
-          return await api.listResourcePage(plural, { ...effectiveScope, namespace }, { limit: 1 });
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 403) return null;
-          throw error;
-        }
-      }));
-      if (pages.some((page) => page?.continue && typeof page.remainingItemCount !== 'number')) return undefined;
-      return pages.reduce((total, page) => {
-        if (!page) return total;
-        return total + page.items.length + (page.remainingItemCount ?? 0);
-      }, 0);
+      const { total } = await api.resourceCount(plural, namespaceSelectionValues, effectiveScope);
+      return total;
     },
   });
 
@@ -802,7 +799,6 @@ export function ResourceTable({
       }
 
       setOpenMenuKey(null);
-      setOpenMenuPos(null);
     };
 
     window.addEventListener('pointerdown', onPointerDown);
@@ -829,7 +825,7 @@ export function ResourceTable({
     if (!exportOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && exportRef.current?.contains(target)) return;
+      if (target && (exportRef.current?.contains(target) || target.closest('.export-menu'))) return;
       setExportOpen(false);
     };
     window.addEventListener('pointerdown', onPointerDown);
@@ -1095,7 +1091,7 @@ export function ResourceTable({
   }, [list.data, onToast, plural, watchedRollout]);
 
   if (!scope.context) {
-    return <div className="empty">{uiText.resource.selectContextToBegin}</div>;
+    return <EmptyState>{uiText.resource.selectContextToBegin}</EmptyState>;
   }
 
   const startResize = (key: string, startWidth: number, startX: number) => {
@@ -1262,12 +1258,12 @@ export function ResourceTable({
         <span className="dim">{uiText.resource.lastUpdatePrefix} {lastUpdatedLabel}</span>
         {isSearchingRemainingPages && (
           <span className="dim">
-            <span className="tiny-spinner" aria-hidden="true" /> {uiText.resource.searchingRemaining}
+            <Spinner hidden /> {uiText.resource.searchingRemaining}
           </span>
         )}
         {authRecoveryRefreshing && (
           <span className="dim" title={uiText.resource.refreshingResourcesAfterAuth}>
-            <span className="tiny-spinner" aria-label={uiText.resource.refreshingResourcesAfterAuth} /> {uiText.resource.refreshing}
+            <Spinner label={uiText.resource.refreshingResourcesAfterAuth} /> {uiText.resource.refreshing}
           </span>
         )}
         {LIVE_WATCH_PLURALS.has(plural) && (
@@ -1276,7 +1272,7 @@ export function ResourceTable({
             <span>{watchState === 'live' ? uiText.resource.liveSync : uiText.resource.connecting}</span>
           </span>
         )}
-        <div className="toolbar-actions">
+        <div className="toolbar-actions resource-table-toolbar-actions">
           {plural === 'events' && (
             <select
               value={eventTimeRange}
@@ -1299,55 +1295,54 @@ export function ResourceTable({
             />
           )}
           <div className="export-dropdown" ref={exportRef}>
-            <button
-              className="export-button"
+            <IconActionButton
+              baseClassName="toolbar-icon-action export-button"
               title={uiText.resource.exportFilteredResources}
+              ariaExpanded={exportOpen}
               onClick={() => setExportOpen((current) => !current)}
             >
-              ⭳
-            </button>
+              <Download aria-hidden="true" />
+            </IconActionButton>
             {exportOpen && (
-              <div className="export-menu">
+              <AnchoredMenu anchorRef={exportRef} ariaLabel={uiText.resource.exportFilteredResources} className="export-menu">
                 <button className="action-menu-item" onClick={() => handleExport('csv')}>{uiText.resource.exportAsLabel('CSV')}</button>
                 <button className="action-menu-item" onClick={() => handleExport('json')}>{uiText.resource.exportAsLabel('JSON')}</button>
                 <button className="action-menu-item" onClick={() => handleExport('txt')}>{uiText.resource.exportAsLabel('TXT')}</button>
-              </div>
+              </AnchoredMenu>
             )}
           </div>
-          <button className="toolbar-refresh" onClick={retryConnection} title={connectionState === 'stopped' ? uiText.resource.retry : uiText.common.refresh}>
-            ⟳
-          </button>
+          <RefreshButton onClick={retryConnection} title={connectionState === 'stopped' ? uiText.resource.retry : uiText.common.refresh} />
           {canWrite && (
-            <button
-              className="add-resource-button"
+            <IconActionButton
+              baseClassName="toolbar-icon-action add-resource-button"
               title={uiText.resource.addNewResource}
-              aria-label={uiText.resource.addNewResourceLabel}
+              ariaLabel={uiText.resource.addNewResourceLabel}
               onClick={onAddResource}
             >
-              ＋
-            </button>
+              <Plus aria-hidden="true" />
+            </IconActionButton>
           )}
         </div>
       </div>
 
       {list.isError && (
-        <div className="notice error">
+        <Notice variant="error">
           {errorMessage}
           {connectionState === 'stopped' && isForbiddenNow &&
             uiText.resource.accessDeniedStopped}
           {connectionState === 'stopped' && !isForbiddenNow &&
             uiText.resource.stoppedAfterAttempts(MAX_CONNECT_RETRIES)}
-        </div>
+        </Notice>
       )}
       {needsNamespaceHint && (
-        <div className="notice">
+        <Notice>
           {uiText.resource.roleCannotListPrefix}<span className="mono">{plural}</span>{uiText.resource.roleCannotListSuffix}
-        </div>
+        </Notice>
       )}
       {list.isLoading && <LoadingOverlay message={uiText.resource.loading} />}
 
       {!list.isLoading && !isSearchingRemainingPages && items.length === 0 && (
-        <div className="empty">{uiText.resource.noResourcesFound}</div>
+        <EmptyState>{uiText.resource.noResourcesFound}</EmptyState>
       )}
 
       {items.length > 0 && (
@@ -1372,7 +1367,7 @@ export function ResourceTable({
                     >
                       {headerLabel(column)}
                       {isSortableColumn(column.key) && sortKey === column.key && (
-                        <span className="th-sort-indicator">{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
+                        <span className="th-sort-indicator" aria-hidden="true">{sortDirection === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}</span>
                       )}
                     </span>
                     {column.key === 'actions' ? (
@@ -1493,7 +1488,9 @@ export function ResourceTable({
                                   aria-label={uiText.resource.inspectHealth}
                                   onClick={() => setWarningDetails(podHealth)}
                                 >
-                                  <span aria-hidden="true">{podHealth.severity === 'error' ? '!' : '⚠'}</span>
+                                  {podHealth.severity === 'error'
+                                    ? <CircleAlert size={14} aria-hidden="true" />
+                                    : <TriangleAlert size={14} aria-hidden="true" />}
                                 </button>
                               )}
                             </span>
@@ -1630,53 +1627,34 @@ export function ResourceTable({
                         return (
                           <td key={column.key} className={`actions-cell ${openMenuKey === rowKey ? 'menu-open' : ''}`}>
                             <div className="row-actions row-actions-visible">
-                              {quickActions.map((quick) => (
-                                <button
-                                  key={quick.label}
-                                  className="quick-action icon-quick-action"
-                                  title={quick.title}
-                                  aria-label={quick.title}
-                                  disabled={quick.disabled}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    quick.onClick();
-                                  }}
-                                >
-                                  {quick.quickIcon ?? '•'}
-                                </button>
-                              ))}
-                              <button
-                                className="action-trigger"
-                                title={uiText.resourceDetail.actionsTab}
+                              {quickActions.map((quick) => {
+                                const QuickIcon = quick.quickIcon;
+                                return (
+                                  <button
+                                    key={quick.label}
+                                    className="quick-action icon-quick-action"
+                                    title={quick.title}
+                                    aria-label={quick.title}
+                                    disabled={quick.disabled}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      quick.onClick();
+                                    }}
+                                  >
+                                    {QuickIcon ? <QuickIcon size={14} aria-hidden="true" /> : null}
+                                  </button>
+                                );
+                              })}
+                              <ActionMenuTrigger
+                                label={uiText.resourceDetail.actionsTab}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  const trigger = event.currentTarget as HTMLElement;
-                                  const triggerRect = trigger.getBoundingClientRect();
-                                  const estimatedMenuHeight = Math.min(actions.length * 34 + 18, 260);
-                                  const estimatedMenuWidth = 220;
-                                  const roomBelow = window.innerHeight - triggerRect.bottom;
-                                  const direction = roomBelow < estimatedMenuHeight + 8 ? 'up' : 'down';
-                                  const top = direction === 'down'
-                                    ? triggerRect.bottom + 4
-                                    : triggerRect.top - 4;
-                                  const left = Math.max(
-                                    8,
-                                    Math.min(window.innerWidth - estimatedMenuWidth - 8, triggerRect.right - estimatedMenuWidth),
-                                  );
-
-                                  setOpenMenuDirection(direction);
-                                  setOpenMenuPos({ top, left });
+                                  rowActionAnchorRef.current = event.currentTarget;
                                   setOpenMenuKey((current) => (current === rowKey ? null : rowKey));
                                 }}
-                              >
-                                ⋮
-                              </button>
+                              />
                               {openMenuKey === rowKey && (
-                                <div
-                                  className={`action-menu ${openMenuDirection === 'up' ? 'open-up' : ''}`}
-                                  style={openMenuPos ? { top: `${openMenuPos.top}px`, /*left: `${openMenuPos.left}px`*/ } : undefined}
-                                  onClick={(event) => event.stopPropagation()}
-                                >
+                                <AnchoredMenu anchorRef={rowActionAnchorRef} ariaLabel={uiText.resourceDetail.actionsTab}>
                                   {actions.map((action) => (
                                     <button
                                       key={action.label}
@@ -1691,7 +1669,7 @@ export function ResourceTable({
                                       {action.label}
                                     </button>
                                   ))}
-                                </div>
+                                </AnchoredMenu>
                               )}
                             </div>
                           </td>
@@ -1735,15 +1713,15 @@ export function ResourceTable({
             <header className="resource-health-dialog-header">
               <div>
                 <span className={`resource-health-indicator ${warningDetails.severity}`} aria-hidden="true">
-                  {warningDetails.severity === 'error' ? '!' : '⚠'}
+                  {warningDetails.severity === 'error'
+                    ? <CircleAlert size={16} aria-hidden="true" />
+                    : <TriangleAlert size={16} aria-hidden="true" />}
                 </span>
                 <h2 id="resource-health-title">
                   {warningDetails.severity === 'error' ? 'Error' : 'Warning'}: {uiText.resource.healthDetailsTitle}
                 </h2>
               </div>
-              <button type="button" onClick={() => setWarningDetails(null)} aria-label={uiText.common.close}>
-                {uiText.common.close}
-              </button>
+              <CloseButton label={uiText.common.close} onClick={() => setWarningDetails(null)} />
             </header>
             <div className="resource-health-dialog-body">
               <p className="resource-health-resource-name">

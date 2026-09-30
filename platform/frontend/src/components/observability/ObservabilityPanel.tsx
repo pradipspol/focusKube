@@ -8,7 +8,9 @@ import { MultiPodLogsPanel } from './MultiPodLogsPanel';
 import { CorrelationDashboard } from './CorrelationDashboard';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
 import { uiText } from '../../text';
+import { Clock3 } from 'lucide-react';
 import { LoadingOverlay } from '../LoadingOverlay';
+import { Notice } from '../Notice';
 
 interface Props {
   scope: Scope;
@@ -105,7 +107,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">{uiText.observabilityPanel.selectContext}</div>
+        <Notice>{uiText.observabilityPanel.selectContext}</Notice>
       </div>
     );
   }
@@ -117,12 +119,12 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
   if (!isAvailable) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '2rem' }}>
-        <div className="notice error">
+        <Notice variant="error">
           <strong>{uiText.observabilityPanel.unavailableTitle}</strong>
           <p style={{ marginTop: '0.5rem' }}>
             {uiText.observabilityPanel.unavailableDescription}
           </p>
-        </div>
+        </Notice>
       </div>
     );
   }
@@ -196,7 +198,7 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
               textTransform: 'capitalize',
             }}
           >
-            {tab === 'timeline' && uiText.observabilityPanel.timelineTab}
+            {tab === 'timeline' && <><Clock3 size={14} aria-hidden="true" /> {uiText.observabilityPanel.timelineTab}</>}
             {tab === 'logs' && uiText.observabilityPanel.logsTab}
             {tab === 'correlation' && uiText.observabilityPanel.correlationTab}
           </button>
@@ -207,10 +209,10 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {!isRecording && activeTab !== 'logs' && (
           <div style={{ padding: '1rem', backgroundColor: 'var(--surface-secondary)' }}>
-            <div className="notice warning">
+            <Notice variant="warning">
               <strong>{uiText.observabilityPanel.recordingNotActivePrefix}</strong> {uiText.observabilityPanel.startRecordingHint}{' '}
               {activeTab === 'timeline' ? uiText.observabilityPanel.timelineScrubber : uiText.observabilityPanel.correlationDashboard} {uiText.observabilityPanel.willShowNoData}
-            </div>
+            </Notice>
           </div>
         )}
 

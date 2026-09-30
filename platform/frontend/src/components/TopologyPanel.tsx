@@ -13,9 +13,12 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, type Scope } from '../api/client';
+import { EmptyState } from './EmptyState';
+import { Notice } from './Notice';
 import type { K8sObject } from '../api/types';
 import { ApplicationSelector, type ApplicationOption } from './ApplicationSelector';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 import { LoadingOverlay } from './LoadingOverlay';
 
 interface Props {
@@ -421,20 +424,12 @@ export function TopologyPanel({ scope, namespaces }: Props) {
   const query = useQuery({
     queryKey: ['topology', scope.context, scope.source, namespace],
     queryFn: async () => {
-      const settled = await Promise.allSettled(
-        ALL_PLURALS.map((plural) => api.listResource(plural, namespaceScope).then((r) => r.items)),
-      );
+      const { resources, failedKinds: failedPlurals } = await api.listResourcesBatch([...ALL_PLURALS], namespaceScope);
       const data = {} as GraphData;
-      const failedKinds: string[] = [];
-      settled.forEach((result, i) => {
-        const plural = ALL_PLURALS[i];
-        if (result.status === 'fulfilled') {
-          data[plural] = result.value;
-        } else {
-          data[plural] = [];
-          failedKinds.push(KIND_BY_PLURAL[plural]);
-        }
-      });
+      for (const plural of ALL_PLURALS) {
+        data[plural] = (resources[plural] ?? []) as K8sObject[];
+      }
+      const failedKinds = failedPlurals.map((plural) => KIND_BY_PLURAL[plural as GraphPlural]);
       return { data, failedKinds };
     },
     enabled: !!scope.context && !!namespace,
@@ -534,14 +529,14 @@ export function TopologyPanel({ scope, namespaces }: Props) {
     });
   }, [edges, connectedToHover]);
 
-  if (!scope.context) return <div className="empty">{uiText.topology.selectContext}</div>;
+  if (!scope.context) return <EmptyState>{uiText.topology.selectContext}</EmptyState>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div className="toolbar toolbar-compact-top">
         <h2 style={{ margin: 0 }}>{uiText.topology.title}</h2>
         <div className="toolbar-actions">
-          {query.isFetching && <span className="tiny-spinner" aria-label={uiText.topology.loadingTopology} />}
+          {query.isFetching && <Spinner label={uiText.topology.loadingTopology} />}
           <select
             className="namespace-dropdown-trigger"
             value={namespace}
@@ -561,19 +556,19 @@ export function TopologyPanel({ scope, namespaces }: Props) {
       </div>
 
       {query.data && query.data.failedKinds.length > 0 && (
-        <div className="notice">
+        <Notice>
           {uiText.topology.couldNotLoadPrefix} <span className="mono">{query.data.failedKinds.join(', ')}</span> {uiText.topology.inThisNamespace}
-        </div>
+        </Notice>
       )}
 
       {!namespace ? (
-        <div className="empty">{uiText.topology.selectNamespaceToView}</div>
+        <EmptyState>{uiText.topology.selectNamespaceToView}</EmptyState>
       ) : query.isLoading ? (
         <LoadingOverlay message={uiText.topology.loading} />
       ) : selectedApps.length === 0 ? (
-        <div className="empty">{uiText.topology.selectApplicationsToView}</div>
+        <EmptyState>{uiText.topology.selectApplicationsToView}</EmptyState>
       ) : nodes.length === 0 ? (
-        <div className="empty">{uiText.topology.noObjectsFound}</div>
+        <EmptyState>{uiText.topology.noObjectsFound}</EmptyState>
       ) : (
         <div style={{ flex: '1 1 auto', minHeight: 0 }}>
           <ReactFlowProvider>

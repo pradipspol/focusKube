@@ -4,6 +4,8 @@ import { api } from '../api/client';
 import type { AwsAuthConfig, AwsIdentity, EksCluster } from '../api/types';
 import { uiText } from '../text';
 import { LoadingOverlay } from './LoadingOverlay';
+import { EmptyState } from './EmptyState';
+import { Notice } from './Notice';
 
 interface Props {
   onContextsChanged: () => Promise<void> | void;
@@ -176,21 +178,21 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
       )}
       <h2>{uiText.aws.connectionsTitle}</h2>
       {message && (
-        <div className={`notice ${messageIsError ? 'error' : ''}`}>
+        <Notice variant={messageIsError ? 'error' : undefined}>
           <div>{message}</div>
           {messageIsError && awsLastCandidate && (
             <div className="dim" style={{ marginTop: 6 }}>
               CLI candidate tried: <code className="inline">{awsLastCandidate}</code>
             </div>
           )}
-        </div>
+        </Notice>
       )}
 
       <section style={{ marginBottom: 24 }}>
         <h3>{uiText.aws.accountTitle}</h3>
         {awaitingAwsAccount && <div className="dim">{uiText.aws.checking}</div>}
         {awsLoggedIn ? (
-          <div className="notice">
+          <Notice>
             <div>
               Signed in as <b>{awsIdentity?.arn ?? 'AWS identity'}</b>
             </div>
@@ -202,11 +204,11 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                 {uiText.aws.signOut}
               </button>
             </div>
-          </div>
+          </Notice>
         ) : (
           <>
             {!awsLoggedIn && (
-              <div className="notice" style={{ marginBottom: 12 }}>
+              <Notice style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 600, marginBottom: 8 }}>{uiText.aws.configureConnection}</div>
                 <div className="dim" style={{ marginBottom: 12 }}>{uiText.aws.configureDescription}</div>
                 <div style={{ display: 'grid', gap: 10 }}>
@@ -287,7 +289,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                     </button>
                   </div>
                 </div>
-              </div>
+              </Notice>
             )}
             {awsAuthMode === 'sso' ? (
               <>
@@ -295,7 +297,7 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                   {uiText.aws.signIn}
                 </button>
                 {awsLoginPending && (
-                  <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
+                  <Notice className="azure-login-pending" style={{ marginTop: 10 }}>
                     <span className="azure-login-spinner" aria-label={uiText.aws.signInProgressLabel} />
                     <div>
                       <div>{uiText.aws.signInProgress}</div>
@@ -312,13 +314,13 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
                       )}
                       <div className="dim" style={{ marginTop: 6 }}>{uiText.aws.waitingForSignIn}</div>
                     </div>
-                  </div>
+                  </Notice>
                 )}
               </>
             ) : (
-              <div className="notice" style={{ marginTop: 10 }}>
+              <Notice style={{ marginTop: 10 }}>
                 {uiText.aws.profileSaved}
-              </div>
+              </Notice>
             )}
           </>
         )}
@@ -331,9 +333,9 @@ export function AwsPanel({ onContextsChanged, onPickContext, onAwsAccountsChange
             <button onClick={() => eks.refetch()}>{uiText.aws.refresh}</button>
           </div>
           {eks.isLoading && <div className="dim">{uiText.aws.loadingClusters}</div>}
-          {eks.isError && <div className="notice error">{(eks.error as Error).message}</div>}
-          {eks.data?.error && <div className="notice error">{eks.data.error}</div>}
-          {eks.data && eks.data.clusters.length === 0 && <div className="empty">{uiText.aws.noClusters}</div>}
+          {eks.isError && <Notice variant="error">{(eks.error as Error).message}</Notice>}
+          {eks.data?.error && <Notice variant="error">{eks.data.error}</Notice>}
+          {eks.data && eks.data.clusters.length === 0 && <EmptyState>{uiText.aws.noClusters}</EmptyState>}
           {eks.data && eks.data.clusters.length > 0 && (
             <table>
               <thead>

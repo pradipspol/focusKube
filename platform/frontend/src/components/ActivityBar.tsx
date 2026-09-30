@@ -3,6 +3,7 @@ import type { AuthUser, KubeContext } from '../api/types';
 import type { AiEntitlement } from '../api/aiAssistantApi';
 import { ROLE_LABELS } from '../auth/permissions';
 import { uiText } from '../text';
+import { FolderOpen, Sparkles } from 'lucide-react';
 
 interface Props {
     active: 'explorer' | 'search' | 'settings';
@@ -45,19 +46,8 @@ export function ActivityBar ({ active, explorerHidden, onSelect, aiActive, onTog
     return (
         <nav className="activity-bar" aria-label={uiText.activityBar.label}>
             <button className={`activity-bar-button ${active === 'explorer' && !explorerHidden ? 'active' : ''}`} title={uiText.activityBar.explorer} aria-label={uiText.activityBar.explorer} aria-pressed={active === 'explorer' && !explorerHidden} onClick={() => onSelect('explorer')}>
-                <svg className="activity-bar-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2h5.5A2.5 2.5 0 0 1 20 9.5v8A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-10Z" />
-                    <path d="M4 9h16" />
-                </svg>
+                <FolderOpen className="activity-bar-icon" size={18} aria-hidden="true" />
             </button>
-            {/* <button className={`activity-bar-button ${active === 'search' ? 'active' : ''}`} title={uiText.activityBar.search} aria-label={uiText.activityBar.search} onClick={() => onSelect('search')}>
-                <span aria-hidden="true">⌕</span>
-            </button>
-            <button className={`activity-bar-button ${active === 'settings' ? 'active' : ''}`} title={uiText.activityBar.settings} aria-label={uiText.activityBar.settings} onClick={() => onSelect('settings')}>
-                <svg className="activity-bar-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 8a4 4 0 1 0 4 4 4 4 0 0 0-4-4zm0 6a2 2 0 1 1 2-2 2 2 0 0 1-2 2zm0-10a8 8 0 0 0-8 8 8 8 0 0 0 8 8 8 8 0 0 0 8-8 8 8 0 0 0-8-8zm0 14a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6z" />
-                </svg>
-            </button> */}
             <div className="activity-bar-spacer" />
             <button
                 className={`activity-bar-button ${aiActive ? 'active' : ''}`}
@@ -66,7 +56,7 @@ export function ActivityBar ({ active, explorerHidden, onSelect, aiActive, onTog
                 aria-pressed={aiActive}
                 onClick={onToggleAi}
             >
-                <span aria-hidden="true">✦</span>
+                <Sparkles size={18} aria-hidden="true" />
             </button>
             <div className="activity-bar-user" ref={profileRef}>
                 <button

@@ -10,6 +10,22 @@ import { SidebarContextMenu } from './SidebarContextMenu';
 import kubeCluster from '../../assets/kubernetes.svg';
 import starredIcon from '../../assets/starred.svg';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
+import {
+  Activity,
+  Boxes,
+  Braces,
+  HardDrive,
+  LayoutDashboard,
+  Network,
+  Package,
+  Server,
+  Settings2,
+  Shield,
+  ShieldCheck,
+  Workflow,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface Props {
   view?: View;
@@ -82,30 +98,30 @@ function isCloudTreeGroupKey (key: string): boolean {
   );
 }
 
-const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
+const GROUPS: { title: string; icon: LucideIcon; items: GroupItem[] }[] = [
   {
     title: 'Overview',
-    icon: '▦',
+    icon: LayoutDashboard,
     items: [{ label: 'Overview', view: { type: 'overview' } }],
   },
   {
     title: 'Applications',
-    icon: '◈',
+    icon: Boxes,
     items: [{ label: 'Applications', view: { type: 'applications' } }],
   },
   {
     title: 'Observability',
-    icon: '◷',
+    icon: Activity,
     items: [{ label: 'Observability', view: { type: 'observability' } }],
   },
   {
     title: 'Topology',
-    icon: '⌬',
+    icon: Workflow,
     items: [{ label: 'Topology', view: { type: 'topology' } }],
   },
   {
     title: 'Workloads',
-    icon: '◉',
+    icon: Boxes,
     items: [
       { label: 'Pods', plural: 'pods' },
       { label: 'Deployments', plural: 'deployments' },
@@ -118,7 +134,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Helm',
-    icon: '⎈',
+    icon: Package,
     items: [
       { label: 'Charts', view: { type: 'helm', mode: 'charts' } },
       { label: 'Releases', view: { type: 'helm', mode: 'releases' } },
@@ -126,7 +142,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Config',
-    icon: '⚙',
+    icon: Settings2,
     items: [
       { label: 'ConfigMaps', plural: 'configmaps' },
       { label: 'Secrets', plural: 'secrets' },
@@ -139,7 +155,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Access Control',
-    icon: '🛡',
+    icon: ShieldCheck,
     items: [
       { label: 'Service Accounts', plural: 'serviceaccounts' },
       { label: 'Roles', plural: 'roles' },
@@ -148,12 +164,12 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Custom Resources',
-    icon: '🧩',
+    icon: Braces,
     items: [{ label: 'Custom Resource Definitions', plural: 'customresourcedefinitions' }],
   },
   {
     title: 'Security Center',
-    icon: '◍',
+    icon: Shield,
     items: [
       { label: 'Overview', disabled: true },
       { label: 'Images', disabled: true },
@@ -163,7 +179,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Network',
-    icon: '⇅',
+    icon: Network,
     items: [
       { label: 'Services', plural: 'services' },
       { label: 'Endpoint Slices', plural: 'endpointslices' },
@@ -176,7 +192,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Storage',
-    icon: '◍',
+    icon: HardDrive,
     items: [
       { label: 'Persistent Volume Claims', plural: 'persistentvolumeclaims' },
       { label: 'Storage Classes', plural: 'storageclasses' },
@@ -184,7 +200,7 @@ const GROUPS: { title: string; icon: string; items: GroupItem[] }[] = [
   },
   {
     title: 'Cluster',
-    icon: '◎',
+    icon: Server,
     items: [
       { label: 'Namespaces', plural: 'namespaces' },
       { label: 'Events', plural: 'events' },
@@ -479,7 +495,7 @@ export function Sidebar ({
             {!collapsed && (
               <button className="k8sexplorer-title k8sexplorer-toggle section-toggle" onClick={() => toggleGroup(`${contextName}:${group.title}`)}>
                 <TreeDisclosure collapsed={isGroupCollapsed(`${contextName}:${group.title}`)} />
-                <span className="k8sexplorer-title-icon" aria-hidden="true">{group.icon}</span>
+                <span className="k8sexplorer-title-icon" aria-hidden="true"><group.icon size={14} /></span>
                 <span>{group.title}</span>
               </button>
             )}
@@ -629,7 +645,7 @@ export function Sidebar ({
           </span>
           <span className="context-meta">
             {connectingContextKey === nodeIdentityKey ? (
-              <span className="tiny-spinner" aria-label={uiText.sidebar.connecting} />
+              <Spinner label={uiText.sidebar.connecting} />
             ) : (
               <span
                 className={`context-status-dot ${isSelectedContext ? 'connected' : 'disconnected'}`}

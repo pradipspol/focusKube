@@ -6,7 +6,12 @@ import { age, statusOf } from '../utils/format';
 import { DataTable } from './DataTable';
 import { NamespaceSelector } from './NamespaceSelector';
 import { LoadingOverlay } from './LoadingOverlay';
+import { EmptyState } from './EmptyState';
+import { RefreshButton } from './RefreshButton';
+import { Notice } from './Notice';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
+import { CloseButton } from './CloseButton';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
 interface Props {
@@ -57,12 +62,8 @@ export function ApplicationsPanel({
     queryKey,
     queryFn: async () => {
       const plurals: WorkloadPlural[] = ['deployments', 'statefulsets', 'daemonsets'];
-      const results = await Promise.all(
-        plurals.map(async (plural) => {
-          const data = await api.listResource(plural, scope);
-          return { plural, items: data.items };
-        }),
-      );
+      const { resources } = await api.listResourcesBatch(plurals, scope);
+      const results = plurals.map((plural) => ({ plural, items: resources[plural] ?? [] }));
 
       const rows: ApplicationRow[] = [];
       for (const { plural, items } of results) {
@@ -131,7 +132,7 @@ export function ApplicationsPanel({
   }, [applications.data?.rows, query, selectedNamespaces]);
 
   // All hooks must run before any early return (Rules of Hooks).
-  if (!scope.context) return <div className="empty">{uiText.common.selectContextToListApplications}</div>;
+  if (!scope.context) return <EmptyState>{uiText.common.selectContextToListApplications}</EmptyState>;
 
   return (
     <>
@@ -140,9 +141,7 @@ export function ApplicationsPanel({
         <span className="dim">{items.length} items</span>
         {selectedCount > 0 && <span className="dim">{selectedCount} selected</span>}
         <div className="toolbar-actions">
-          <button className="toolbar-refresh" onClick={() => applications.refetch()} title={uiText.common.refresh}>
-            ⟳
-          </button>
+          <RefreshButton onClick={() => applications.refetch()} title={uiText.common.refresh} />
           <NamespaceSelector
             namespaces={namespaces}
             selectedNamespaces={selectedNamespaces}
@@ -159,21 +158,19 @@ export function ApplicationsPanel({
             placeholder={uiText.common.searchApplications}
         />
         <div className="toolbar-actions">
-          {applications.isFetching && <span className="tiny-spinner" aria-label={uiText.toast.refreshingApplications} />}
+          {applications.isFetching && <Spinner label={uiText.toast.refreshingApplications} />}
           <NamespaceSelector
             namespaces={namespaces}
             selectedNamespaces={selectedNamespaces}
             onChange={onSelectedNamespacesChange}
           />
-          <button className="toolbar-refresh" onClick={() => applications.refetch()} title={uiText.common.refresh}>
-            ⟳
-          </button>
+          <RefreshButton onClick={() => applications.refetch()} title={uiText.common.refresh} />
         </div>
       </div>
 
-      {applications.isError && <div className="notice error">{(applications.error as Error).message}</div>}
+      {applications.isError && <Notice variant="error">{(applications.error as Error).message}</Notice>}
       {applications.isLoading && <LoadingOverlay message={uiText.common.loadingApplications} />}
-      {!applications.isLoading && items.length === 0 && <div className="empty">{uiText.common.noApplicationsFound}</div>}
+      {!applications.isLoading && items.length === 0 && <EmptyState>{uiText.common.noApplicationsFound}</EmptyState>}
 
       {items.length > 0 && (
         <DataTable
@@ -293,7 +290,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         <div className="drawer-header">
           <span className="badge">{uiText.applications.title}</span>
           <h3>{`${uiText.applications.instance}: ${row.instance}`}</h3>
-          <button onClick={onClose}>✕</button>
+          <CloseButton label={uiText.common.close} onClick={onClose} />
         </div>
         <div className="drawer-body pod-overview">
           <div className="app-details-grid">

@@ -4,7 +4,12 @@ import { api, wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 import { boundedMerge, mergeLogStreams, type MergedLogLine } from '../lib/logMerge';
+import { IconActionButton } from './IconActionButton';
+import { FollowToggle } from './FollowToggle';
+import { SelectControl } from './SelectControl';
+import { ArrowUpRight } from 'lucide-react';
 
 type PodLogsProps = {
   kind: 'pod';
@@ -175,13 +180,12 @@ export function LogsPanel(props: LogsPanelProps) {
         {kind === 'pod' && pod ? (
           <div className="field">
             <label>{title}</label>
-            <select value={container} onChange={(event) => setContainer(event.target.value)}>
-              {availableContainers.map((c: string) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <SelectControl
+              value={container}
+              onChange={setContainer}
+              ariaLabel={title}
+              options={availableContainers.map((name: string) => ({ value: name, label: name }))}
+            />
           </div>
         ) : (
           <div className="field" style={{ minWidth: 180 }}>
@@ -189,15 +193,8 @@ export function LogsPanel(props: LogsPanelProps) {
             <div className="dim">Combined logs from {deploymentPodNames.length} pod{deploymentPodNames.length === 1 ? '' : 's'}</div>
           </div>
         )}
-        <label className="field">
-          <input type="checkbox" checked={follow} onChange={(event) => setFollow(event.target.checked)} />
-          {uiText.logs.follow}
-        </label>
-        {(
-          <button className="drawer-action-icon" type="button" title={uiText.logs.openInTerminal} onClick={props.onOpenInTerminal}>
-            ⤴
-          </button>
-        )}
+        <FollowToggle checked={follow} onChange={setFollow} label={uiText.logs.follow} />
+        <IconActionButton onClick={props.onOpenInTerminal} title={uiText.logs.openInTerminal}><ArrowUpRight size={16} aria-hidden="true" /></IconActionButton>
         <input
           className="field"
           style={{ minWidth: 320}}
@@ -213,7 +210,7 @@ export function LogsPanel(props: LogsPanelProps) {
       <div className="logs-host" ref={hostRef}>
         {!hasReceivedLogs ? (
           <div className="dim" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="tiny-spinner" aria-label="Loading logs" />
+            <Spinner label="Loading logs" />
             <span>{kind === 'deployment' && !deploymentPodsLoaded ? 'Loading deployment pods...' : uiText.common.loading}</span>
           </div>
         ) : filteredLines.length === 0 ? (

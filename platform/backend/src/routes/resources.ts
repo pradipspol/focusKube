@@ -126,6 +126,44 @@ resourcesRouter.get('/overview', withRouteErrorLogging('resources', 'GET /overvi
   res.json(result);
 }));
 
+// Fetches several resource kinds for the same scope in one request - callers that need N kinds
+// (e.g. Applications, Topology) would otherwise fire N parallel HTTP requests from the browser.
+resourcesRouter.get('/_multi', withRouteErrorLogging('resources', 'GET /_multi', async (req, res) => {
+  setRequestOperation(req, 'resources.list.multi');
+  const scoped = await resolveScopedRequestContext(req, { context: requestedContextFromQuery(req) ?? req.userSession.activeContext ?? undefined });
+  await ensureScopedContextAuth(req, scoped);
+
+  const plurals = String(req.query.plurals ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (plurals.length === 0) throw badRequest('plurals query parameter is required');
+
+  const result = await resourcesService.listResourcesBatch(
+    plurals,
+    scoped.requestedContext,
+    ns(req),
+    kubeOptionsForScope(req, scoped),
+  );
+
+  res.json(result);
+}));
+
+resourcesRouter.get('/:plural/_count', withRouteErrorLogging('resources', 'GET /:plural/_count', async (req, res) => {
+  setRequestOperation(req, 'resources.count');
+  const scoped = await resolveScopedRequestContext(req, { context: requestedContextFromQuery(req) ?? req.userSession.activeContext ?? undefined });
+  await ensureScopedContextAuth(req, scoped);
+
+  const result = await resourcesService.countResources(
+    req.params.plural,
+    scoped.requestedContext,
+    namespaces(req),
+    kubeOptionsForScope(req, scoped),
+  );
+
+  res.json(result);
+}));
+
 resourcesRouter.get('/:plural', withRouteErrorLogging('resources', 'GET /:plural', async (req, res) => {
   setRequestOperation(req, 'resources.list');
   const scoped = await resolveScopedRequestContext(req, { context: requestedContextFromQuery(req) ?? req.userSession.activeContext ?? undefined });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../api/client';
@@ -17,10 +17,38 @@ import {
 } from '../api/aiAssistantApi';
 import { AiEntitlementGate } from './AiEntitlementGate';
 import { uiText } from '../text';
-import copyIconSvg from './icons/copy.svg?raw';
-import checkIconSvg from './icons/check.svg?raw';
-import editIconSvg from './icons/edit.svg?raw';
-import cancelIconSvg from './icons/cancel.svg?raw';
+import { IconActionButton } from './IconActionButton';
+import { AnchoredMenu } from './AnchoredMenu';
+import { CopyButton } from './CopyButton';
+import { SegmentedControl } from './SegmentedControl';
+import { SelectControl } from './SelectControl';
+import {
+  Bell,
+  Box,
+  Cable,
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  FileText,
+  FolderTree,
+  HardDrive,
+  History,
+  ImagePlus,
+  Maximize2,
+  MessageSquarePlus,
+  Network,
+  Package,
+  Pencil,
+  SendHorizontal,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface Props {
   scope: Scope;
@@ -102,85 +130,6 @@ interface ChatSession {
   title: string;
   messages: ChatMessage[];
   updatedAt: number;
-}
-
-// Explicit width/height (not just the CSS class) because an inline <svg> as a flex item
-// otherwise resolves its flex-basis from its own intrinsic size instead of the CSS width,
-// which collapses it to 0 in Chromium — confirmed live, not a theoretical concern.
-function SendIcon() {
-  return (
-    <svg className="ai-toolbar-icon" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 19V5" />
-      <path d="M5 12l7-7 7 7" />
-    </svg>
-  );
-}
-
-function SkillsIcon() {
-  return (
-    <svg className="ai-toolbar-icon" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" />
-    </svg>
-  );
-}
-
-function AttachImageIcon() {
-  return (
-    <svg className="ai-toolbar-icon" width={16} height={16} viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
-      <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" />
-      <path d="M4 16l5-5 4 4 3-3 5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function RemoveImageIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function ExportIcon() {
-  return (
-    <svg className="ai-toolbar-icon" width={14} height={14} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 15V3" />
-      <path d="M7 8l5-5 5 5" />
-      <path d="M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
-    </svg>
-  );
-}
-
-// Raw-imported so the icon markup lives in its own .svg file instead of inline JSX; rendered
-// via dangerouslySetInnerHTML (safe here — content is bundled at build time, not user input)
-// to keep it a true inline <svg> in the DOM so `stroke="currentColor"` tracks the button's color.
-function InlineIcon({ svg }: { svg: string }) {
-  return <span className="ai-action-icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: svg }} />;
-}
-
-function CopyIcon() {
-  return <InlineIcon svg={copyIconSvg} />;
-}
-
-function CheckIcon() {
-  return <InlineIcon svg={checkIconSvg} />;
-}
-
-function EditIcon() {
-  return <InlineIcon svg={editIconSvg} />;
-}
-
-function CancelIcon() {
-  return <InlineIcon svg={cancelIconSvg} />;
 }
 
 let nextMessageId = 1;
@@ -369,21 +318,21 @@ function loadStoredSessions(): { sessions: ChatSession[]; activeSessionId: strin
 interface Skill {
   id: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   prompt: string;
 }
 
 const SKILLS: Skill[] = [
-  { id: 'cluster', label: 'Cluster overview', icon: '🧭', prompt: 'Give me an overview of this cluster — node count, namespaces, and overall pod/deployment health.' },
-  { id: 'nodes', label: 'Nodes', icon: '🖥️', prompt: 'What is the status and resource usage (CPU/memory) of each node in this cluster?' },
-  { id: 'pods', label: 'Pods', icon: '🧱', prompt: 'How many pods are running right now, and are any of them unhealthy, pending, or restarting?' },
-  { id: 'deployments', label: 'Deployments', icon: '📦', prompt: 'List the deployments in this cluster and call out any that are not fully rolled out.' },
-  { id: 'services', label: 'Services', icon: '🔌', prompt: 'What services are exposed in this cluster, and how (ClusterIP, NodePort, LoadBalancer)?' },
-  { id: 'namespaces', label: 'Namespaces', icon: '🗂️', prompt: 'List the namespaces in this cluster and roughly how many resources live in each.' },
-  { id: 'events', label: 'Recent events', icon: '📣', prompt: 'Show me the most recent warning events in the cluster and what they indicate.' },
-  { id: 'logs', label: 'Logs', icon: '📜', prompt: 'Summarize any errors from recent logs for the focused resource.' },
-  { id: 'storage', label: 'Storage', icon: '💾', prompt: 'What persistent volumes and claims exist, and are any of them unbound or nearly full?' },
-  { id: 'security', label: 'Security', icon: '🛡️', prompt: 'Are any pods running as root, privileged, or without resource limits?' },
+  { id: 'cluster', label: 'Cluster overview', icon: Network, prompt: 'Give me an overview of this cluster — node count, namespaces, and overall pod/deployment health.' },
+  { id: 'nodes', label: 'Nodes', icon: Server, prompt: 'What is the status and resource usage (CPU/memory) of each node in this cluster?' },
+  { id: 'pods', label: 'Pods', icon: Box, prompt: 'How many pods are running right now, and are any of them unhealthy, pending, or restarting?' },
+  { id: 'deployments', label: 'Deployments', icon: Package, prompt: 'List the deployments in this cluster and call out any that are not fully rolled out.' },
+  { id: 'services', label: 'Services', icon: Cable, prompt: 'What services are exposed in this cluster, and how (ClusterIP, NodePort, LoadBalancer)?' },
+  { id: 'namespaces', label: 'Namespaces', icon: FolderTree, prompt: 'List the namespaces in this cluster and roughly how many resources live in each.' },
+  { id: 'events', label: 'Recent events', icon: Bell, prompt: 'Show me the most recent warning events in the cluster and what they indicate.' },
+  { id: 'logs', label: 'Logs', icon: FileText, prompt: 'Summarize any errors from recent logs for the focused resource.' },
+  { id: 'storage', label: 'Storage', icon: HardDrive, prompt: 'What persistent volumes and claims exist, and are any of them unbound or nearly full?' },
+  { id: 'security', label: 'Security', icon: ShieldCheck, prompt: 'Are any pods running as root, privileged, or without resource limits?' },
 ];
 
 function formatRelativeTime(timestamp: number): string {
@@ -416,35 +365,17 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
     <div className="ai-code-block">
       <div className="ai-code-block-header">
         <span className="ai-code-block-lang">{lang || 'code'}</span>
-        <button type="button" className="ai-code-block-copy" onClick={handleCopy}>
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+        <CopyButton
+          text={code}
+          copyLabel={uiText.aiAssistant.copy}
+          copiedLabel={uiText.aiAssistant.copied}
+          className="ai-code-block-copy"
+        />
       </div>
       <pre className="ai-code-block-pre">
         <code>{code}</code>
       </pre>
     </div>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {
-        // clipboard unavailable — nothing more we can do
-      });
-  };
-  const label = copied ? uiText.aiAssistant.copied : uiText.aiAssistant.copy;
-  return (
-    <button type="button" className="ai-message-action-button" onClick={handleCopy} aria-label={label} title={label}>
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </button>
   );
 }
 
@@ -672,6 +603,7 @@ function ToolOutputViewer({
   }, [output, isError]);
   const [viewMode, setViewMode] = useState<'table' | 'json'>('table');
   const [exportOpen, setExportOpen] = useState(false);
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
   const showTable = !!table && viewMode === 'table';
 
   // The artifact panel shows everything, uncapped — only the compact inline view collapses.
@@ -687,24 +619,15 @@ function ToolOutputViewer({
     <div className={`ai-code-block ai-tool-output${mode === 'full' ? ' ai-tool-output-full' : ''}`}>
       <div className="ai-tool-output-toolbar">
         {table ? (
-          <div className="ai-tool-view-toggle">
-            <button
-              type="button"
-              className={viewMode === 'table' ? 'active' : ''}
-              aria-pressed={viewMode === 'table'}
-              onClick={() => setViewMode('table')}
-            >
-              {uiText.aiAssistant.viewAsTable}
-            </button>
-            <button
-              type="button"
-              className={viewMode === 'json' ? 'active' : ''}
-              aria-pressed={viewMode === 'json'}
-              onClick={() => setViewMode('json')}
-            >
-              {uiText.aiAssistant.viewAsJson}
-            </button>
-          </div>
+          <SegmentedControl
+            value={viewMode}
+            onChange={setViewMode}
+            groupClassName="ai-tool-view-toggle"
+            options={[
+              { value: 'table', label: uiText.aiAssistant.viewAsTable },
+              { value: 'json', label: uiText.aiAssistant.viewAsJson },
+            ]}
+          />
         ) : (
           <span />
         )}
@@ -712,6 +635,7 @@ function ToolOutputViewer({
           {table && (
             <div className="ai-tool-export">
               <button
+                ref={exportButtonRef}
                 type="button"
                 className="ai-tool-export-button"
                 title={uiText.aiAssistant.export}
@@ -720,14 +644,15 @@ function ToolOutputViewer({
                 aria-expanded={exportOpen}
                 onClick={() => setExportOpen((v) => !v)}
               >
-                <ExportIcon />
+                <Download size={14} aria-hidden="true" />
               </button>
               {exportOpen && (
                 <>
                   <div className="ai-tool-export-backdrop" onClick={() => setExportOpen(false)} />
-                  <div className="ai-tool-export-menu">
+                  <AnchoredMenu anchorRef={exportButtonRef} ariaLabel={uiText.aiAssistant.export} className="ai-tool-export-menu">
                     <button
                       type="button"
+                      className="action-menu-item"
                       onClick={() => {
                         setExportOpen(false);
                         downloadTextFile(`${fileBase}.csv`, tableToCsv(table), 'text/csv');
@@ -737,6 +662,7 @@ function ToolOutputViewer({
                     </button>
                     <button
                       type="button"
+                      className="action-menu-item"
                       onClick={() => {
                         setExportOpen(false);
                         downloadTextFile(`${fileBase}.json`, output, 'application/json');
@@ -744,15 +670,19 @@ function ToolOutputViewer({
                     >
                       {uiText.aiAssistant.downloadJson}
                     </button>
-                  </div>
+                  </AnchoredMenu>
                 </>
               )}
             </div>
           )}
           {onExpand && (
-            <button type="button" className="ai-tool-output-expand" title={uiText.aiAssistant.expand} aria-label={uiText.aiAssistant.expand} onClick={onExpand}>
-              ⤢
-            </button>
+            <IconActionButton
+              baseClassName="ai-tool-output-expand"
+              title={uiText.aiAssistant.expand}
+              onClick={onExpand}
+            >
+              <Maximize2 size={16} aria-hidden="true" />
+            </IconActionButton>
           )}
         </div>
       </div>
@@ -857,9 +787,11 @@ function ToolMessage({ message, onExpand }: { message: ToolChatMessage; onExpand
           >
             {bodyOpen ? uiText.aiAssistant.hideOutput : uiText.aiAssistant.showOutput}
             {sizeLabel && <span className="ai-tool-message-size">{sizeLabel}</span>}
-            <span className={`ai-tool-message-chevron${bodyOpen ? ' ai-tool-message-chevron-open' : ''}`} aria-hidden="true">
-              ▾
-            </span>
+            <ChevronDown
+              className={`ai-tool-message-chevron${bodyOpen ? ' ai-tool-message-chevron-open' : ''}`}
+              size={14}
+              aria-hidden="true"
+            />
           </button>
         )}
       </div>
@@ -1020,24 +952,21 @@ function ChatMessages({
                   autoFocus
                 />
                 <div className="ai-message-actions">
-                  <button
-                    type="button"
-                    className="ai-message-action-button ai-message-action-primary"
-                    onClick={onEditSave}
-                    aria-label={uiText.aiAssistant.save}
+                  <IconActionButton
+                    baseClassName="ai-message-action-button"
+                    className="ai-message-action-primary"
                     title={uiText.aiAssistant.save}
+                    onClick={onEditSave}
                   >
-                    <CheckIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="ai-message-action-button"
-                    onClick={onEditCancel}
-                    aria-label={uiText.aiAssistant.cancel}
+                    <Check size={14} aria-hidden="true" />
+                  </IconActionButton>
+                  <IconActionButton
+                    baseClassName="ai-message-action-button"
                     title={uiText.aiAssistant.cancel}
+                    onClick={onEditCancel}
                   >
-                    <CancelIcon />
-                  </button>
+                    <X size={14} aria-hidden="true" />
+                  </IconActionButton>
                 </div>
               </div>
             </div>
@@ -1058,17 +987,21 @@ function ChatMessages({
               </div>
               {message.content && (
                 <div className="ai-message-actions">
-                  <CopyButton text={message.content} />
+                  <CopyButton
+                    text={message.content}
+                    copyLabel={uiText.aiAssistant.copy}
+                    copiedLabel={uiText.aiAssistant.copied}
+                    className="ai-message-action-button"
+                    iconOnly
+                  />
                   {message.role === 'user' && canEdit && (
-                    <button
-                      type="button"
-                      className="ai-message-action-button"
-                      onClick={() => onEditStart(message.id, message.content)}
-                      aria-label={uiText.aiAssistant.edit}
+                    <IconActionButton
+                      baseClassName="ai-message-action-button"
                       title={uiText.aiAssistant.edit}
+                      onClick={() => onEditStart(message.id, message.content)}
                     >
-                      <EditIcon />
-                    </button>
+                      <Pencil size={14} aria-hidden="true" />
+                    </IconActionButton>
                   )}
                 </div>
               )}
@@ -1103,35 +1036,26 @@ function SessionHistoryDropdown({
         <div className="ai-history-list">
           {sorted.length === 0 && <div className="ai-history-empty">{uiText.aiAssistant.historyEmpty}</div>}
           {sorted.map((session) => (
-            <button
-              type="button"
+            <div
               key={session.id}
               className={`ai-history-item ${session.id === activeSessionId ? 'ai-history-item-active' : ''}`}
-              onClick={() => onOpen(session.id)}
             >
-              <span className="ai-history-item-info">
-                <span className="ai-history-item-title">{session.title}</span>
-                <span className="ai-history-item-meta">
-                  {session.messages.length} {session.messages.length === 1 ? 'message' : 'messages'} · {formatRelativeTime(session.updatedAt)}
+              <button type="button" className="ai-history-item-main" onClick={() => onOpen(session.id)}>
+                <span className="ai-history-item-info">
+                  <span className="ai-history-item-title">{session.title}</span>
+                  <span className="ai-history-item-meta">
+                    {session.messages.length} {session.messages.length === 1 ? 'message' : 'messages'} · {formatRelativeTime(session.updatedAt)}
+                  </span>
                 </span>
-              </span>
-              <span
-                className="ai-history-item-delete"
-                role="button"
-                tabIndex={0}
+              </button>
+              <IconActionButton
+                baseClassName="ai-history-item-delete"
                 title={uiText.aiAssistant.deleteSession}
-                aria-label={uiText.aiAssistant.deleteSession}
-                onClick={(evt) => onDelete(session.id, evt)}
-                onKeyDown={(evt) => {
-                  if (evt.key === 'Enter' || evt.key === ' ') {
-                    evt.preventDefault();
-                    onDelete(session.id, evt as unknown as React.MouseEvent);
-                  }
-                }}
+                onClick={(event) => onDelete(session.id, event)}
               >
-                🗑
-              </span>
-            </button>
+                <Trash2 size={14} aria-hidden="true" />
+              </IconActionButton>
+            </div>
           ))}
         </div>
       </div>
@@ -1148,7 +1072,7 @@ function SkillsMenu({ onSelect, onClose }: { onSelect: (skill: Skill) => void; o
         {SKILLS.map((skill) => (
           <button type="button" key={skill.id} className="ai-skills-menu-item" onClick={() => onSelect(skill)}>
             <span className="ai-skills-menu-icon" aria-hidden="true">
-              {skill.icon}
+              <skill.icon size={16} aria-hidden="true" />
             </span>
             <span>{skill.label}</span>
           </button>
@@ -1217,6 +1141,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   // to gate the WS connect effect below, not to decide what to render (the gate owns that).
   const { data: entitlement } = useAiEntitlement();
   const entitled = entitlement?.enabled ?? false;
+  const queryClient = useQueryClient();
 
   const { data: kindsData } = useQuery({
     queryKey: ['ai', 'resource-kinds'],
@@ -1371,6 +1296,13 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         } else if (msg.type === 'error') {
           streamingIdRef.current = null;
           setBusy(false);
+          if (msg.code === 'NO_ENTITLEMENT') {
+            // The cached entitlement said enabled but the backend just found otherwise (license
+            // expired/canceled mid-session) — refetch it so AiEntitlementGate swaps this panel
+            // for its locked/buy-plan view instead of leaving a generic error banner here.
+            void queryClient.invalidateQueries({ queryKey: ['ai', 'entitlement'] });
+            return;
+          }
           setError(msg.message);
         } else if (!sessionReadyRef.current) {
           return;
@@ -1730,22 +1662,24 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       <div className="ai-dock-topbar">
         <span className="ai-dock-title">{uiText.aiAssistant.title}</span>
         <div className="ai-dock-topbar-actions">
-          <button type="button" className="ai-dock-icon-button" title={uiText.aiAssistant.newChat} aria-label={uiText.aiAssistant.newChat} onClick={startNewChat}>
-            +
-          </button>
-          <button
-            type="button"
-            className="ai-dock-icon-button"
+          <IconActionButton
+            baseClassName="ai-dock-icon-button"
+            title={uiText.aiAssistant.newChat}
+            onClick={startNewChat}
+          >
+            <MessageSquarePlus size={16} aria-hidden="true" />
+          </IconActionButton>
+          <IconActionButton
+            baseClassName="ai-dock-icon-button"
             title={uiText.aiAssistant.historyTitle}
-            aria-label={uiText.aiAssistant.historyTitle}
-            aria-pressed={historyOpen}
+            ariaPressed={historyOpen}
             onClick={() => setHistoryOpen((v) => !v)}
           >
-            🕘
-          </button>
-          <button type="button" className="ai-dock-icon-button" title={uiText.aiAssistant.close} aria-label={uiText.aiAssistant.close} onClick={onClose}>
-            ✕
-          </button>
+            <History size={16} aria-hidden="true" />
+          </IconActionButton>
+          <IconActionButton baseClassName="ai-dock-icon-button" title={uiText.aiAssistant.close} onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </IconActionButton>
         </div>
       </div>
 
@@ -1785,31 +1719,18 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           }}
         >
           {dragOver && <div className="ai-panel-drop-hint">{uiText.aiAssistant.dropImageHint}</div>}
-          {/* <div className="ai-panel-header">
-            <span className={`badge ${connected ? 'ok' : 'warn'}`}>
-              {connected ? uiText.aiAssistant.connected : uiText.aiAssistant.disconnected}
-            </span>
-            {focusedResource ? (
-              <button type="button" className="ai-panel-focus-chip" onClick={() => setFocusedResource(null)}>
-                {uiText.aiAssistant.focusedResourceLabel(focusedResource.kind, focusedResource.name)} ✕
-              </button>
-            ) : (
-              <button type="button" className="ai-panel-focus-chip ai-panel-focus-chip-empty" onClick={() => setPickerOpen((v) => !v)}>
-                + Focus a resource
-              </button>
-            )}
-          </div> */}
 
           {pickerOpen && (
             <div className="ai-panel-picker">
-              <select value={pickerKind} onChange={(e) => setPickerKind(e.target.value)}>
-                <option value="">Kind…</option>
-                {kinds.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {kind}
-                  </option>
-                ))}
-              </select>
+              <SelectControl
+                value={pickerKind}
+                onChange={setPickerKind}
+                ariaLabel="Resource kind"
+                options={[
+                  { value: '', label: 'Kind…' },
+                  ...kinds.map((kind) => ({ value: kind, label: kind })),
+                ]}
+              />
               <input
                 type="text"
                 value={pickerNamespace}
@@ -1864,15 +1785,13 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                   {attachedImages.map((image, index) => (
                     <div key={index} className="ai-attached-image-thumb">
                       <img src={image.dataUrl} alt="" />
-                      <button
-                        type="button"
-                        className="ai-attached-image-remove"
-                        onClick={() => removeAttachedImage(index)}
-                        aria-label={uiText.aiAssistant.removeImage}
+                      <IconActionButton
+                        baseClassName="ai-attached-image-remove"
                         title={uiText.aiAssistant.removeImage}
+                        onClick={() => removeAttachedImage(index)}
                       >
-                        <RemoveImageIcon />
-                      </button>
+                        <X size={12} aria-hidden="true" />
+                      </IconActionButton>
                     </div>
                   ))}
                 </div>
@@ -1919,37 +1838,33 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                 {/* Grouped so the row stays a two-child flex (left cluster / send) — with the
                     buttons as three direct children, space-between stranded skills in the middle. */}
                 <div className="ai-input-toolbar-left">
-                  <button
-                    type="button"
-                    className="ai-skills-button"
+                  <IconActionButton
+                    baseClassName="ai-skills-button"
                     title={uiText.aiAssistant.attachImageButton}
-                    aria-label={uiText.aiAssistant.attachImageButton}
                     onClick={() => fileInputRef.current?.click()}
                     disabled={attachedImages.length >= MAX_IMAGES_PER_MESSAGE}
                   >
-                    <AttachImageIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className={`ai-skills-button ${skillsOpen ? 'active' : ''}`}
+                    <ImagePlus size={16} aria-hidden="true" />
+                  </IconActionButton>
+                  <IconActionButton
+                    baseClassName="ai-skills-button"
+                    className={skillsOpen ? 'active' : undefined}
                     title={uiText.aiAssistant.skillsButton}
-                    aria-label={uiText.aiAssistant.skillsButton}
-                    aria-pressed={skillsOpen}
+                    ariaPressed={skillsOpen}
                     onClick={() => setSkillsOpen((v) => !v)}
                   >
-                    <SkillsIcon />
-                  </button>
+                    <Sparkles size={16} aria-hidden="true" />
+                  </IconActionButton>
                 </div>
-                <button
-                  type="button"
-                  className={`ai-send-button${busy ? ' ai-send-button-stop' : ''}`}
+                <IconActionButton
+                  baseClassName="ai-send-button"
+                  className={busy ? 'ai-send-button-stop' : undefined}
                   onClick={busy ? stopGenerating : sendMessage}
                   disabled={busy ? false : !connected || (!input.trim() && attachedImages.length === 0) || hasPendingAction}
                   title={busy ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
-                  aria-label={busy ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
                 >
-                  {busy ? <StopIcon /> : <SendIcon />}
-                </button>
+                  {busy ? <Square size={12} aria-hidden="true" /> : <SendHorizontal size={16} aria-hidden="true" />}
+                </IconActionButton>
               </div>
               {skillsOpen && <SkillsMenu onSelect={applySkill} onClose={() => setSkillsOpen(false)} />}
             </div>
@@ -1959,9 +1874,14 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           <div className="ai-panel-artifact-col">
             <div className="ai-artifact-header">
               <span className="ai-artifact-title">{activeArtifact.name}</span>
-              <button type="button" className="ai-artifact-close" onClick={closeArtifact}>
-                {uiText.aiAssistant.closeArtifact}
-              </button>
+              <IconActionButton
+                baseClassName="ai-artifact-close"
+                title={uiText.aiAssistant.closeArtifact}
+                onClick={closeArtifact}
+              >
+                <X size={14} aria-hidden="true" />
+                <span>{uiText.aiAssistant.closeArtifact}</span>
+              </IconActionButton>
             </div>
             <div className="ai-artifact-body">
               <ToolOutputViewer

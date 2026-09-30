@@ -6,6 +6,9 @@ import type { LogLevel } from '../api/types';
 import { ROLE_LABELS, describePermissions } from '../auth/permissions';
 import type { Theme } from '../App';
 import { uiText } from '../text';
+import { Notice } from './Notice';
+import { Modal } from './Modal';
+import { Check, Menu, X } from 'lucide-react';
 
 interface Props {
   user: AuthUser;
@@ -143,7 +146,9 @@ export function TopBar({
           <ul className="user-permissions-list">
             {describePermissions(user.role).map((perm) => (
               <li key={perm.label} className={perm.granted ? 'granted' : 'denied'}>
-                <span aria-hidden="true">{perm.granted ? '✓' : '✕'}</span>
+                {perm.granted
+                  ? <Check size={14} aria-hidden="true" />
+                  : <X size={14} aria-hidden="true" />}
                 {perm.label}
               </li>
             ))}
@@ -159,7 +164,7 @@ export function TopBar({
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((current) => !current)}
         >
-          ☰
+          <Menu size={17} aria-hidden="true" />
         </button>
         {menuOpen && (
           <div className="topbar-menu-popup" role="menu" aria-label={uiText.topbar.userMenu}>
@@ -191,13 +196,28 @@ export function TopBar({
     )}
 
       {settingsOpen && (
-        <div className="overlay center" onClick={() => setSettingsOpen(false)}>
-          <div className="modal-card settings-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">{uiText.modal.preferences}</h3>
-              <button type="button" onClick={() => setSettingsOpen(false)} aria-label={uiText.topbar.closeSettings}>{uiText.common.close}</button>
-            </div>
-            <div className="modal-body settings-modal-body">
+        <Modal
+          title={uiText.modal.preferences}
+          onClose={() => setSettingsOpen(false)}
+          cardClassName="settings-modal"
+          bodyClassName="settings-modal-body"
+          closeLabel={uiText.topbar.closeSettings}
+          footer={(
+            <>
+              <button type="button" onClick={() => setSettingsOpen(false)} disabled={updateLogLevel.isPending}>{uiText.common.cancel}</button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  void handleSaveSettings();
+                }}
+                disabled={updateLogLevel.isPending || logLevelQuery.isLoading || !logLevelQuery.data?.editable}
+              >
+                {updateLogLevel.isPending ? uiText.topbar.saving : uiText.common.save}
+              </button>
+            </>
+          )}
+        >
               {logLevelQuery.isLoading ? (
                 <div className="dim">{uiText.modal.loadingSettings}</div>
               ) : (
@@ -245,28 +265,13 @@ export function TopBar({
                     <div className="dim settings-message">{uiText.topbar.desktopOnly}</div>
                   )}
                   {updateLogLevel.error && (
-                    <div className="notice error settings-message">
+                    <Notice variant="error" className="settings-message">
                       {updateLogLevel.error instanceof Error ? updateLogLevel.error.message : uiText.topbar.failedToUpdateLogLevel}
-                    </div>
+                    </Notice>
                   )}
                 </>
               )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" onClick={() => setSettingsOpen(false)} disabled={updateLogLevel.isPending}>{uiText.common.cancel}</button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  void handleSaveSettings();
-                }}
-                disabled={updateLogLevel.isPending || logLevelQuery.isLoading || !logLevelQuery.data?.editable}
-              >
-                {updateLogLevel.isPending ? uiText.topbar.saving : uiText.common.save}
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </>
   );

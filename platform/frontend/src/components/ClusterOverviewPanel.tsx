@@ -4,8 +4,12 @@ import { api, type Scope } from '../api/client';
 import type { HelmRelease, K8sObject } from '../api/types';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 import { LoadingOverlay } from './LoadingOverlay';
 import { NamespaceSelector } from './NamespaceSelector';
+import { EmptyState } from './EmptyState';
+import { RefreshButton } from './RefreshButton';
+import { Notice } from './Notice';
 
 type OverviewKind = 'pods' | 'deployments' | 'replicasets' | 'cronjobs' | 'daemonsets' | 'statefulsets' | 'jobs' | 'helmreleases';
 type MetricSample = { at: number; cpuMillicores: number; memoryBytes: number };
@@ -157,7 +161,7 @@ export function ClusterOverviewPanel ({ scope, namespaces, selectedNamespaces, o
   const cpuPoints = metricHistory.map((sample) => ({ at: sample.at, value: Math.min(100, (sample.cpuMillicores / cpuScale) * 100) }));
   const memoryPoints = metricHistory.map((sample) => ({ at: sample.at, value: Math.min(100, (sample.memoryBytes / memoryScale) * 100) }));
 
-  if (!scope.context) return <div className="empty">{uiText.applications.selectContextForOverview}</div>;
+  if (!scope.context) return <EmptyState>{uiText.applications.selectContextForOverview}</EmptyState>;
 
   return (
     <>
@@ -166,17 +170,17 @@ export function ClusterOverviewPanel ({ scope, namespaces, selectedNamespaces, o
         <h2>{uiText.applications.clusterOverview}</h2>
         <span className="dim">{uiText.applications.clusterOverviewDescription}</span>
         <div className="toolbar-actions">
-          {overview.isFetching && <span className="tiny-spinner" aria-label={uiText.applications.loadingOverview} />}
+          {overview.isFetching && <Spinner label={uiText.applications.loadingOverview} />}
           <NamespaceSelector
             namespaces={namespaces}
             selectedNamespaces={selectedNamespaces}
             onChange={onSelectedNamespacesChange}
           />
-          <button className="toolbar-refresh" onClick={() => overview.refetch()} title={uiText.common.refresh}>⟳</button>
+          <RefreshButton onClick={() => overview.refetch()} title={uiText.common.refresh} />
         </div>
       </div>
       <section className="cluster-overview-content">
-        {overview.isError && <div className="notice error">{(overview.error as Error).message}</div>}
+        {overview.isError && <Notice variant="error">{(overview.error as Error).message}</Notice>}
         <div className="applications-overview-counts">
           {OVERVIEW_KINDS.map(({ key, label }) => (
             <button

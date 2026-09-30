@@ -5,6 +5,7 @@ let licenseKey: string | null = 'test-license';
 mock.module('../runtime/aiLicenseStore.js', {
   namedExports: {
     getLicenseKey: async () => licenseKey,
+    getEntitlementState: async () => ({ licenseKey, status: licenseKey ? 'active' : undefined }),
   },
 });
 
@@ -65,5 +66,5 @@ test('relay client fails safely before network access when no license is configu
   await new AiService().sendChatToRelay({ cluster: { context: 'cluster-a' } }, [{ role: 'user', content: 'help' }], [], (chunk) => chunks.push(chunk));
 
   assert.equal(called, false);
-  assert.deepEqual(chunks, [{ type: 'error', data: { message: 'No license key configured' } }]);
+  assert.deepEqual(chunks, [{ type: 'error', data: { code: 'NO_ENTITLEMENT', message: 'No active AI plan' } }]);
 });

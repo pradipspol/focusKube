@@ -4,6 +4,9 @@ import { api, type Scope } from '../api/client';
 import type { HelmRelease } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { Modal } from './Modal';
+import { EmptyState } from './EmptyState';
+import { RefreshButton } from './RefreshButton';
+import { Notice } from './Notice';
 import { DataTable } from './DataTable';
 import { DetailsModal } from './DetailsModal';
 import { NamespaceSelector } from './NamespaceSelector';
@@ -13,6 +16,7 @@ import { HelmInstallModal } from './HelmInstallModal';
 import { HelmUpgradeModal } from './HelmUpgradeModal';
 import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 
 type DetailsState = { title: string; rows: Array<[string, string | number | undefined]> } | null;
 
@@ -118,7 +122,7 @@ export function HelmPanel({
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 
-  if (!scope.context) return <div className="empty">{uiText.helm.selectContextToListReleases}</div>;
+  if (!scope.context) return <EmptyState>{uiText.helm.selectContextToListReleases}</EmptyState>;
 
   return (
     <>
@@ -137,7 +141,7 @@ export function HelmPanel({
         )}
         <div className="toolbar-actions">
           {(releases.isFetching || charts.isFetching) && (
-            <span className="tiny-spinner" aria-label={uiText.helm.refreshingResources} />
+            <Spinner label={uiText.helm.refreshingResources} />
           )}
           <NamespaceSelector
             namespaces={namespaces}
@@ -153,35 +157,32 @@ export function HelmPanel({
               + {uiText.common.install}
             </button>
           )}
-          <button
-            className="toolbar-refresh"
+          <RefreshButton
             onClick={() => (mode === 'charts' && showCatalog ? charts.refetch() : releases.refetch())}
             title={uiText.common.refresh}
-          >
-            ⟳
-          </button>
+          />
         </div>
       </div>
 
-      {mode === 'releases' && releases.isError && <div className="notice error">{(releases.error as Error).message}</div>}
+      {mode === 'releases' && releases.isError && <Notice variant="error">{(releases.error as Error).message}</Notice>}
       {mode === 'charts' && showCatalog && charts.isError && (
-        <div className="notice error">{(charts.error as Error).message}</div>
+        <Notice variant="error">{(charts.error as Error).message}</Notice>
       )}
       {mode === 'charts' && !showCatalog && releases.isError && (
-        <div className="notice error">{(releases.error as Error).message}</div>
+        <Notice variant="error">{(releases.error as Error).message}</Notice>
       )}
       {mode === 'releases' && releases.isLoading && <LoadingOverlay message={uiText.common.loading} />}
       {mode === 'charts' && showCatalog && charts.isLoading && <LoadingOverlay message={uiText.helm.loadingCharts} />}
       {mode === 'charts' && !showCatalog && releases.isLoading && <LoadingOverlay message={uiText.common.loading} />}
 
       {mode === 'releases' && releases.data && visibleReleases.length === 0 && (
-        <div className="empty">{uiText.helm.noReleasesFound}</div>
+        <EmptyState>{uiText.helm.noReleasesFound}</EmptyState>
       )}
       {mode === 'charts' && showCatalog && charts.data && charts.data.charts.length === 0 && (
-        <div className="empty">{uiText.helm.noChartsFound}</div>
+        <EmptyState>{uiText.helm.noChartsFound}</EmptyState>
       )}
       {mode === 'charts' && !showCatalog && releases.data && usedCharts.length === 0 && (
-        <div className="empty">{uiText.helm.noChartsDeployed}</div>
+        <EmptyState>{uiText.helm.noChartsDeployed}</EmptyState>
       )}
 
       {mode === 'releases' && releases.data && visibleReleases.length > 0 && (
@@ -384,8 +385,8 @@ function HelmHistoryModal({
   return (
     <Modal title={`History — ${release.name}`} onClose={onClose}>
       {history.isLoading && <div className="dim">{uiText.helm.loadingHistory}</div>}
-      {history.isError && <div className="notice error">{(history.error as Error).message}</div>}
-      {rollback.isError && <div className="notice error">{(rollback.error as Error).message}</div>}
+      {history.isError && <Notice variant="error">{(history.error as Error).message}</Notice>}
+      {rollback.isError && <Notice variant="error">{(rollback.error as Error).message}</Notice>}
       {history.data && (
         <table>
           <thead>
@@ -442,7 +443,7 @@ function HelmValuesModal({
   return (
     <Modal title={`Values — ${release.name}`} onClose={onClose}>
       {values.isLoading && <div className="dim">{uiText.common.loading}</div>}
-      {values.isError && <div className="notice error">{(values.error as Error).message}</div>}
+      {values.isError && <Notice variant="error">{(values.error as Error).message}</Notice>}
       {values.data && (
         <pre className="mono" style={{ maxHeight: '50vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>
           {values.data.values || '(no user-supplied values)'}

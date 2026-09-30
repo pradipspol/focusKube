@@ -3,6 +3,10 @@ import { wsUrl } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import { uiText } from '../text';
+import { IconActionButton } from './IconActionButton';
+import { FollowToggle } from './FollowToggle';
+import { SelectControl } from './SelectControl';
+import { ArrowUpRight } from 'lucide-react';
 
 interface Props {
   pod: K8sObject;
@@ -50,22 +54,16 @@ export function LogsViewer({ pod, context, initialFollow = true, onOpenInTermina
       <div className="actions-bar">
         <div className="field">
           <label>{uiText.logs.container}</label>
-          <select value={container} onChange={(e) => setContainer(e.target.value)}>
-            {containers.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <SelectControl
+            value={container}
+            onChange={setContainer}
+            ariaLabel={uiText.logs.container}
+            options={containers.map((name) => ({ value: name, label: name }))}
+          />
         </div>
-        <label className="field">
-          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-          {uiText.logs.follow}
-        </label>
+        <FollowToggle checked={follow} onChange={setFollow} label={uiText.logs.follow} />
         {onOpenInTerminal && (
-          <button className="drawer-action-icon" type="button" title={uiText.logs.openInTerminal} onClick={onOpenInTerminal}>
-            ⤴
-          </button>
+          <IconActionButton onClick={onOpenInTerminal} title={uiText.logs.openInTerminal}><ArrowUpRight size={16} aria-hidden="true" /></IconActionButton>
         )}
         <span className={`badge ${connected ? 'ok' : 'warn'} right`}>
           {connected ? uiText.logs.streaming : uiText.logs.disconnected}

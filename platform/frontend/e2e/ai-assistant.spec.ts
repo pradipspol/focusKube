@@ -65,7 +65,7 @@ async function mockAssistantSocket(
 
 async function openAssistant(page: Page): Promise<void> {
   await page.goto('/e2e/ai-assistant.html');
-  await expect(page.getByText('FocusKube AI Assistant')).toBeVisible();
+  await expect(page.getByText('FocusKube AI Assistant', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
 }
 
@@ -366,7 +366,7 @@ test('starts a separate chat, reopens a saved session, and deletes it from histo
   await expect(page.getByRole('paragraph').filter({ hasText: 'Inspect checkout deployment' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Chat history' }).click();
-  await page.getByRole('button', { name: /Inspect checkout deployment/ }).getByLabel('Delete chat').click();
+  await page.locator('.ai-history-item').filter({ hasText: 'Inspect checkout deployment' }).getByRole('button', { name: 'Delete chat' }).click();
   await expect(page.getByRole('button', { name: /Inspect checkout deployment/ })).toHaveCount(0);
 });
 
@@ -375,7 +375,7 @@ test('recovers to a fresh chat when persisted history is malformed', async ({ pa
   await mockAssistantSocket(page, () => undefined);
   await page.goto('/e2e/ai-assistant.html');
 
-  await expect(page.getByText('FocusKube AI Assistant')).toBeVisible();
+  await expect(page.getByText('FocusKube AI Assistant', { exact: true })).toBeVisible();
   await expect(page.getByPlaceholder('Ask about resource…')).toBeEnabled();
 });
 

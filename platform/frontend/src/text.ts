@@ -58,7 +58,7 @@
     yesContinue: 'Continue',
   },
   common: {
-    close: '✕',
+    close: 'Close',
     cancel: 'Cancel',
     save: 'Save',
     loading: 'Loading…',
@@ -449,7 +449,7 @@
     starting: 'Starting...',
     retry: 'Retry',
     startRecording: 'Start Recording',
-    timelineTab: '◷ Timeline',
+    timelineTab: 'Timeline',
     logsTab: '📋 Multi-Pod Logs',
     correlationTab: '🔗 Event Correlation',
     recordingNotActivePrefix: 'Recording not active:',

@@ -8,6 +8,7 @@ import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
 import { uiText } from '../../text';
+import { Notice } from '../Notice';
 
 interface Props {
   scope: Scope;
@@ -31,7 +32,7 @@ export function CorrelationDashboard({ scope }: Props) {
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">{uiText.observability.selectContext}</div>
+        <Notice>{uiText.observability.selectContext}</Notice>
       </div>
     );
   }

@@ -9,6 +9,7 @@ import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
 import { uiText } from '../../text';
+import { Notice } from '../Notice';
 
 interface Props {
   scope: Scope;
@@ -25,7 +26,7 @@ export function TimelinePanel({ scope }: Props) {
   if (!scope.context) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <div className="notice">{uiText.timeline.selectContext}</div>
+        <Notice>{uiText.timeline.selectContext}</Notice>
       </div>
     );
   }
@@ -141,7 +142,7 @@ export function TimelinePanel({ scope }: Props) {
         <h3 style={{ margin: '0 0 1rem 0' }}>{uiText.timeline.clusterStatePrefix} {new Date(currentTime).toLocaleString()}</h3>
 
         {reconstructedState.length === 0 ? (
-          <div className="notice">{uiText.timeline.noWorkloadState}</div>
+          <Notice>{uiText.timeline.noWorkloadState}</Notice>
         ) : (
           <DataTable
             rowKey={(row) => row.uid || row.name}

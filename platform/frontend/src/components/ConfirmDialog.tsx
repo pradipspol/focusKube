@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { uiText } from '../text';
+import { Modal } from './Modal';
 
 export interface ConfirmOptions {
   title?: string;
@@ -45,24 +46,15 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     <ConfirmContext.Provider value={confirm}>
       {children}
       {pending && (
-        <div className="overlay center" onClick={() => settle(false)}>
-          <div
-            className="modal-card confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h3 className="modal-title">{pending.title ?? uiText.confirmDialog.defaultTitle}</h3>
-              <button aria-label={uiText.confirmDialog.closeLabel} onClick={() => settle(false)}>
-                {uiText.common.close}
-              </button>
-            </div>
-            <div className="modal-body confirm-body">
-              <div className="confirm-message">{pending.message}</div>
-              {pending.details && <div className="confirm-details dim">{pending.details}</div>}
-            </div>
-            <div className="modal-footer">
+        <Modal
+          title={pending.title ?? uiText.confirmDialog.defaultTitle}
+          onClose={() => settle(false)}
+          cardClassName="confirm-modal"
+          bodyClassName="confirm-body"
+          closeLabel={uiText.confirmDialog.closeLabel}
+          role="alertdialog"
+          footer={(
+            <>
               <button onClick={() => settle(false)}>{pending.cancelLabel ?? uiText.confirmDialog.no}</button>
               <button
                 autoFocus
@@ -71,9 +63,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               >
                 {pending.confirmLabel ?? uiText.confirmDialog.confirm}
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          )}
+        >
+          <div className="confirm-message">{pending.message}</div>
+          {pending.details && <div className="confirm-details dim">{pending.details}</div>}
+        </Modal>
       )}
     </ConfirmContext.Provider>
   );

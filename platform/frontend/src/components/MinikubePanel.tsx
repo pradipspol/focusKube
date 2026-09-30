@@ -9,6 +9,7 @@ import {
 } from '../api/minikubeApi';
 import { uiText } from '../text';
 import { LoadingOverlay } from './LoadingOverlay';
+import { Notice } from './Notice';
 import './MinikubePanel.css';
 
 /**
@@ -114,7 +115,7 @@ export const MinikubePanel: React.FC<MinikubePanelProps> = ({ onOpenExplorer }) 
   return (
     <div className="minikube-panel">
       {loadingMessage && <LoadingOverlay message={loadingMessage} />}
-      {notice && <div className="notice error">{notice.text}</div>}
+      {notice && <Notice variant="error">{notice.text}</Notice>}
       <div className="minikube-header">
         <h2>{uiText.minikube.title}</h2>
         {health?.installed ? (

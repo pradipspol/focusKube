@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { logError, logInfo } from '../util/logger.js';
 import type { ClusterContext } from './aiContextService.js';
-import { getLicenseKey } from '../runtime/aiLicenseStore.js';
+import { getEntitlementState, getLicenseKey } from '../runtime/aiLicenseStore.js';
 
 /** Text content is the common case (plain user/assistant turns); the richer content-block
  * array shows up once a tool round has happened — an assistant's own `tool_use` block(s), or
@@ -46,12 +46,14 @@ export class AiService {
     onChunk: (chunk: ChatStreamChunk) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    const licenseKey = await getLicenseKey();
-
-    if (!licenseKey) {
-      onChunk({ type: 'error', data: { message: 'No license key configured' } });
+    // Checked by status, not just licenseKey presence — a stale/inactive license still has a
+    // key string, and would otherwise reach the relay and only fail there with a generic 403.
+    const entitlement = await getEntitlementState();
+    if (!entitlement.licenseKey || entitlement.status !== 'active') {
+      onChunk({ type: 'error', data: { code: 'NO_ENTITLEMENT', message: entitlement.error || 'No active AI plan' } });
       return;
     }
+    const licenseKey = entitlement.licenseKey;
 
     try {
       const relayUrl = `${config.aiRelayBaseUrl}/v1/ai/chat`;
@@ -81,10 +83,20 @@ export class AiService {
           statusText: response.statusText,
           message: errorText.slice(0, 200),
         });
+        // 403 here means the relay itself re-checked the license and found it inactive (e.g. it
+        // expired in the moment between our own check above and this round-trip) — same code as
+        // the upfront check, so the frontend reacts identically either way.
+        const code = response.status === 403 ? 'NO_ENTITLEMENT' : response.status === 429 ? 'QUOTA_EXHAUSTED' : undefined;
         onChunk({
           type: 'error',
           data: {
-            message: `Relay error: ${response.status} ${response.statusText}`,
+            code,
+            message:
+              code === 'NO_ENTITLEMENT'
+                ? 'No active AI plan'
+                : code === 'QUOTA_EXHAUSTED'
+                  ? 'AI usage quota exhausted'
+                  : `Relay error: ${response.status} ${response.statusText}`,
           },
         });
         return;

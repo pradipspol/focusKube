@@ -5,7 +5,10 @@ import type { HelmChart } from '../api/types';
 import { Modal } from './Modal';
 import { HelmDiffViewer } from './HelmDiffViewer';
 import { HelmAddRepoModal } from './HelmAddRepoModal';
+import { SegmentedControl } from './SegmentedControl';
+import { Notice } from './Notice';
 import { uiText } from '../text';
+import { Check } from 'lucide-react';
 
 interface Props {
   scope: Scope;
@@ -164,14 +167,16 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
   return (
     <Modal title={uiText.helm.installRelease} onClose={onClose}>
-      <div className="helm-modal-tabs">
-        <button className={`tab ${tab === 'config' ? 'active' : ''}`} onClick={() => setTab('config')}>
-          {uiText.helm.configuration}
-        </button>
-        <button className={`tab ${tab === 'preview' ? 'active' : ''}`} onClick={() => setTab('preview')}>
-          {uiText.helm.preview}
-        </button>
-      </div>
+      <SegmentedControl
+        value={tab}
+        onChange={setTab}
+        groupClassName="helm-modal-tabs"
+        buttonClassName="tab"
+        options={[
+          { value: 'config', label: uiText.helm.configuration },
+          { value: 'preview', label: uiText.helm.preview },
+        ]}
+      />
 
       {tab === 'config' && (
         <div className="helm-modal-content">
@@ -200,12 +205,12 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
           {chartSource === 'repo' && (
             <>
-              {charts.isError && <div className="notice error">{uiText.helm.loadChartsError}: {(charts.error as Error).message}. Make sure Helm repositories are configured.</div>}
+              {charts.isError && <Notice variant="error">{uiText.helm.loadChartsError}: {(charts.error as Error).message}. Make sure Helm repositories are configured.</Notice>}
               {charts.isLoading && <div className="dim">{uiText.helm.loadingCharts}</div>}
 
               {charts.data && charts.data.charts.length === 0 && (
                 <div className="repo-setup-notice">
-                  <div className="notice info">{uiText.helm.noChartsFound}</div>
+                  <Notice variant="info">{uiText.helm.noChartsFound}</Notice>
                   <button
                     onClick={() => setShowAddRepoModal(true)}
                     className="primary"
@@ -280,7 +285,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                     className="file-upload-button"
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    {localChart ? '✓ Chart Loaded' : 'Select Chart File'}
+                    {localChart ? <><Check size={14} aria-hidden="true" /> Chart Loaded</> : 'Select Chart File'}
                   </button>
                   {localChart && (
                     <span className="file-name">
@@ -288,7 +293,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                     </span>
                   )}
                 </div>
-                {uploadError && <div className="notice error">{uploadError}</div>}
+                {uploadError && <Notice variant="error">{uploadError}</Notice>}
               </div>
             </>
           )}
@@ -351,7 +356,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
               </div>
 
               {install.isError && (
-                <div className="notice error">{install.error instanceof Error ? install.error.message : uiText.helm.installFailed}</div>
+                <Notice variant="error">{install.error instanceof Error ? install.error.message : uiText.helm.installFailed}</Notice>
               )}
             </>
           )}

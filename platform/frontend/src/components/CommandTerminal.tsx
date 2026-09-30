@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { wsUrl, type Scope } from '../api/client';
 import { uiText } from '../text';
+import { PanelResizer } from './PanelResizer';
 
 interface Props {
   scope: Scope;
@@ -316,12 +317,10 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
 
   return (
     <section className="terminal-panel" style={{ height: `${heightPx}px` }}>
-      <div
-        className="terminal-resizer"
+      <PanelResizer
+        orientation="horizontal"
         onMouseDown={startResize}
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={uiText.terminalDock.resizePanel}
+        label={uiText.terminalDock.resizePanel}
         title={uiText.terminalDock.dragToResize}
       />
       <div className="terminal-panel-header">

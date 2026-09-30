@@ -188,6 +188,26 @@ export const api = {
   },
   getResourceYaml: (plural: string, name: string, scope: Scope) =>
     request<{ yaml: string }>(`/resources/${plural}/${name}/yaml${qs(scope)}`),
+  /** Total count across one or more namespaces in a single request (server fans out per
+   * namespace) instead of the caller firing one HTTP request per namespace. */
+  resourceCount: (plural: string, namespaces: string[], scope: Scope) => {
+    const params = new URLSearchParams();
+    if (scope.context) params.set('context', scope.context);
+    if (scope.source) params.set('source', scope.source);
+    namespaces.forEach((namespace) => params.append('namespace', namespace));
+    const search = params.toString();
+    return request<{ total?: number }>(`/resources/${plural}/_count${search ? `?${search}` : ''}`);
+  },
+  /** Fetches several resource kinds for the same scope in one request (server fans out per
+   * kind) instead of the caller firing one HTTP request per kind. */
+  listResourcesBatch: (plurals: string[], scope: Scope) => {
+    const params = new URLSearchParams();
+    params.set('plurals', plurals.join(','));
+    if (scope.context) params.set('context', scope.context);
+    if (scope.namespace) params.set('namespace', scope.namespace);
+    if (scope.source) params.set('source', scope.source);
+    return request<{ resources: Record<string, K8sObject[]>; failedKinds: string[] }>(`/resources/_multi?${params.toString()}`);
+  },
   getResource: (plural: string, name: string, scope: Scope) =>
     request<K8sObject>(`/resources/${plural}/${name}${qs(scope)}`),
   getPodMetrics: (name: string, scope: Scope) =>

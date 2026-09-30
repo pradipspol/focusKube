@@ -5,6 +5,8 @@ import type { AzureScope } from '../api/client';
 import type { AksCluster, AzureAccount, AzureAccountGroup } from '../api/types';
 import { uiText } from '../text';
 import { LoadingOverlay } from './LoadingOverlay';
+import { Notice } from './Notice';
+import { EmptyState } from './EmptyState';
 
 interface Props {
   azureSource?: AzureScope;
@@ -273,18 +275,18 @@ export function AzurePanel({
         </button>
       </div>
       {message && (
-        <div className={`notice ${messageIsError ? 'error' : ''}`}>
+        <Notice variant={messageIsError ? 'error' : undefined}>
           <div>{message}</div>
           {messageIsError && lastAzCandidate && (
             <div className="dim" style={{ marginTop: 6 }}>
               CLI candidate tried: <code className="inline">{lastAzCandidate}</code>
             </div>
           )}
-        </div>
+        </Notice>
       )}
 
       {loginPending && (
-        <div className="notice azure-login-pending" style={{ marginTop: 10 }}>
+        <Notice className="azure-login-pending" style={{ marginTop: 10 }}>
           <span className="azure-login-spinner" aria-label={uiText.azure.signInProgress} />
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -306,7 +308,7 @@ export function AzurePanel({
             )}
             <div className="dim" style={{ marginTop: 6 }}>{uiText.azure.waitingForSignIn}</div>
           </div>
-        </div>
+        </Notice>
       )}
 
       <section style={{ marginBottom: 24 }}>
@@ -316,12 +318,12 @@ export function AzurePanel({
         </div> */}
         {awaitingAzureAccount && <div className="dim">{uiText.azure.checking}</div>}
         {loggedIn ? (
-          <div className="notice">
+          <Notice>
             <div style={{ marginTop: 14 }}>
               {(accounts.isLoading || accounts.isFetching) && <div className="dim">{uiText.azure.loadingAccounts}</div>}
-              {accounts.isError && <div className="notice error">{(accounts.error as Error).message}</div>}
+              {accounts.isError && <Notice variant="error">{(accounts.error as Error).message}</Notice>}
               {!accounts.isLoading && !accounts.isError && accountGroups.length === 0 && totalSubscriptionCount === 0 ? (
-                <div className="notice" style={{ padding: '10px 12px' }}>
+                <Notice style={{ padding: '10px 12px' }}>
                   <div>
                     <b>{fallbackAccountLabel}</b>
                     {userType ? <span className="dim"> ({userType})</span> : null}
@@ -329,11 +331,11 @@ export function AzurePanel({
                   <div className="dim" style={{ marginTop: 4 }}>
                     0 subscriptions
                   </div>
-                </div>
+                </Notice>
               ) : (
                 <div style={{ display: 'grid', gap: 8 }}>
                   {accountGroups.length === 0 && totalSubscriptionCount > 0 && (
-                    <div className="notice" style={{ padding: '10px 12px' }}>
+                    <Notice style={{ padding: '10px 12px' }}>
                       <div>
                         <b>{fallbackAccountLabel}</b>
                         {userType ? <span className="dim"> ({userType})</span> : null}
@@ -341,12 +343,11 @@ export function AzurePanel({
                       <div className="dim" style={{ marginTop: 4 }}>
                         {totalSubscriptionCount} subscription{totalSubscriptionCount === 1 ? '' : 's'}
                       </div>
-                    </div>
+                    </Notice>
                   )}
                   {accountGroups.map((group) => (
-                    <div
+                    <Notice
                       key={group.id}
-                      className="notice"
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px' }}
                     >
                       <div>
@@ -394,12 +395,12 @@ export function AzurePanel({
                           {logout.isPending && signingOutEmail === group.email ? uiText.azure.signingOut : uiText.azure.signOut}
                         </button>
                       </div>
-                    </div>
+                    </Notice>
                   ))}
                 </div>
               )}
             </div>
-          </div>
+          </Notice>
         ) : (
           <></>
         )}
@@ -433,8 +434,8 @@ export function AzurePanel({
                 <button onClick={() => aks.refetch()}>{uiText.azure.refresh}</button>
             </div>
               {aks.isLoading && <div className="dim">{uiText.azure.loadingClusters}</div>}
-            {aks.isError && <div className="notice error">{(aks.error as Error).message}</div>}
-              {aks.data && aks.data.clusters.length === 0 && <div className="empty">{uiText.azure.noClusters}</div>}
+            {aks.isError && <Notice variant="error">{(aks.error as Error).message}</Notice>}
+              {aks.data && aks.data.clusters.length === 0 && <EmptyState>{uiText.azure.noClusters}</EmptyState>}
             {aks.data && aks.data.clusters.length > 0 && (
               <table>
                 <thead>

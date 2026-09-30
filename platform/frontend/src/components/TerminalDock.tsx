@@ -6,6 +6,10 @@ import { wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import { uiText } from '../text';
+import { PanelResizer } from './PanelResizer';
+import { FollowToggle } from './FollowToggle';
+import { CloseButton } from './CloseButton';
+import { Maximize2, Minus, Plus } from 'lucide-react';
 
 export type TerminalSession =
   | {
@@ -162,12 +166,10 @@ export function TerminalDock({
   return (
     <section ref={panelRef} className={`terminal-panel ${collapsed ? 'terminal-panel-collapsed' : ''}`} style={{ height: `${collapsed || isMinimized ? 28 : heightPx}px` }}>
       {!collapsed && (
-        <div
-          className="terminal-resizer"
+        <PanelResizer
+          orientation="horizontal"
           onMouseDown={startResize}
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label={uiText.terminalDock.resizePanel}
+          label={uiText.terminalDock.resizePanel}
           title={uiText.terminalDock.dragToResize}
         />
       )}
@@ -184,16 +186,14 @@ export function TerminalDock({
               title={session.kind === 'pod' ? `${session.title} • ${session.podName}` : session.title}
             >
               <span className="terminal-tab-label">{session.title}</span>
-              <button
-                className="terminal-tab-close"
-                title={`Close ${session.title}`}
+              <CloseButton
+                className="tab-close-button"
+                label={`${uiText.common.close} ${session.title}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCloseSession(session.id);
                 }}
-              >
-                ✕
-              </button>
+              />
             </div>
           ))}
         </div>
@@ -204,7 +204,7 @@ export function TerminalDock({
             onClick={onNewSession}
             title={uiText.terminalDock.openNewTerminal}
           >
-            +
+            <Plus size={15} aria-hidden="true" />
           </button>
           <button
             className="terminal-new-tab-button terminal-minimize-button"
@@ -213,7 +213,7 @@ export function TerminalDock({
             title={isMinimized ? 'Restore terminals' : 'Minimize all terminals'}
             aria-pressed={isMinimized}
           >
-            {isMinimized ? '▢' : '—'}
+            {isMinimized ? <Maximize2 size={14} aria-hidden="true" /> : <Minus size={14} aria-hidden="true" />}
           </button>
         </div>
       </div>
@@ -792,10 +792,12 @@ function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSe
               ))}
             </select>
           </div>
-          <label className="field terminal-session-log-follow">
-            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-            {uiText.logs.follow}
-          </label>
+          <FollowToggle
+            checked={follow}
+            onChange={setFollow}
+            label={uiText.logs.follow}
+            className="terminal-session-log-follow"
+          />
           <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? uiText.logs.streaming : uiText.logs.disconnected}</span>
         </div>
       </div>

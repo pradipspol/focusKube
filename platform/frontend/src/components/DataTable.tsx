@@ -8,7 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
+import { AnchoredMenu } from './AnchoredMenu';
 import { uiText } from '../text';
+import { ActionMenuTrigger } from './ActionMenuTrigger';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 
 export interface DataColumn<T> {
   key: string;
@@ -86,7 +89,7 @@ export function DataTable<T>({
   const [autoWidths, setAutoWidths] = useState<Record<string, number>>({});
   const [hasManualResize, setHasManualResize] = useState(false);
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; up: boolean } | null>(null);
+  const menuAnchorRef = useRef<HTMLElement | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
@@ -226,16 +229,7 @@ export function DataTable<T>({
 
   const openMenu = (key: string, event: ReactMouseEvent) => {
     event.stopPropagation();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const count = (onShowDetails ? 1 : 0) + actions.length;
-    const estimatedHeight = Math.min(count * 34 + 18, 260);
-    const estimatedWidth = 220;
-    const up = window.innerHeight - rect.bottom < estimatedHeight + 8;
-    setMenuPos({
-      top: up ? rect.top - 4 : rect.bottom + 4,
-      left: Math.max(8, Math.min(window.innerWidth - estimatedWidth - 8, rect.right - estimatedWidth)),
-      up,
-    });
+    menuAnchorRef.current = event.currentTarget as HTMLElement;
     setOpenKey((cur) => (cur === key ? null : key));
   };
 
@@ -297,7 +291,7 @@ export function DataTable<T>({
                     <span className={sortable ? 'th-sort-label sortable' : 'th-sort-label'}>
                       {c.header}
                       {sortable && sortKey === c.key && (
-                        <span className="th-sort-indicator">{sortDir === 'asc' ? ' ▲' : ' ▼'}</span>
+                        <span className="th-sort-indicator" aria-hidden="true">{sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}</span>
                       )}
                     </span>
                     {resizable && (
@@ -358,15 +352,9 @@ export function DataTable<T>({
                   <td className={hasActions ? `actions-cell ${openKey === key ? 'menu-open' : ''}` : 'table-column-picker-spacer'}>
                     {hasActions ? (
                       <div className="row-actions row-actions-visible">
-                        <button className="action-trigger" title={uiText.common.actions} onClick={(event) => openMenu(key, event)}>
-                          ⋮
-                        </button>
-                        {openKey === key && menuPos && (
-                          <div
-                            className={`action-menu ${menuPos.up ? 'open-up' : ''}`}
-                            style={{ top: menuPos.top, left: menuPos.left }}
-                            onClick={(event) => event.stopPropagation()}
-                          >
+                        <ActionMenuTrigger label={uiText.common.actions} onClick={(event) => openMenu(key, event)} />
+                        {openKey === key && menuAnchorRef.current && (
+                          <AnchoredMenu anchorRef={menuAnchorRef} ariaLabel={uiText.common.actions}>
                             {onShowDetails && (
                               <button
                                 className="action-menu-item"
@@ -391,7 +379,7 @@ export function DataTable<T>({
                                 {action.label}
                               </button>
                             ))}
-                          </div>
+                          </AnchoredMenu>
                         )}
                       </div>
                     ) : null}

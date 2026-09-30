@@ -29,7 +29,7 @@ import {
   type ToolExecCtx,
 } from '../services/aiToolExecutor.js';
 import { runInvestigation, type InvestigationResult } from '../services/investigationAgent.js';
-import { getLicenseKey } from '../runtime/aiLicenseStore.js';
+import { getEntitlementState } from '../runtime/aiLicenseStore.js';
 import { aiChatSessionStore } from '../services/aiChatSessionStore.js';
 
 const logsWss = new WebSocketServer({ noServer: true });
@@ -1003,9 +1003,12 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
   // must never be offered scale/restart/apply/delete as callable tools in the first place.
   const tools = toolCatalogForRole(role);
 
-  const licenseKey = await getLicenseKey();
-  if (!licenseKey) {
-    ws.send(JSON.stringify({ type: 'error', message: 'AI feature not enabled' }));
+  // Checked once up front, by status (not just a leftover licenseKey string), so a canceled/
+  // expired account fails fast here with a distinguishable code the frontend uses to show the
+  // buy-plan prompt - instead of only surfacing once a chat turn actually reaches the relay.
+  const entitlement = await getEntitlementState();
+  if (!entitlement.licenseKey || entitlement.status !== 'active') {
+    ws.send(JSON.stringify({ type: 'error', code: 'NO_ENTITLEMENT', message: entitlement.error || 'No active AI plan' }));
     ws.close();
     return;
   }

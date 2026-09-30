@@ -18,6 +18,8 @@ import { TopologyPanel } from './components/TopologyPanel';
 import { PortForwardingPanel } from './components/PortForwardingPanel';
 import { MinikubePanel } from './components/MinikubePanel';
 import { AiAssistantPanel } from './components/AiAssistantPanel';
+import { PanelResizer } from './components/PanelResizer';
+import { CloseButton } from './components/CloseButton';
 import { SignInGate } from './components/SignInGate';
 import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
@@ -360,7 +362,7 @@ export default function App() {
 
   const AI_PANEL_DEFAULT_WIDTH_VW = 24;
   const AI_PANEL_MIN_WIDTH_VW = 18;
-  const AI_PANEL_MAX_WIDTH_VW = 40;
+  const AI_PANEL_MAX_WIDTH_VW = 80;
   const [aiPanelOpen, setAiPanelOpen] = useState<boolean>(() => {
     return localStorage.getItem('k8sExplorer.aiPanelOpen') === 'true';
   });
@@ -1193,13 +1195,19 @@ export default function App() {
     event.preventDefault();
     const startX = event.clientX;
     const startWidthVw = aiPanelWidthVw;
+    const body = event.currentTarget.closest<HTMLElement>('.body');
+    const main = body?.querySelector<HTMLElement>('.main');
+    const viewportWidth = Math.max(window.innerWidth, 1);
+    const availableWidthVw = body && main
+      ? ((body.getBoundingClientRect().right - main.getBoundingClientRect().left - event.currentTarget.getBoundingClientRect().width - 300) / viewportWidth) * 100
+      : AI_PANEL_MAX_WIDTH_VW;
+    const maxWidthVw = Math.max(AI_PANEL_MIN_WIDTH_VW, Math.min(AI_PANEL_MAX_WIDTH_VW, availableWidthVw));
 
     const onMove = (moveEvent: MouseEvent) => {
-      const viewportWidth = Math.max(window.innerWidth, 1);
       // Anchored to the right edge — dragging left (negative deltaX) widens it.
       const deltaVw = ((moveEvent.clientX - startX) / viewportWidth) * 100;
       const nextWidthVw = startWidthVw - deltaVw;
-      setAiPanelWidthVw(Math.min(AI_PANEL_MAX_WIDTH_VW, Math.max(AI_PANEL_MIN_WIDTH_VW, nextWidthVw)));
+      setAiPanelWidthVw(Math.min(maxWidthVw, Math.max(AI_PANEL_MIN_WIDTH_VW, nextWidthVw)));
     };
 
     const onUp = () => {
@@ -1294,13 +1302,11 @@ export default function App() {
           onOpenCloudAwsView={openCloudAwsView}
         /> : <ActivityPanel contexts={contexts} onContextChange={(name) => { void handleContextChange(name); }} onOpenExplorer={activateExplorerRoute} />)}
         {!sidebarHidden && (
-          <div
-            className="sidebar-resizer"
+          <PanelResizer
+            orientation="vertical"
             onMouseDown={startSidebarResize}
             title={uiText.common.resizeSidebar}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={uiText.common.resizeSidebar}
+            label={uiText.common.resizeSidebar}
           />
         )}
         <div className={`main ${tabs.length === 0 ? 'main-empty' : ''}`}>
@@ -1336,16 +1342,14 @@ export default function App() {
                           title={tab.originSource ? `${tab.label} • ${tab.originSource.toUpperCase()}` : tab.label}
                         >
                           <span className="main-tab-label">{tab.label}</span>
-                          <button
-                            className="main-tab-close"
-                            title={`Close ${tab.label}`}
+                          <CloseButton
+                            className="tab-close-button"
+                            label={`${uiText.common.close} ${tab.label}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               closeTab(tab.id);
                             }}
-                          >
-                            ✕
-                          </button>
+                          />
                         </div>
                       ))}
                     </div>
@@ -1547,13 +1551,11 @@ export default function App() {
         </div>
         {aiPanelOpen && (
           <>
-            <div
-              className="ai-panel-resizer"
+            <PanelResizer
+              orientation="vertical"
               onMouseDown={startAiPanelResize}
               title={uiText.common.resizeSidebar}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={uiText.common.resizeSidebar}
+              label={uiText.common.resizeSidebar}
             />
             <div className="ai-panel-dock">
               <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} onArtifactOpenChange={handleArtifactOpenChange} />

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type Scope } from '../api/client';
 import { Modal } from './Modal';
 import { uiText } from '../text';
+import { Notice } from './Notice';
 
 interface Props {
   scope: Scope;
@@ -73,7 +74,7 @@ export function HelmAddRepoModal({ scope, onClose, onToast, onAdded }: Props) {
           <small className="dim">{uiText.helm.repoUrlHint}</small>
         </div>
 
-        {error && <div className="notice error">{error}</div>}
+        {error && <Notice variant="error">{error}</Notice>}
 
         <div className="helm-modal-actions">
           <button onClick={onClose} disabled={addRepo.isPending}>

@@ -6,6 +6,9 @@ const BACKEND = process.env.BACKEND_URL ?? 'http://localhost:4000';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   server: {
     port: 5173,
     allowedHosts: [

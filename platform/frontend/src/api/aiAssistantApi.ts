@@ -75,7 +75,7 @@ export type AiChatInboundMessage =
    * only so the frontend can skip showing anything alarming; whatever text streamed before the
    * abort stays exactly as-is. */
   | { type: 'stopped' }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; code?: string }
   /** A read tool (list/get/describe/logs/events) started — auto-executes, no approval needed. */
   | { type: 'tool_call'; id: string; name: string; input: unknown }
   /** That read tool finished; `output` is the (possibly truncated) result text. */

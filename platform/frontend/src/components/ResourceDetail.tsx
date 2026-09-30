@@ -10,12 +10,20 @@ import { useWatchedResourceList } from '../hooks/useWatchedResourceList';
 import { LogsPanel } from './LogsPanel';
 import { ExecTerminal } from './ExecTerminal';
 import { DeploymentActions } from './DeploymentActions';
+import { EmptyState } from './EmptyState';
+import { SegmentedControl } from './SegmentedControl';
+import { Notice } from './Notice';
+import { IconActionButton } from './IconActionButton';
 import { useConfirm } from './ConfirmDialog';
 import { useToast } from './ToastViewport';
 import type { OpenDeploymentLogsTerminalRequest, OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 import { TreeDisclosure } from './TreeDisclosure';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
+import { CloseButton } from './CloseButton';
+import { SelectControl } from './SelectControl';
+import { Ellipsis, Eye, List, Pencil, RotateCw, Save, Terminal, Trash2 } from 'lucide-react';
 
 // Kinds without a hand-built Overview tab (pods/deployments/workload controllers,
 // configmaps/secrets) fall back here: a data-driven Properties view plus, for the
@@ -137,33 +145,32 @@ export function ResourceDetail({
           <div className="drawer-header-actions">
             {plural === 'pods' && (
               <>
-                <button className="drawer-action-icon" title={uiText.resourceDetail.logs} onClick={() => setTab('logs')}>≣</button>
+                <IconActionButton title={uiText.resourceDetail.logs} onClick={() => setTab('logs')}><List size={16} aria-hidden="true" /></IconActionButton>
                 {canWrite && (
-                  <button className="drawer-action-icon" title={uiText.resourceDetail.shell} onClick={() => setTab('exec')}>{'>_'}</button>
+                  <IconActionButton title={uiText.resourceDetail.shell} onClick={() => setTab('exec')}><Terminal size={16} aria-hidden="true" /></IconActionButton>
                 )}
               </>
             )}
             {plural === 'deployments' && (
               <>
                 {canWrite && (
-                  <button
-                    className="drawer-action-icon"
+                  <IconActionButton
                     title={uiText.resourceDetail.restartDeployment}
                     onClick={() => restart.mutate()}
                     disabled={restart.isPending}
                   >
-                    ↻
-                  </button>
+                    <RotateCw size={16} aria-hidden="true" />
+                  </IconActionButton>
                 )}
-                <button className="drawer-action-icon" title={uiText.resourceDetail.deploymentActions} onClick={() => setTab('actions')}>⋯</button>
+                <IconActionButton title={uiText.resourceDetail.deploymentActions} onClick={() => setTab('actions')}><Ellipsis size={16} aria-hidden="true" /></IconActionButton>
               </>
             )}
             {canWrite && (
-              <button className="drawer-action-icon" title={uiText.resourceDetail.editYaml} onClick={() => setTab('yaml')}>✎</button>
+              <IconActionButton title={uiText.resourceDetail.editYaml} onClick={() => setTab('yaml')}><Pencil size={16} aria-hidden="true" /></IconActionButton>
             )}
             {canDelete && (
-              <button
-                className="drawer-action-icon danger"
+              <IconActionButton
+                className="danger"
                 title={`${uiText.resourceDetail.deletePrefix} ${plural.slice(0, -1) || plural}`}
                 onClick={async () => {
                   const ok = await confirm({
@@ -176,11 +183,11 @@ export function ResourceDetail({
                 }}
                 disabled={del.isPending}
               >
-                🗑
-              </button>
+                <Trash2 size={16} aria-hidden="true" />
+              </IconActionButton>
             )}
+            <CloseButton className="drawer-action-icon" label={uiText.common.close} onClick={onClose} />
           </div>
-          <button onClick={onClose}>{uiText.common.close}</button>
         </div>
 
         <div className="tabs">
@@ -398,18 +405,29 @@ function PodOverviewTab({ pod, scope }: { pod: K8sObject; scope: Scope }) {
         <div className="pod-section-header">
           <h4>{uiText.resourceDetail.resourceUsage}</h4>
           <div className="metrics-toolbar">
-            <select value={metricsWindow} onChange={(e) => setMetricsWindow(e.target.value as '1h' | '6h' | '24h')}>
-              <option value="1h">1h</option>
-              <option value="6h">6h</option>
-              <option value="24h">24h</option>
-            </select>
+            <SelectControl
+              value={metricsWindow}
+              onChange={(value) => setMetricsWindow(value as '1h' | '6h' | '24h')}
+              ariaLabel={uiText.resourceDetail.resourceUsage}
+              options={[
+                { value: '1h', label: '1h' },
+                { value: '6h', label: '6h' },
+                { value: '24h', label: '24h' },
+              ]}
+            />
           </div>
         </div>
         <div className="metrics-note">{uiText.resourceDetail.metricsDescription}</div>
-        <div className="deployment-metric-selector" role="group" aria-label={uiText.resourceDetail.metricSelection}>
-          <button className={activeMetric === 'cpu' ? 'active' : ''} onClick={() => setActiveMetric('cpu')}>{uiText.resourceDetail.cpuUsage}</button>
-          <button className={activeMetric === 'memory' ? 'active' : ''} onClick={() => setActiveMetric('memory')}>{uiText.resourceDetail.memoryUsage}</button>
-        </div>
+        <SegmentedControl
+          value={activeMetric}
+          onChange={setActiveMetric}
+          groupClassName="deployment-metric-selector"
+          ariaLabel={uiText.resourceDetail.metricSelection}
+          options={[
+            { value: 'cpu', label: uiText.resourceDetail.cpuUsage },
+            { value: 'memory', label: uiText.resourceDetail.memoryUsage },
+          ]}
+        />
         <div className="deployment-metric-chart">
           <div className="deployment-metric-heading">
             <span>{activeMetric === 'cpu' ? uiText.resourceDetail.cpuUsage : uiText.resourceDetail.memoryUsage}</span>
@@ -742,11 +760,16 @@ function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; s
         <div className="pod-section-header">
           <h4>{uiText.resourceDetail.resourceUsage}</h4>
           <div className="metrics-toolbar">
-            <select value={metricsWindow} onChange={(event) => setMetricsWindow(event.target.value as '1h' | '6h' | '24h')}>
-              <option value="1h">1h</option>
-              <option value="6h">6h</option>
-              <option value="24h">24h</option>
-            </select>
+            <SelectControl
+              value={metricsWindow}
+              onChange={(value) => setMetricsWindow(value as '1h' | '6h' | '24h')}
+              ariaLabel={uiText.resourceDetail.resourceUsage}
+              options={[
+                { value: '1h', label: '1h' },
+                { value: '6h', label: '6h' },
+                { value: '24h', label: '24h' },
+              ]}
+            />
             <button onClick={() => deploymentDataQuery.refetch()} disabled={deploymentDataQuery.isFetching}>{uiText.common.refresh}</button>
           </div>
         </div>
@@ -755,10 +778,16 @@ function DeploymentOverviewTab({ deployment, scope }: { deployment: K8sObject; s
         {deploymentDataQuery.isError && <div className="metrics-error">{uiText.resourceDetail.metricsUnavailable}</div>}
         {!deploymentDataQuery.isLoading && !deploymentDataQuery.isError && (
           <>
-            <div className="deployment-metric-selector" role="group" aria-label={uiText.resourceDetail.metricSelection}>
-              <button className={activeMetric === 'cpu' ? 'active' : ''} onClick={() => setActiveMetric('cpu')}>{uiText.resourceDetail.cpuUsage}</button>
-              <button className={activeMetric === 'memory' ? 'active' : ''} onClick={() => setActiveMetric('memory')}>{uiText.resourceDetail.memoryUsage}</button>
-            </div>
+            <SegmentedControl
+              value={activeMetric}
+              onChange={setActiveMetric}
+              groupClassName="deployment-metric-selector"
+              ariaLabel={uiText.resourceDetail.metricSelection}
+              options={[
+                { value: 'cpu', label: uiText.resourceDetail.cpuUsage },
+                { value: 'memory', label: uiText.resourceDetail.memoryUsage },
+              ]}
+            />
             <div className="deployment-metric-chart">
               <div className="deployment-metric-heading">
                 <span>{activeMetric === 'cpu' ? uiText.resourceDetail.cpuUsage : uiText.resourceDetail.memoryUsage}</span>
@@ -1783,7 +1812,7 @@ function YamlTab({
         {canWrite ? (
           <>
             <button className="primary" onClick={() => save.mutate()} disabled={save.isPending || yamlQuery.isLoading}>
-              {`💾 ${uiText.common.save}`}
+              <><Save size={14} aria-hidden="true" /> {uiText.common.save}</>
             </button>
             <ValidateYamlButton
               onValidate={() => validate.mutate()}
@@ -1830,8 +1859,8 @@ function SecretTab({ name, scope }: { name: string; scope: Scope }) {
     queryFn: () => api.revealSecret(name, scope),
   });
 
-  if (reveal.isLoading) return <div className="empty">{uiText.resourceDetail.decoding}</div>;
-  if (reveal.isError) return <div className="notice error">{(reveal.error as Error).message}</div>;
+  if (reveal.isLoading) return <EmptyState>{uiText.resourceDetail.decoding}</EmptyState>;
+  if (reveal.isError) return <Notice variant="error">{(reveal.error as Error).message}</Notice>;
 
   return (
     <div style={{ padding: 14, overflow: 'auto' }}>
@@ -2061,7 +2090,7 @@ function ConfigLikeDetailsTab({
         </div>
         {isLoadingData ? (
           <div className="dim">
-            <span className="tiny-spinner" aria-label={uiText.resourceDetail.loadingData} /> {uiText.resourceDetail.loadingData}
+            <Spinner label={uiText.resourceDetail.loadingData} /> {uiText.resourceDetail.loadingData}
           </div>
         ) : (
         <div className="kv-editor">
@@ -2082,24 +2111,24 @@ function ConfigLikeDetailsTab({
                 readOnly={!canWrite || (kind === 'secrets' && !visibleSecrets[id])}
               />
               {kind === 'secrets' && (
-                <button
-                  className={`icon-action eye-toggle ${visibleSecrets[id] ? 'is-visible' : 'is-hidden'}`}
+                <IconActionButton
+                  baseClassName="icon-action"
+                  className={`eye-toggle ${visibleSecrets[id] ? 'is-visible' : 'is-hidden'}`}
                   title={visibleSecrets[id] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
-                  aria-label={visibleSecrets[id] ? uiText.resourceDetail.hideSecretValue : uiText.resourceDetail.showSecretValue}
                   onClick={() => toggleSecretVisibility(id)}
                 >
-                  👁
-                </button>
+                  <Eye size={14} aria-hidden="true" />
+                </IconActionButton>
               )}
               {canWrite && (
-                <button
-                  className={`icon-action ${kind === 'secrets' ? 'danger' : ''}`}
+                <IconActionButton
+                  baseClassName="icon-action"
+                  className={kind === 'secrets' ? 'danger' : undefined}
                   title={uiText.resourceDetail.deleteKey}
-                  aria-label={uiText.resourceDetail.deleteKey}
                   onClick={() => void removeKey(id, key)}
                 >
-                  🗑
-                </button>
+                  <Trash2 size={14} aria-hidden="true" />
+                </IconActionButton>
               )}
             </div>
           ))}

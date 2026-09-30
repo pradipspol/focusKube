@@ -481,6 +481,59 @@ export class ResourcesService {
     }
   }
 
+  /** Total item count across one or more namespaces, fanned out server-side (one k8s call per
+   * namespace) instead of the frontend firing one HTTP request per namespace. Namespaces the
+   * caller can't list are skipped rather than failing the whole count. Returns `undefined` when
+   * any namespace's count can't be determined cheaply (paged with no `remainingItemCount`). */
+  async countResources(
+    plural: string,
+    context: string | undefined,
+    requestedNamespaces: string[],
+    options: KubeOptions,
+  ): Promise<{ total: number | undefined }> {
+    const queryNamespaces = requestedNamespaces.length > 0 ? requestedNamespaces : [undefined];
+    const pages = await Promise.all(queryNamespaces.map(async (namespace) => {
+      try {
+        return await listResourcePage(plural, context, namespace, { ...options, limit: 1 });
+      } catch (error) {
+        if (isForbidden(error)) return null;
+        throw error;
+      }
+    }));
+    if (pages.some((page) => page?.continue && typeof page.remainingItemCount !== 'number')) {
+      return { total: undefined };
+    }
+    const total = pages.reduce((sum, page) => {
+      if (!page) return sum;
+      return sum + page.items.length + (page.remainingItemCount ?? 0);
+    }, 0);
+    return { total };
+  }
+
+  /** Lists several resource kinds for the same scope in one call, fanned out server-side
+   * (`Promise.allSettled`) instead of the frontend firing one HTTP request per kind. A kind the
+   * caller can't list is reported in `failedKinds` rather than failing the whole batch. */
+  async listResourcesBatch(
+    plurals: string[],
+    context: string | undefined,
+    namespace: string | undefined,
+    options: KubeOptions,
+  ): Promise<{ resources: Record<string, any[]>; failedKinds: string[] }> {
+    const settled = await Promise.allSettled(plurals.map((plural) => listResource(plural, context, namespace, options)));
+    const resources: Record<string, any[]> = {};
+    const failedKinds: string[] = [];
+    settled.forEach((result, index) => {
+      const plural = plurals[index];
+      if (result.status === 'fulfilled') {
+        resources[plural] = result.value;
+      } else {
+        resources[plural] = [];
+        failedKinds.push(plural);
+      }
+    });
+    return { resources, failedKinds };
+  }
+
   async getResource(plural: string, name: string, context: string | undefined, namespace: string | undefined, options: KubeOptions) {
     return getResource(plural, name, context, namespace, options);
   }

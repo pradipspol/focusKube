@@ -4,6 +4,7 @@ import { api, wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 import { LoadingOverlay } from './LoadingOverlay';
 
 interface Props {
@@ -282,7 +283,7 @@ export function PortForwardingPanel({ scope, authRecoveryRefreshToken, onAzureAu
           </a>
         )}
         {(podQuery.isFetching || serviceQuery.isFetching) && (
-          <span className="tiny-spinner" aria-label={uiText.portForwarding.refreshingTargets} />
+          <Spinner label={uiText.portForwarding.refreshingTargets} />
         )}
       </div>
 

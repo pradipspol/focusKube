@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnchoredMenu } from './AnchoredMenu';
 import { uiText } from '../text';
+import { Columns3 } from 'lucide-react';
 
 export type ColumnLike = { key: string; label?: string; header?: string };
 
@@ -77,9 +79,37 @@ export function ColumnVisibilityPicker<T extends ColumnLike>({
   isOpen: boolean;
   onOpenChange: (nextOpen: boolean) => void;
 }) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const menu = (
+    <AnchoredMenu anchorRef={triggerRef} ariaLabel={uiText.columns.visibleColumns} className="column-picker-menu">
+      {columns.map((column) => (
+        <label key={column.key} className="column-picker-option">
+          <input
+            type="checkbox"
+            checked={visibleColumns.includes(column.key)}
+            onChange={() => onToggle(column.key)}
+          />
+          <span>{column.label ?? column.header ?? column.key}</span>
+        </label>
+      ))}
+      <button
+        type="button"
+        className="action-menu-item column-picker-reset"
+        onClick={() => {
+          onReset();
+          onOpenChange(false);
+        }}
+      >
+        {uiText.columns.resetColumns}
+      </button>
+    </AnchoredMenu>
+  );
+
   return (
     <div className="column-actions-header">
       <button
+        ref={triggerRef}
         type="button"
         className="column-picker-button"
         title={uiText.columns.chooseVisible}
@@ -89,32 +119,9 @@ export function ColumnVisibilityPicker<T extends ColumnLike>({
           onOpenChange(!isOpen);
         }}
       >
-        ☰
+        <Columns3 size={15} aria-hidden="true" />
       </button>
-      {isOpen && (
-        <div className="column-picker-menu" role="menu" aria-label={uiText.columns.visibleColumns}>
-          {columns.map((column) => (
-            <label key={column.key} className="column-picker-option">
-              <input
-                type="checkbox"
-                checked={visibleColumns.includes(column.key)}
-                onChange={() => onToggle(column.key)}
-              />
-              <span>{column.label ?? column.header ?? column.key}</span>
-            </label>
-          ))}
-          <button
-            type="button"
-            className="column-picker-reset"
-            onClick={() => {
-              onReset();
-              onOpenChange(false);
-            }}
-          >
-            {uiText.columns.resetColumns}
-          </button>
-        </div>
-      )}
+      {isOpen && menu}
     </div>
   );
 }

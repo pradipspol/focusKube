@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useMinikubeStatus } from '../api/minikubeApi';
 import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
+import { Spinner } from './Spinner';
 import type { View } from '../App';
 import type { Scope } from '../api/client';
 import type { AksCluster, AwsIdentity, EksCluster, KubeContext, LocalKubeconfigSummary } from '../api/types';
@@ -813,7 +814,7 @@ export function SidebarProviderSources ({
             <TreeDisclosure collapsed={isGroupCollapsed('azureRoot')} />
             <img src={azureIcon} className="svg-inject" alt="Azure" />
             <span>{uiText.sidebar.azureAccounts}</span>
-            {loadingSubscriptions && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAzureAccounts} />}
+            {loadingSubscriptions && <Spinner label={uiText.sidebar.loadingAzureAccounts} />}
           </button>
           <div className="sidebar-action-slot">
             <SidebarAction
@@ -871,7 +872,7 @@ export function SidebarProviderSources ({
                         >
                           <TreeDisclosure collapsed={!accountExpanded} />
                           <span className="aks-account-email">{accountNode.email}</span>
-                          {accountBusy && <span className="tiny-spinner" aria-label={uiText.sidebar.working} />}
+                          {accountBusy && <Spinner label={uiText.sidebar.working} />}
                         </button>
                         <div className="sidebar-action-slot">
                           <SidebarAction
@@ -935,7 +936,7 @@ export function SidebarProviderSources ({
                                             <TreeDisclosure collapsed={!subExpanded} />
                                             <span>{subscriptionNode.name}</span>
                                             {loadingResourceGroups[subCacheKey] && (
-                                              <span className="tiny-spinner" aria-label={uiText.sidebar.loadingResourceGroups} />
+                                              <Spinner label={uiText.sidebar.loadingResourceGroups} />
                                             )}
                                           </button>
                                         )}
@@ -972,7 +973,7 @@ export function SidebarProviderSources ({
                                                       <TreeDisclosure collapsed={!rgExpanded} />
                                                       <span>{resourceGroupNode.name}</span>
                                                       {loadingClusters[rgCacheKey] && (
-                                                        <span className="tiny-spinner" aria-label={uiText.sidebar.loadingClusters} />
+                                                        <Spinner label={uiText.sidebar.loadingClusters} />
                                                       )}
                                                     </button>
                                                   )}
@@ -1057,7 +1058,7 @@ export function SidebarProviderSources ({
                                                                 <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                                               </span>
                                                               {!collapsed && clusterLoading && (
-                                                                <span className="tiny-spinner" aria-label={uiText.sidebar.loadingContext} />
+                                                                <Spinner label={uiText.sidebar.loadingContext} />
                                                               )}
                                                             </div>
                                                             {(collapsed || clusterExpanded) && (
@@ -1106,7 +1107,7 @@ export function SidebarProviderSources ({
             <TreeDisclosure collapsed={isGroupCollapsed('awsRoot')} />
             <img src={awsIcon} className="svg-inject" alt="AWS" />
             <span>{uiText.sidebar.awsAccounts}</span>
-            {loadingAwsTree && <span className="tiny-spinner" aria-label={uiText.sidebar.loadingAwsClusters} />}
+            {loadingAwsTree && <Spinner label={uiText.sidebar.loadingAwsClusters} />}
           </button>
           <div className="sidebar-action-slot">
             <SidebarAction
@@ -1227,7 +1228,7 @@ export function SidebarProviderSources ({
                                     <span>{collapsed ? cluster.name.charAt(0) : cluster.name}</span>
                                   </span>
                                   {!collapsed && clusterLoading && (
-                                    <span className="tiny-spinner" aria-label={uiText.sidebar.loadingContext} />
+                                    <Spinner label={uiText.sidebar.loadingContext} />
                                   )}
                                 </div>
                                 {(collapsed || clusterExpanded) && (
@@ -1325,7 +1326,7 @@ export function SidebarProviderSources ({
                           <TreeDisclosure collapsed={!expanded} className="context-caret" />
                         </button>
                       )}
-                      <span className="local-kubeconfig-bullet">◍</span>
+                      <span className="local-kubeconfig-bullet" aria-hidden="true" />
                       <span>{collapsed ? item.name.charAt(0) : item.name}</span>
                     </span>
                     {!collapsed && (
@@ -1364,7 +1365,7 @@ export function SidebarProviderSources ({
                     <div className="sidebar-tree-children">
                       {localAzureAuthInProgress && !collapsed && (
                         <div className="sidebar-hint sidebar-hint-loading">
-                          <span className="tiny-spinner" aria-label={uiText.sidebar.checkingLocalAzureAuth} />
+                          <Spinner label={uiText.sidebar.checkingLocalAzureAuth} />
                           <span>{`Checking local Azure authentication (${localAzureRetryCount}/${localAzureMaxRetries})...`}</span>
                         </div>
                       )}
@@ -1558,7 +1559,7 @@ export function SidebarProviderSources ({
                       <TreeDisclosure collapsed={!minikubeResourcesExpanded} className="context-caret" />
                     </button>
                   )}
-                  <span className="local-kubeconfig-bullet">◍</span>
+                  <span className="local-kubeconfig-bullet" aria-hidden="true" />
                   <span>{collapsed ? 'M' : 'minikube'}</span>
                 </span>
               </div>

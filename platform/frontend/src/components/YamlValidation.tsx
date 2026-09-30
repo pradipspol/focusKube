@@ -1,4 +1,5 @@
 import { uiText } from '../text';
+import { Notice } from './Notice';
 
 /**
  * Shared "Validate" affordance for every YAML editor (create-resource, edit-resource YAML, ...).
@@ -28,8 +29,8 @@ interface YamlValidationNoticeProps {
 }
 
 export function YamlValidationNotice({ isError, errorMessage, successMessage, idleMessage }: YamlValidationNoticeProps) {
-  if (isError) return <span className="notice error">{errorMessage ?? uiText.common.yamlValidationFailed}</span>;
-  if (successMessage) return <span className="notice success">{successMessage}</span>;
+  if (isError) return <Notice as="span" variant="error">{errorMessage ?? uiText.common.yamlValidationFailed}</Notice>;
+  if (successMessage) return <Notice as="span" variant="success">{successMessage}</Notice>;
   if (idleMessage) return <span className="dim">{idleMessage}</span>;
   return null;
 }
