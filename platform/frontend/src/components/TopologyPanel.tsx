@@ -17,6 +17,7 @@ import { EmptyState } from './EmptyState';
 import { Notice } from './Notice';
 import type { K8sObject } from '../api/types';
 import { ApplicationSelector, type ApplicationOption } from './ApplicationSelector';
+import { SelectionDropdown } from './SelectionDropdown';
 import { uiText } from '../text';
 import { Spinner } from './Spinner';
 import { LoadingOverlay } from './LoadingOverlay';
@@ -537,18 +538,18 @@ export function TopologyPanel({ scope, namespaces }: Props) {
         <h2 style={{ margin: 0 }}>{uiText.topology.title}</h2>
         <div className="toolbar-actions">
           {query.isFetching && <Spinner label={uiText.topology.loadingTopology} />}
-          <select
-            className="namespace-dropdown-trigger"
-            value={namespace}
-            onChange={(e) => setNamespace(e.target.value)}
-          >
-            <option value="">{uiText.topology.selectNamespace}</option>
-            {namespaces.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+          <SelectionDropdown
+            title={uiText.topology.selectNamespace}
+            label={namespace || uiText.topology.selectNamespace}
+            selected={namespace ? [namespace] : []}
+            options={namespaces.map((name) => ({ value: name, label: name }))}
+            onChange={(next) => setNamespace(next[0] ?? '')}
+            multiple={false}
+            emptyOptionLabel={uiText.topology.selectNamespace}
+            searchPlaceholder={uiText.common.searchNamespaces}
+            noResultsMessage={uiText.common.noNamespacesFound}
+            wrapperClassName="namespace-toolbar topology-namespace-selector"
+          />
           {namespace && (
             <ApplicationSelector applications={applications} selected={selectedApps} onChange={setSelectedApps} />
           )}

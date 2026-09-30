@@ -6,6 +6,7 @@ import { api, type Scope } from '../api/client';
 import type { ToastMessage } from './ToastViewport';
 import { uiText } from '../text';
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
+import { SelectionDropdown } from './SelectionDropdown';
 
 /**
  * Sample manifests keyed by resource plural. When the Add-resource dialog is
@@ -356,36 +357,44 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
       </p>
       <div className="create-resource-controls">
         <div className="form-group create-resource-type">
-          <label htmlFor="create-resource-type">{uiText.common.resourceType}</label>
-          <select
+          <label>{uiText.common.resourceType}</label>
+          <SelectionDropdown
             id="create-resource-type"
-            value={selectedResourceType}
-            onChange={(event) => {
-              const nextResourceType = event.target.value;
+            title={uiText.common.resourceType}
+            label={RESOURCE_TYPE_OPTIONS.find((option) => option.value === selectedResourceType)?.label ?? selectedResourceType}
+            selected={[selectedResourceType]}
+            options={RESOURCE_TYPE_OPTIONS}
+            onChange={(next) => {
+              const nextResourceType = next[0];
+              if (!nextResourceType) return;
               setSelectedResourceType(nextResourceType);
               setDraft(sampleManifest(nextResourceType));
               validate.reset();
             }}
-          >
-            {RESOURCE_TYPE_OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
+            multiple={false}
+            searchPlaceholder={uiText.common.searchResourceTypes}
+            noResultsMessage={uiText.common.noResourceTypesFound}
+            wrapperClassName="resource-type-selector"
+          />
         </div>
         <div className="form-group create-resource-namespace">
           <label htmlFor="create-resource-namespace">{uiText.common.namespace}</label>
-          <select
+          <SelectionDropdown
             id="create-resource-namespace"
-            value={namespace}
-            onChange={(event) => {
-              setNamespace(event.target.value);
+            title={uiText.common.selectNamespacesTitle}
+            label={namespace}
+            selected={[namespace]}
+            options={namespaces.map((value) => ({ value, label: value }))}
+            onChange={(next) => {
+              setNamespace(next[0] ?? '');
               validate.reset();
             }}
-          >
-            {namespaces.map((value) => (
-              <option key={value} value={value}>{value}</option>
-            ))}
-          </select>
+            multiple={false}
+            searchPlaceholder={uiText.common.searchNamespaces}
+            emptyMessage={uiText.common.noNamespacesFound}
+            noResultsMessage={uiText.common.noNamespacesFound}
+            wrapperClassName="namespace-field-selector"
+          />
         </div>
       </div>
       <div className="create-resource-impact" aria-live="polite">

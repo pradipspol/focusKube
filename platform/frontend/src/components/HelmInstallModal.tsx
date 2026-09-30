@@ -9,6 +9,7 @@ import { SegmentedControl } from './SegmentedControl';
 import { Notice } from './Notice';
 import { uiText } from '../text';
 import { Check } from 'lucide-react';
+import { SelectionDropdown } from './SelectionDropdown';
 
 interface Props {
   scope: Scope;
@@ -313,13 +314,19 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
 
               <div className="form-group">
                 <label htmlFor="namespace-select">{uiText.helm.namespace}</label>
-                <select id="namespace-select" value={namespace} onChange={(e) => setNamespace(e.target.value)}>
-                  {namespaces.map((ns) => (
-                    <option key={ns} value={ns}>
-                      {ns}
-                    </option>
-                  ))}
-                </select>
+                <SelectionDropdown
+                  id="namespace-select"
+                  title={uiText.common.selectNamespacesTitle}
+                  label={namespace}
+                  selected={[namespace]}
+                  options={namespaces.map((ns) => ({ value: ns, label: ns }))}
+                  onChange={(next) => setNamespace(next[0] ?? '')}
+                  multiple={false}
+                  searchPlaceholder={uiText.common.searchNamespaces}
+                  emptyMessage={uiText.common.noNamespacesFound}
+                  noResultsMessage={uiText.common.noNamespacesFound}
+                  wrapperClassName="namespace-field-selector"
+                />
               </div>
 
               <div className="form-group">
