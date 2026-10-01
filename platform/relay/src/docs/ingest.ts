@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { db } from '../db.js';
 import { embedTexts } from '../llm/embeddings.js';
+import { logDebug, logError, logInfo } from '../logger.js';
 import { chunkMarkdown } from './chunker.js';
 
 export interface DocSource {
@@ -61,6 +62,8 @@ export interface IngestResult {
 /** Idempotent — safe to re-run on a schedule or after adding new sources. Only calls the
  * (paid) embeddings API for chunks whose content actually changed since the last run. */
 export async function ingestSources(sources: DocSource[]): Promise<IngestResult[]> {
+  const startedAt = Date.now();
+  logInfo('Documentation ingestion started', { sourceCount: sources.length });
   const results: IngestResult[] = [];
   const existingHash = db.prepare('SELECT content_hash FROM doc_chunks WHERE id = ?');
   const upsert = db.prepare(`
@@ -76,7 +79,9 @@ export async function ingestSources(sources: DocSource[]): Promise<IngestResult[
   `);
 
   for (const source of sources) {
+    const sourceStartedAt = Date.now();
     try {
+      logDebug('Fetching documentation source', { source: source.repoPath });
       const raw = await fetchRawMarkdown(source.repoPath);
       const cleaned = cleanMarkdown(raw);
       const chunks = chunkMarkdown(cleaned);
@@ -120,7 +125,18 @@ export async function ingestSources(sources: DocSource[]): Promise<IngestResult[
         chunksEmbedded: toEmbed.length,
         chunksUnchanged: unchanged,
       });
+      logInfo('Documentation source ingested', {
+        source: source.repoPath,
+        chunksTotal: chunks.length,
+        chunksEmbedded: toEmbed.length,
+        chunksUnchanged: unchanged,
+        durationMs: Date.now() - sourceStartedAt,
+      });
     } catch (err) {
+      logError('Documentation source ingestion failed', err, {
+        source: source.repoPath,
+        durationMs: Date.now() - sourceStartedAt,
+      });
       results.push({
         source: source.url,
         chunksTotal: 0,
@@ -131,5 +147,11 @@ export async function ingestSources(sources: DocSource[]): Promise<IngestResult[
     }
   }
 
+  const failedSourceCount = results.filter((result) => result.error).length;
+  logInfo('Documentation ingestion completed', {
+    sourceCount: sources.length,
+    failedSourceCount,
+    durationMs: Date.now() - startedAt,
+  });
   return results;
 }

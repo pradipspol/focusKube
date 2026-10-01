@@ -4,6 +4,7 @@
  */
 import type { Request, Response } from 'express';
 import { Router } from 'express';
+import { logError } from '../logger.js';
 import { config } from '../config.js';
 import {
   isStripeDemoMode,
@@ -95,9 +96,8 @@ router.post('/stripe/webhook/checkout-completed', async (req, res) => {
       session,
     });
   } catch (err) {
-    res.status(400).json({
-      error: err instanceof Error ? err.message : 'Failed to simulate webhook',
-    });
+    logError('Demo checkout webhook simulation failed', err);
+    res.status(400).json({ error: 'Failed to simulate webhook' });
   }
 });
 
@@ -127,9 +127,8 @@ router.post('/stripe/webhook/subscription-updated', async (req, res) => {
       subscription,
     });
   } catch (err) {
-    res.status(400).json({
-      error: err instanceof Error ? err.message : 'Failed to simulate webhook',
-    });
+    logError('Demo subscription update simulation failed', err);
+    res.status(400).json({ error: 'Failed to simulate webhook' });
   }
 });
 
@@ -152,9 +151,8 @@ router.post('/stripe/webhook/invoice-paid', async (req, res) => {
       message: 'Invoice.paid webhook simulated (quota reset)',
     });
   } catch (err) {
-    res.status(400).json({
-      error: err instanceof Error ? err.message : 'Failed to simulate webhook',
-    });
+    logError('Demo invoice payment simulation failed', err);
+    res.status(400).json({ error: 'Failed to simulate webhook' });
   }
 });
 

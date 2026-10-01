@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config.js';
 import { db } from '../db.js';
+import { logDebug, logInfo, updateLogContext } from '../logger.js';
 import { randomToken, sha256 } from './crypto.js';
 
 export interface SessionUser {
@@ -52,22 +53,26 @@ interface UserRow {
 
 /** Issues a new opaque session token (hashed at rest) and returns the plaintext for the cookie. */
 export function createSession(userId: string): string {
+  logDebug('Creating user session', { userId });
   const token = randomToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + config.sessionTtlDays * 24 * 60 * 60 * 1000);
   db.prepare(
     `INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`,
   ).run(sha256(token), userId, now.toISOString(), expiresAt.toISOString(), now.toISOString());
+  logInfo('User session created', { userId, expiresAt: expiresAt.toISOString() });
   return token;
 }
 
 export function revokeSession(token: string): void {
-  db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(sha256(token));
+  const result = db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(sha256(token));
+  logInfo('User session revocation completed', { removed: result.changes > 0 });
 }
 
 /** Signs an account out everywhere at once — used by account/routes.ts's /delete handler. */
 export function revokeAllSessionsForUser(userId: string): void {
-  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+  const result = db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+  logInfo('All user sessions revoked', { userId, sessionsRemoved: result.changes });
 }
 
 export function userFromSessionToken(token: string): SessionUser | null {
@@ -79,6 +84,7 @@ export function userFromSessionToken(token: string): SessionUser | null {
 
   if (new Date(session.expires_at).getTime() < Date.now()) {
     db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(tokenHash);
+    logDebug('Expired user session removed', { userId: session.user_id });
     return null;
   }
   db.prepare(`UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`).run(new Date().toISOString(), tokenHash);
@@ -96,6 +102,7 @@ export function userFromSessionToken(token: string): SessionUser | null {
   // everywhere immediately, not just have new logins refused.
   if (user.deleted_at) {
     db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(tokenHash);
+    logInfo('Session removed for deleted user account', { userId: user.id });
     return null;
   }
 
@@ -139,6 +146,7 @@ export function requireSession(req: Request, res: Response, next: NextFunction):
     return;
   }
   req.user = user;
+  updateLogContext({ userId: user.id });
   next();
 }
 
@@ -154,5 +162,6 @@ export function requirePageSession(req: Request, res: Response, next: NextFuncti
     return;
   }
   req.user = user;
+  updateLogContext({ userId: user.id });
   next();
 }

@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { db } from '../db.js';
+import { logDebug, logInfo } from '../logger.js';
 import { randomToken, sha256 } from '../auth/crypto.js';
 
 export interface OrganizationRow {
@@ -49,13 +50,16 @@ export interface OrganizationInviteRow {
 }
 
 export function createPendingOrg(ownerUserId: string, name: string): OrganizationRow {
+  logDebug('Creating pending organization', { ownerUserId, nameLength: name.length });
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   db.prepare(
     `INSERT INTO organizations (id, name, owner_user_id, status, seats_purchased, created_at, updated_at)
      VALUES (?, ?, ?, 'pending', 0, ?, ?)`,
   ).run(id, name, ownerUserId, now, now);
-  return findOrgById(id)!;
+  const org = findOrgById(id)!;
+  logInfo('Pending organization created', { orgId: id, ownerUserId });
+  return org;
 }
 
 export function findOrgById(id: string): OrganizationRow | undefined {
@@ -79,31 +83,39 @@ export function findOrgBySubscriptionId(subscriptionId: string): OrganizationRow
 }
 
 export function activateOrg(orgId: string, seats: number): void {
+  logDebug('Activating organization', { orgId, seats });
   db.prepare(`UPDATE organizations SET status = 'active', seats_purchased = ?, updated_at = ? WHERE id = ?`).run(
     seats,
     new Date().toISOString(),
     orgId,
   );
+  logInfo('Organization activated', { orgId, seats });
 }
 
 export function setOrgSeatsPurchased(orgId: string, seats: number): void {
+  logDebug('Updating purchased organization seats', { orgId, seats });
   db.prepare(`UPDATE organizations SET seats_purchased = ?, updated_at = ? WHERE id = ?`).run(
     seats,
     new Date().toISOString(),
     orgId,
   );
+  logInfo('Purchased organization seats updated', { orgId, seats });
 }
 
 export function setOrgStatus(orgId: string, status: OrganizationRow['status']): void {
+  logDebug('Updating organization status', { orgId, status });
   db.prepare(`UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?`).run(
     status,
     new Date().toISOString(),
     orgId,
   );
+  logInfo('Organization status updated', { orgId, status });
 }
 
 export function renameOrg(orgId: string, name: string): void {
+  logDebug('Renaming organization', { orgId, nameLength: name.length });
   db.prepare(`UPDATE organizations SET name = ?, updated_at = ? WHERE id = ?`).run(name, new Date().toISOString(), orgId);
+  logInfo('Organization renamed', { orgId });
 }
 
 export interface SeatCounts {
@@ -184,6 +196,7 @@ export function seatUser(
   role: 'owner' | 'member',
   invitedByUserId: string | null,
 ): string {
+  logDebug('Assigning organization seat', { orgId, userId, role });
   const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
   const now = new Date().toISOString();
   const existing = db.prepare(`SELECT id FROM organization_members WHERE org_id = ? AND user_id = ?`).get(orgId, userId) as
@@ -203,6 +216,7 @@ export function seatUser(
        VALUES (?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?)`,
     ).run(crypto.randomUUID(), orgId, userId, role, key, invitedByUserId, now, now, now);
   }
+  logInfo('Organization seat assigned', { orgId, userId, role, reactivated: !!existing });
   return key;
 }
 
@@ -211,18 +225,22 @@ export function seatUser(
  * licenseStore.ts's lookupLicense already filters on status='active', so the key stops
  * working on its very next use with no rotation of anyone else's key. */
 export function removeMember(orgId: string, userId: string): void {
+  logDebug('Removing organization member', { orgId, userId });
   db.prepare(
     `UPDATE organization_members SET status = 'removed', removed_at = ?, updated_at = ? WHERE org_id = ? AND user_id = ?`,
   ).run(new Date().toISOString(), new Date().toISOString(), orgId, userId);
+  logInfo('Organization member removed', { orgId, userId });
 }
 
 export function regenerateMemberKey(memberId: string): string {
+  logDebug('Regenerating organization member credential', { memberId });
   const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
   db.prepare(`UPDATE organization_members SET license_key = ?, updated_at = ? WHERE id = ?`).run(
     key,
     new Date().toISOString(),
     memberId,
   );
+  logInfo('Organization member credential regenerated', { memberId });
   return key;
 }
 
@@ -231,6 +249,7 @@ export function createInvite(
   email: string,
   invitedByUserId: string,
 ): { id: string; token: string; expiresAt: string } {
+  logDebug('Creating organization invite', { orgId, invitedByUserId });
   const token = randomToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000);
@@ -239,6 +258,7 @@ export function createInvite(
     `INSERT INTO organization_invites (id, org_id, email, token_hash, status, invited_by_user_id, created_at, expires_at)
      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
   ).run(id, orgId, email, sha256(token), invitedByUserId, now.toISOString(), expiresAt.toISOString());
+  logInfo('Organization invite created', { orgId, inviteId: id, invitedByUserId });
   return { id, token, expiresAt: expiresAt.toISOString() };
 }
 
@@ -266,15 +286,18 @@ export function findPendingInviteForEmail(orgId: string, email: string): Organiz
 }
 
 export function revokeInvite(id: string): void {
+  logDebug('Revoking organization invite', { inviteId: id });
   db.prepare(`UPDATE organization_invites SET status = 'revoked', revoked_at = ? WHERE id = ? AND status = 'pending'`).run(
     new Date().toISOString(),
     id,
   );
+  logInfo('Organization invite revocation completed', { inviteId: id });
 }
 
 /** Rotates an existing pending invite's token in place (resend) rather than creating a
  * second row — the pending-per-(org,email) unique index would reject a second insert anyway. */
 export function resendInvite(id: string): { token: string; expiresAt: string } {
+  logDebug('Rotating organization invite credential', { inviteId: id });
   const token = randomToken();
   const expiresAt = new Date(Date.now() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000);
   db.prepare(`UPDATE organization_invites SET token_hash = ?, expires_at = ? WHERE id = ?`).run(
@@ -282,13 +305,16 @@ export function resendInvite(id: string): { token: string; expiresAt: string } {
     expiresAt.toISOString(),
     id,
   );
+  logInfo('Organization invite credential rotated', { inviteId: id });
   return { token, expiresAt: expiresAt.toISOString() };
 }
 
 export function markInviteAccepted(id: string, userId: string): void {
+  logDebug('Accepting organization invite', { inviteId: id, userId });
   db.prepare(
     `UPDATE organization_invites SET status = 'accepted', accepted_user_id = ?, accepted_at = ? WHERE id = ?`,
   ).run(userId, new Date().toISOString(), id);
+  logInfo('Organization invite accepted', { inviteId: id, userId });
 }
 
 export function countInvitesSince(orgId: string, sinceIso: string): number {

@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
 import { azureOpenAiV1BaseUrl } from './chatProvider.js';
+import { logDebug, logError, logInfo } from '../logger.js';
 
 // Deliberately independent of `config.aiProvider` (which only picks the *chat* backend) —
 // the k8s-docs knowledge base always embeds via Azure OpenAI regardless of which model
@@ -32,18 +33,33 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   }
   if (texts.length === 0) return [];
 
+  const startedAt = Date.now();
+  const batchCount = Math.ceil(texts.length / EMBEDDING_BATCH_SIZE);
+  logDebug('Starting text embedding request', { inputCount: texts.length, batchCount });
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBEDDING_BATCH_SIZE) {
     const batch = texts.slice(i, i + EMBEDDING_BATCH_SIZE);
-    const res = await client.embeddings.create({
-      model: config.azureOpenai.embeddingsDeployment,
-      input: batch,
-    });
-    // Azure/OpenAI's response preserves request order via `index`, but sort explicitly rather
-    // than trust array position alone.
-    const sorted = [...res.data].sort((a, b) => a.index - b.index);
-    out.push(...sorted.map((d) => d.embedding));
+    const batchIndex = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1;
+    try {
+      const res = await client.embeddings.create({
+        model: config.azureOpenai.embeddingsDeployment,
+        input: batch,
+      });
+      // Azure/OpenAI's response preserves request order via `index`, but sort explicitly rather
+      // than trust array position alone.
+      const sorted = [...res.data].sort((a, b) => a.index - b.index);
+      out.push(...sorted.map((d) => d.embedding));
+    } catch (error) {
+      logError('Text embedding batch failed', error, { batchIndex, batchCount, inputCount: batch.length });
+      throw error;
+    }
   }
+  logInfo('Text embedding request completed', {
+    inputCount: texts.length,
+    outputCount: out.length,
+    batchCount,
+    durationMs: Date.now() - startedAt,
+  });
   return out;
 }
 

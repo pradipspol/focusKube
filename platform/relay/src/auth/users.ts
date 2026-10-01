@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { logDebug, logInfo } from '../logger.js';
 
 export interface UserRow {
   id: string;
@@ -37,6 +38,7 @@ export function findUserById(id: string): UserRow | undefined {
 }
 
 export function createUser(fields: Partial<UserRow>): UserRow {
+  logDebug('Creating user account', { hasEmail: !!fields.email, hasPhone: !!fields.phone });
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   db.prepare(
@@ -55,48 +57,62 @@ export function createUser(fields: Partial<UserRow>): UserRow {
     created_at: now,
     updated_at: now,
   });
-  return findUserById(id)!;
+  const user = findUserById(id)!;
+  logInfo('User account created', { userId: id });
+  return user;
 }
 
 export function markEmailVerified(userId: string): void {
+  logDebug('Marking user email as verified', { userId });
   db.prepare(`UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), userId);
+  logInfo('User email marked as verified', { userId });
 }
 
 export function markPhoneVerified(userId: string): void {
+  logDebug('Marking user phone as verified', { userId });
   db.prepare(`UPDATE users SET phone_verified = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), userId);
+  logInfo('User phone marked as verified', { userId });
 }
 
 export function setEmail(userId: string, email: string, verified: boolean): void {
+  logDebug('Updating user email address', { userId, verified });
   db.prepare(`UPDATE users SET email = ?, email_verified = ?, updated_at = ? WHERE id = ?`).run(
     email.toLowerCase(),
     verified ? 1 : 0,
     new Date().toISOString(),
     userId,
   );
+  logInfo('User email address updated', { userId, verified });
 }
 
 export function setPassword(userId: string, passwordHash: string): void {
+  logDebug('Updating user password credential', { userId });
   db.prepare(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`).run(
     passwordHash,
     new Date().toISOString(),
     userId,
   );
+  logInfo('User password credential updated', { userId });
 }
 
 export function linkGoogleSub(userId: string, googleSub: string): void {
+  logDebug('Linking Google identity to user account', { userId });
   db.prepare(`UPDATE users SET google_sub = ?, updated_at = ? WHERE id = ?`).run(
     googleSub,
     new Date().toISOString(),
     userId,
   );
+  logInfo('Google identity linked to user account', { userId });
 }
 
 export function markTrialStarted(userId: string): void {
+  logDebug('Recording user trial start', { userId });
   db.prepare(`UPDATE users SET trial_started_at = ?, updated_at = ? WHERE id = ?`).run(
     new Date().toISOString(),
     new Date().toISOString(),
     userId,
   );
+  logInfo('User trial start recorded', { userId });
 }
 
 export interface ProfileUpdate {
@@ -110,8 +126,12 @@ export interface ProfileUpdate {
 /** Partial update — a field left out of `fields` keeps its current value. Used by the
  * profile page (name/company/avatar/comm-preferences), which saves all of these at once. */
 export function updateProfile(userId: string, fields: ProfileUpdate): void {
+  logDebug('Updating user profile', { userId, fields: Object.keys(fields) });
   const current = findUserById(userId);
-  if (!current) return;
+  if (!current) {
+    logInfo('User profile update skipped because the account does not exist', { userId });
+    return;
+  }
   db.prepare(
     `UPDATE users SET first_name = ?, last_name = ?, company = ?, avatar_data_url = ?, product_updates_opt_in = ?, updated_at = ? WHERE id = ?`,
   ).run(
@@ -123,23 +143,28 @@ export function updateProfile(userId: string, fields: ProfileUpdate): void {
     new Date().toISOString(),
     userId,
   );
+  logInfo('User profile updated', { userId, fields: Object.keys(fields) });
 }
 
 export function setTwoFactorEnabled(userId: string, enabled: boolean): void {
+  logDebug('Updating user two-factor authentication setting', { userId, enabled });
   db.prepare(`UPDATE users SET two_factor_enabled = ?, updated_at = ? WHERE id = ?`).run(
     enabled ? 1 : 0,
     new Date().toISOString(),
     userId,
   );
+  logInfo('User two-factor authentication setting updated', { userId, enabled });
 }
 
 /** Soft delete: marks the row deleted (kept for a possible recovery window) rather than
  * erasing it. Login paths and userFromSessionToken all reject a deleted_at account, and
  * account/routes.ts's /delete handler revokes the license and every session up front. */
 export function softDeleteUser(userId: string): void {
+  logDebug('Soft-deleting user account', { userId });
   db.prepare(`UPDATE users SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(
     new Date().toISOString(),
     new Date().toISOString(),
     userId,
   );
+  logInfo('User account soft-deleted', { userId });
 }

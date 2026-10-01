@@ -12,6 +12,8 @@ import { activeProvider, BillingConfigError } from './provider.js';
 import { RazorpayError } from './razorpay.js';
 import { stripeClient } from './stripe.js';
 import { isStripeDemoMode } from './stripe-sim.js';
+import { logError, logWarning } from '../logger.js';
+import { logDebug, logInfo } from '../logger.js';
 import {
   activateIndividualSubscription,
   activateOrgSubscription,
@@ -39,10 +41,12 @@ const TRIAL_PLAN_QUOTA = 100;
 function sendBillingError(res: Response, err: unknown): void {
   if (err instanceof RazorpayError || err instanceof BillingConfigError) {
     const status = err.status >= 400 && err.status < 600 ? err.status : 502;
+    logWarning('Payment provider rejected a billing operation', { statusCode: status, errorType: err.name });
     res.status(status).json({ error: err.message });
     return;
   }
-  res.status(502).json({ error: err instanceof Error ? err.message : 'Payment provider request failed' });
+  logError('Unexpected billing provider failure', err);
+  res.status(502).json({ error: 'Payment provider request failed' });
 }
 
 router.post('/checkout', requireSession, async (req, res) => {
@@ -180,6 +184,7 @@ function subscriptionPeriodEnd(sub: Stripe.Subscription): string | null {
  * effects.ts, which Razorpay's handler drives too (see razorpayWebhook.ts).
  */
 export async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
+  logDebug('Stripe webhook received');
   let event: Stripe.Event;
 
   // Demo mode: accept pre-constructed events without signature verification
@@ -194,6 +199,7 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   } else {
     const signature = req.headers['stripe-signature'];
     if (!config.stripe.secretKey || !config.stripe.webhookSecret || !signature) {
+      logWarning('Stripe webhook rejected because verification is not configured or the signature is missing');
       res.status(400).send('Webhook not configured');
       return;
     }
@@ -202,13 +208,18 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
     try {
       event = stripe.webhooks.constructEvent(req.body as Buffer, signature, config.stripe.webhookSecret);
     } catch (err) {
-      res.status(400).send(`Webhook signature verification failed: ${err instanceof Error ? err.message : 'unknown'}`);
+      logWarning('Stripe webhook rejected because its signature is invalid', {
+        errorType: err instanceof Error ? err.name : typeof err,
+      });
+      res.status(400).send('Webhook signature verification failed');
       return;
     }
   }
 
+  logDebug('Stripe webhook parsed', { eventType: event.type });
   // Stripe redelivers events on timeout/retry — process each event id at most once.
   if (!claimBillingEvent('stripe', event.id)) {
+    logInfo('Duplicate Stripe webhook acknowledged', { eventType: event.type });
     res.json({ received: true });
     return;
   }
@@ -219,9 +230,11 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
     // Processing failed: release the de-duplication claim so Stripe's retry is not
     // swallowed (otherwise a transient failure here loses the activation permanently).
     releaseBillingEvent('stripe', event.id);
+    logError('Stripe webhook processing failed; event released for retry', err, { eventType: event.type });
     throw err;
   }
 
+  logInfo('Stripe webhook processed', { eventType: event.type });
   res.json({ received: true });
 }
 

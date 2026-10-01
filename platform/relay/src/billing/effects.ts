@@ -11,6 +11,7 @@
  */
 import { config } from '../config.js';
 import { db } from '../db.js';
+import { logDebug, logInfo } from '../logger.js';
 import {
   adjustOrgPoolForSeatChange,
   createLicenseForUser,
@@ -44,6 +45,11 @@ export function activateIndividualSubscription(args: {
   customerId: string | null;
   subscriptionId: string | null;
 }): void {
+  logDebug('Activating individual billing subscription', {
+    provider: args.provider,
+    userId: args.userId,
+    hasSubscription: !!args.subscriptionId,
+  });
   const existing = db.prepare(`SELECT stripe_subscription_id FROM licenses WHERE user_id = ?`).get(args.userId) as
     | { stripe_subscription_id: string | null }
     | undefined;
@@ -53,6 +59,7 @@ export function activateIndividualSubscription(args: {
       new Date().toISOString(),
       args.userId,
     );
+    logInfo('Individual billing subscription reactivated', { provider: args.provider, userId: args.userId });
     return;
   }
 
@@ -61,6 +68,7 @@ export function activateIndividualSubscription(args: {
     `UPDATE licenses SET stripe_customer_id = ?, stripe_subscription_id = ?, billing_provider = ?, updated_at = ?
      WHERE user_id = ?`,
   ).run(args.customerId, args.subscriptionId, args.provider, new Date().toISOString(), args.userId);
+  logInfo('Individual billing subscription activated', { provider: args.provider, userId: args.userId });
 }
 
 /** A paid Team subscription just went live: activate the org, create its pooled license and
@@ -75,8 +83,16 @@ export function activateOrgSubscription(args: {
   subscriptionItemId: string | null;
   currentPeriodEnd: string | null;
 }): void {
+  logDebug('Activating organization billing subscription', {
+    provider: args.provider,
+    orgId: args.orgId,
+    seats: args.seats,
+  });
   const org = findOrgById(args.orgId);
-  if (!org) return;
+  if (!org) {
+    logInfo('Organization billing activation skipped because the organization does not exist', { orgId: args.orgId });
+    return;
+  }
 
   // Same re-activation guard as the individual path above: re-running this would rotate
   // both the pooled license key and the owner's seat key, and re-grant the pool's credits.
@@ -91,6 +107,7 @@ export function activateOrgSubscription(args: {
       );
       setOrgStatus(org.id, 'active');
     })();
+    logInfo('Organization billing subscription reactivated', { provider: args.provider, orgId: args.orgId });
     return;
   }
 
@@ -110,12 +127,14 @@ export function activateOrgSubscription(args: {
     );
     seatUser(org.id, org.owner_user_id, 'owner', null);
   })();
+  logInfo('Organization billing subscription activated', { provider: args.provider, orgId: args.orgId, seats: args.seats });
 }
 
 /** Subscription still exists but changed state (paused, payment retries pending, reactivated).
  * Mirrors onto the org row for a Team subscription, so /team can't show an active team whose
  * pooled credits are actually suspended. */
 export function setSubscriptionStatus(subscriptionId: string, status: 'active' | 'inactive'): void {
+  logDebug('Updating billing subscription status', { status });
   const org = findOrgBySubscriptionId(subscriptionId);
   db.prepare(`UPDATE licenses SET status = ?, updated_at = ? WHERE stripe_subscription_id = ?`).run(
     status,
@@ -123,17 +142,26 @@ export function setSubscriptionStatus(subscriptionId: string, status: 'active' |
     subscriptionId,
   );
   if (org) setOrgStatus(org.id, status);
+  logInfo('Billing subscription status updated', { status, organizationSubscription: !!org });
 }
 
 /** Seat-count drift reconciliation — a no-op unless this subscription belongs to a Team.
  * Adjusts the pool by the seat *delta* so a mid-cycle change doesn't hand out a free refill. */
 export function syncSeatsForSubscription(subscriptionId: string, seats: number | null | undefined): void {
   const org = findOrgBySubscriptionId(subscriptionId);
-  if (!org) return;
+  if (!org) {
+    logDebug('Billing seat synchronization skipped for an individual subscription');
+    return;
+  }
   const newSeats = seats ?? org.seats_purchased;
-  if (newSeats === org.seats_purchased) return;
+  if (newSeats === org.seats_purchased) {
+    logDebug('Billing seat synchronization found no change', { orgId: org.id, seats: newSeats });
+    return;
+  }
+  logDebug('Synchronizing organization seats from billing provider', { orgId: org.id, seats: newSeats });
   adjustOrgPoolForSeatChange(org.id, org.seats_purchased, newSeats);
   setOrgSeatsPurchased(org.id, newSeats);
+  logInfo('Organization seats synchronized from billing provider', { orgId: org.id, seats: newSeats });
 }
 
 /** The subscription is gone for good (cancelled, completed, or dunning exhausted).
@@ -142,17 +170,21 @@ export function syncSeatsForSubscription(subscriptionId: string, seats: number |
  * leaving the id on the row lets a stale "Cancel subscription" button call the provider's
  * cancel API on a dead id and throw, instead of a clean "nothing to cancel". */
 export function endSubscription(subscriptionId: string): void {
+  logDebug('Ending billing subscription');
   const org = findOrgBySubscriptionId(subscriptionId);
   db.prepare(
     `UPDATE licenses SET status = 'inactive', stripe_subscription_id = NULL, updated_at = ?
      WHERE stripe_subscription_id = ?`,
   ).run(new Date().toISOString(), subscriptionId);
   if (org) setOrgStatus(org.id, 'cancelled');
+  logInfo('Billing subscription ended', { organizationSubscription: !!org, orgId: org?.id ?? null });
 }
 
 /** A new billing cycle was paid for — refill the cycle's credits. */
 export function renewSubscriptionQuota(subscriptionId: string): void {
+  logDebug('Renewing billing subscription quota');
   resetQuotaForSubscription(subscriptionId);
+  logInfo('Billing subscription quota renewal completed');
 }
 
 /** Webhook de-duplication shared by both providers (see db.ts's billing_events table).
@@ -165,18 +197,28 @@ export function renewSubscriptionQuota(subscriptionId: string): void {
  * The claim is provisional — callers must releaseBillingEvent() if processing then fails,
  * otherwise the provider's retry is silently swallowed and the activation is lost. */
 export function claimBillingEvent(provider: BillingProviderName, eventId: string): boolean {
+  logDebug('Claiming billing webhook event', { provider });
   const id = `${provider}:${eventId}`;
-  if (db.prepare(`SELECT id FROM billing_events WHERE id = ?`).get(id)) return false;
-  if (provider === 'stripe' && db.prepare(`SELECT id FROM stripe_events WHERE id = ?`).get(eventId)) return false;
+  if (db.prepare(`SELECT id FROM billing_events WHERE id = ?`).get(id)) {
+    logInfo('Duplicate billing webhook event detected', { provider });
+    return false;
+  }
+  if (provider === 'stripe' && db.prepare(`SELECT id FROM stripe_events WHERE id = ?`).get(eventId)) {
+    logInfo('Previously processed Stripe webhook event detected', { provider });
+    return false;
+  }
   db.prepare(`INSERT INTO billing_events (id, provider, processed_at) VALUES (?, ?, ?)`).run(
     id,
     provider,
     new Date().toISOString(),
   );
+  logInfo('Billing webhook event claimed', { provider });
   return true;
 }
 
 /** Undoes claimBillingEvent so a failed event can be retried by the provider. */
 export function releaseBillingEvent(provider: BillingProviderName, eventId: string): void {
+  logDebug('Releasing billing webhook event claim', { provider });
   db.prepare(`DELETE FROM billing_events WHERE id = ?`).run(`${provider}:${eventId}`);
+  logInfo('Billing webhook event claim released', { provider });
 }

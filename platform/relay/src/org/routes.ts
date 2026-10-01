@@ -10,6 +10,7 @@ import { RazorpayError } from '../billing/razorpay.js';
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { getLicenseForUser } from '../licenseStore.js';
+import { logError, logWarning } from '../logger.js';
 import { sendOrgInviteEmail } from '../notify/email.js';
 import { createOrgCheckoutSession, updateOrgSeats, cancelOrgSubscription } from './billing.js';
 import { getOrgLicenseForUser } from './entitlement.js';
@@ -144,6 +145,7 @@ router.post('/checkout', requireSession, async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
+      logWarning('Organization checkout could not be completed', { statusCode: err.status, errorType: err.name });
       res.status(err.status).json({ error: err.message });
       return;
     }
@@ -174,6 +176,7 @@ router.post('/seats', requireSession, requireOrgOwner, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
+      logWarning('Organization seat update could not be completed', { statusCode: err.status, errorType: err.name });
       res.status(err.status).json({ error: err.message });
       return;
     }
@@ -187,6 +190,10 @@ router.post('/cancel-subscription', requireSession, requireOrgOwner, async (req,
     res.json({ ok: true });
   } catch (err) {
     if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
+      logError('Organization subscription cancellation could not be completed', {
+        statusCode: err.status,
+        errorType: err.name,
+      });
       res.status(err.status).json({ error: err.message });
       return;
     }

@@ -21,6 +21,7 @@ import {
   isRazorpayConfigured,
   updateSubscriptionQuantity,
 } from './razorpay.js';
+import { logDebug, logInfo } from '../logger.js';
 
 export const razorpayProvider: BillingProvider = {
   name: 'razorpay',
@@ -36,6 +37,11 @@ export const razorpayProvider: BillingProvider = {
   },
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutResult> {
+    logDebug('Creating Razorpay checkout session', {
+      purpose: request.purpose,
+      interval: request.interval,
+      quantity: request.quantity,
+    });
     const planId = await findOrCreatePlan({
       interval: request.interval,
       amountMinor: proUnitAmountMinor(request.interval, 'inr'),
@@ -71,6 +77,7 @@ export const razorpayProvider: BillingProvider = {
     // returnTo decides where our payment page sends the buyer afterwards — a team
     // purchase belongs back on /team, not /home.
     const returnTo = request.purpose === 'org' ? '?returnTo=team' : '';
+    logInfo('Razorpay checkout session created', { purpose: request.purpose, quantity: request.quantity });
     return { url: `${config.publicUrl}/pay/razorpay/${subscription.id}${returnTo}` };
   },
 
@@ -79,11 +86,15 @@ export const razorpayProvider: BillingProvider = {
   },
 
   async cancelAtPeriodEnd(subscriptionId: string) {
+    logDebug('Scheduling Razorpay subscription cancellation');
     await cancelSubscriptionAtCycleEnd(subscriptionId);
+    logInfo('Razorpay subscription cancellation scheduled');
   },
 
   async updateSeats({ subscriptionId, seats }) {
+    logDebug('Updating Razorpay subscription seats', { seats });
     // No subscription-item id here: Razorpay carries quantity on the subscription itself.
     await updateSubscriptionQuantity(subscriptionId, seats);
+    logInfo('Razorpay subscription seats updated', { seats });
   },
 };

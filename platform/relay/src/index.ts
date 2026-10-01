@@ -7,7 +7,7 @@ import cookieParser from 'cookie-parser';
 import 'express-async-errors';
 import { config } from './config.js';
 import { applySecurityMiddleware } from './security/security.js';
-import { devLicenseKey, licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota } from './licenseStore.js';
+import { licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota, userIdFromLicense } from './licenseStore.js';
 import { streamChatTurn, type ChatTool, type ChatTurnMessage } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
@@ -18,6 +18,14 @@ import { devRouter } from './dev/routes.js';
 import { webRouter } from './web/pages.js';
 import { isStripeDemoMode, simulateCheckoutCompleted, getSimulatedSession } from './billing/stripe-sim.js';
 import { searchDocs } from './docs/search.js';
+import {
+  logError,
+  logInfo,
+  logWarning,
+  requestErrorHandler,
+  requestLogging,
+  updateLogContext,
+} from './logger.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_MAX_TOKENS = 12048;
@@ -25,6 +33,7 @@ const DEFAULT_MAX_TOKENS = 12048;
 const staticDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'web', 'static');
 
 const app = express();
+app.use(requestLogging);
 // Picks Brotli when the browser's Accept-Encoding advertises it, else falls back to gzip.
 app.use(compression());
 
@@ -186,6 +195,7 @@ app.post('/v1/license/validate', (req, res) => {
   if (!record || record.status !== 'active') {
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
+  updateLogContext({ userId: userIdFromLicense(key) });
   res.json(record);
 });
 
@@ -197,11 +207,14 @@ app.post('/v1/ai/chat', async (req, res) => {
   const key = licenseFromAuthHeader(req.headers.authorization);
   const record = key ? lookupLicense(key) : undefined;
   if (!record || record.status !== 'active') {
+    logWarning('AI chat request rejected because its license is invalid or inactive');
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
+  updateLogContext({ userId: userIdFromLicense(key!) });
 
   const { context, messages, model, maxTokens, tools } = req.body as ChatRequestBody;
   if (!Array.isArray(messages) || messages.length === 0) {
+    logWarning('AI chat request rejected because it contains no messages');
     return res.status(400).json({ error: 'messages is required' });
   }
 
@@ -209,8 +222,18 @@ app.post('/v1/ai/chat', async (req, res) => {
   // concurrent requests against the same pooled Team balance both pass the same check (see
   // licenseStore.ts's reserveQuota).
   if (!reserveQuota(key!)) {
+    logWarning('AI chat request rejected because the license quota is exhausted');
     return res.status(429).json({ error: 'Quota exhausted' });
   }
+
+  const startedAt = Date.now();
+  const selectedModel = model || DEFAULT_MODEL;
+  logInfo('AI chat generation started', {
+    provider: config.aiProvider,
+    model: selectedModel,
+    messageCount: messages.length,
+    toolCount: tools?.length ?? 0,
+  });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -229,22 +252,36 @@ app.post('/v1/ai/chat', async (req, res) => {
     await streamChatTurn(
       buildSystemPrompt(context),
       messages.map((m) => ({ role: m.role, content: m.content })),
-      model || DEFAULT_MODEL,
+      selectedModel,
       maxTokens ?? DEFAULT_MAX_TOKENS,
       tools ?? [],
       (event) => send(event),
       controller.signal,
     );
     res.write('data: [DONE]\n\n');
+    logInfo('AI chat generation completed', {
+      provider: config.aiProvider,
+      model: selectedModel,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (err) {
     if (controller.signal.aborted) {
       // The client disconnected on purpose (Stop) — nothing left to write to, and the LLM call
       // itself still ran, so the quota reservation stands (see reserveQuota's doc comment: one
       // reservation per real relay round-trip, matching the cost actually incurred).
+      logWarning('AI chat generation stopped after the client disconnected', {
+        model: selectedModel,
+        durationMs: Date.now() - startedAt,
+      });
       return;
     }
+    logError('AI chat generation failed', err, {
+      provider: config.aiProvider,
+      model: selectedModel,
+      durationMs: Date.now() - startedAt,
+    });
     refundQuota(key!);
-    send({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
+    send({ type: 'error', message: 'AI request failed. Please try again.' });
   } finally {
     if (!res.writableEnded) res.end();
   }
@@ -258,40 +295,61 @@ app.post('/v1/ai/docs/search', async (req, res) => {
   const key = licenseFromAuthHeader(req.headers.authorization);
   const record = key ? lookupLicense(key) : undefined;
   if (!record || record.status !== 'active') {
+    logWarning('Documentation search rejected because its license is invalid or inactive');
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
+  updateLogContext({ userId: userIdFromLicense(key!) });
 
   const { query, k } = req.body as { query?: unknown; k?: unknown };
   if (typeof query !== 'string' || !query.trim()) {
+    logWarning('Documentation search rejected because its query is missing');
     return res.status(400).json({ error: 'query is required' });
   }
 
+  const startedAt = Date.now();
+  const resultLimit = typeof k === 'number' ? k : 5;
+  logInfo('Kubernetes documentation search started', { queryLength: query.length, resultLimit });
   try {
-    const results = await searchDocs(query, typeof k === 'number' ? k : 5);
+    const results = await searchDocs(query, resultLimit);
     res.json({ results });
+    logInfo('Kubernetes documentation search completed', {
+      resultCount: results.length,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (err) {
-    res.status(503).json({ error: err instanceof Error ? err.message : 'Doc search unavailable' });
+    logError('Kubernetes documentation search failed', err, {
+      queryLength: query.length,
+      resultLimit,
+      durationMs: Date.now() - startedAt,
+    });
+    res.status(503).json({ error: 'Doc search unavailable' });
   }
 });
 
+app.use('/v1', (_req, res) => {
+  res.status(404).json({ error: 'API route not found', requestId: res.locals.requestId ?? null });
+});
+
+app.use(requestErrorHandler);
+
 const server = http.createServer(app);
+server.on('error', (err) => {
+  logError('Relay HTTP server encountered a fatal error', err);
+  process.exitCode = 1;
+});
 server.listen(config.port, () => {
-  console.log(`focusKube AI relay listening on :${config.port}`);
-  console.log(`Dev license key: ${devLicenseKey()}`);
-  console.log(`AI provider: ${config.aiProvider}`);
+  logInfo('FocusKube AI relay is listening', { port: config.port });
+  logInfo('AI provider configuration loaded', { aiProvider: config.aiProvider });
   if (config.aiProvider === 'azure-openai') {
     if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.deployment) {
-      console.warn(
-        'AI_PROVIDER=azure-openai but AZURE_OPENAI_API_KEY/ENDPOINT/DEPLOYMENT are not all set — /v1/ai/chat will fail until they are.',
-      );
+      logWarning('Azure OpenAI chat is missing required configuration', { component: 'azure-openai-chat' });
     }
   } else if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn('ANTHROPIC_API_KEY is not set — /v1/ai/chat will fail until it is.');
+    logWarning('Anthropic API key is not configured; AI chat requests will fail', { component: 'anthropic-chat' });
   }
   if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.embeddingsDeployment) {
-    console.warn(
-      'AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT (or API_KEY/ENDPOINT) is not set — the k8s-docs knowledge base ' +
-        '(search_k8s_docs tool, npm run ingest:k8s-docs) is unavailable until it is.',
-    );
+    logWarning('Azure OpenAI embeddings are not configured; Kubernetes documentation search is unavailable', {
+      component: 'azure-openai-embeddings',
+    });
   }
 });

@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { config } from '../config.js';
+import { logDebug, logError, logInfo, logWarning } from '../logger.js';
 import {
   activateIndividualSubscription,
   activateOrgSubscription,
@@ -49,14 +50,17 @@ function periodEndOf(subscription: RazorpaySubscription): string | null {
 }
 
 export async function handleRazorpayWebhook(req: Request, res: Response): Promise<void> {
+  logDebug('Razorpay webhook received');
   const signature = req.headers['x-razorpay-signature'];
   const rawBody = req.body as Buffer;
 
   if (!config.razorpay.webhookSecret || typeof signature !== 'string' || !Buffer.isBuffer(rawBody)) {
+    logWarning('Razorpay webhook rejected because verification is not configured or the body is invalid');
     res.status(400).send('Webhook not configured');
     return;
   }
   if (!signatureIsValid(rawBody, signature)) {
+    logWarning('Razorpay webhook rejected because its signature is invalid');
     res.status(400).send('Webhook signature verification failed');
     return;
   }
@@ -65,6 +69,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   try {
     body = JSON.parse(rawBody.toString('utf8')) as RazorpayWebhookBody;
   } catch {
+    logWarning('Razorpay webhook rejected because its JSON body is invalid');
     res.status(400).send('Invalid JSON body');
     return;
   }
@@ -77,13 +82,16 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     typeof headerEventId === 'string' && headerEventId
       ? headerEventId
       : `body:${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
+  logDebug('Razorpay webhook parsed', { eventType: body.event ?? 'unknown' });
   if (!claimBillingEvent('razorpay', eventId)) {
+    logInfo('Duplicate Razorpay webhook acknowledged', { eventType: body.event ?? 'unknown' });
     res.json({ received: true });
     return;
   }
 
   const subscription = body.payload?.subscription?.entity;
   if (!subscription?.id) {
+    logInfo('Razorpay webhook acknowledged without a subscription payload', { eventType: body.event ?? 'unknown' });
     res.json({ received: true });
     return;
   }
@@ -95,9 +103,13 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
     // swallowed, then let the error surface (express-async-errors turns it into a 500,
     // which is what tells Razorpay to retry).
     releaseBillingEvent('razorpay', eventId);
+    logError('Razorpay webhook processing failed; event released for retry', err, {
+      eventType: body.event ?? 'unknown',
+    });
     throw err;
   }
 
+  logInfo('Razorpay webhook processed', { eventType: body.event ?? 'unknown' });
   res.json({ received: true });
 }
 

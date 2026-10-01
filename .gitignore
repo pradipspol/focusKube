@@ -6,4 +6,5 @@ node_modules
 **/backend/.env
 *.logs
 **/desktop/installer
+platform/relay/logs/
 package-lock.json

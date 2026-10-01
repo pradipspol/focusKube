@@ -2,12 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
+import { logError, logInfo } from './logger.js';
 
-fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-
-export const db = new Database(config.dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+export const db = (() => {
+  try {
+    fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
+    const connection = new Database(config.dbPath);
+    connection.pragma('journal_mode = WAL');
+    connection.pragma('foreign_keys = ON');
+    logInfo('Relay SQLite database connection established', { driver: 'better-sqlite3' });
+    return connection;
+  } catch (error) {
+    logError('Relay SQLite database connection failed', error, { driver: 'better-sqlite3' });
+    throw error;
+  }
+})();
 
 // Plain CREATE TABLE IF NOT EXISTS — no migration framework needed at this scale.
 // Every timestamp is an ISO string; every id a crypto.randomUUID().
@@ -194,9 +203,14 @@ db.exec(`
 // that already existed before this change — this guard makes an older on-disk relay.db
 // pick up new columns instead of every query against them throwing "no such column".
 function ensureColumn(table: string, column: string, ddl: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (columns.some((c) => c.name === column)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((c) => c.name === column)) return;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  } catch (error) {
+    logError('Relay database schema migration failed', error, { table, column });
+    throw error;
+  }
 }
 
 ensureColumn('users', 'display_name', 'display_name TEXT');
@@ -257,3 +271,5 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_doc_chunks_url ON doc_chunks(url);
 `);
+
+logInfo('Relay database schema initialized');

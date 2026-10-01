@@ -1,5 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import { config } from '../config.js';
+import { logDebug, logInfo } from '../logger.js';
 
 let client: OAuth2Client | null = null;
 
@@ -29,6 +30,7 @@ export interface GoogleProfile {
 }
 
 export async function verifyGoogleCode(code: string): Promise<GoogleProfile> {
+  logDebug('Verifying Google OAuth authorization code');
   const oauthClient = getClient();
   const { tokens } = await oauthClient.getToken(code);
   if (!tokens.id_token) throw new Error('Google did not return an ID token');
@@ -37,9 +39,11 @@ export async function verifyGoogleCode(code: string): Promise<GoogleProfile> {
   const payload = ticket.getPayload();
   if (!payload?.sub) throw new Error('Invalid Google ID token');
 
-  return {
+  const profile = {
     sub: payload.sub,
     email: payload.email ?? null,
     emailVerified: !!payload.email_verified,
   };
+  logInfo('Google OAuth authorization code verified', { emailVerified: profile.emailVerified });
+  return profile;
 }

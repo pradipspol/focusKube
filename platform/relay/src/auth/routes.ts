@@ -10,6 +10,7 @@ import { googleAuthUrl, isGoogleConfigured, verifyGoogleCode } from './google.js
 import { createOtp, recentOtpCount, verifyOtp } from './otp.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { clearSessionCookie, createSession, requireSession, revokeSession, setSessionCookie } from './sessions.js';
+import { logError } from '../logger.js';
 import {
   createUser,
   findUserByEmail,
@@ -406,7 +407,8 @@ router.get('/google/callback', async (req, res) => {
     setSessionCookie(res, createSession(user.id));
     res.redirect(next && validatedNextPath(next) ? next : '/home');
   } catch (err) {
-    res.status(400).send(`Google sign-in failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    logError('Google sign-in callback failed', err);
+    res.status(400).send('Google sign-in failed. Please try again.');
   }
 });
 

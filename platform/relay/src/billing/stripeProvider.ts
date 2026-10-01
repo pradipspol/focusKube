@@ -8,6 +8,7 @@ import { BillingConfigError, type BillingProvider, type CheckoutRequest, type Ch
 import { buildProLineItem } from './pricing.js';
 import { isStripeConfigured, stripeClient } from './stripe.js';
 import { createDemoCheckoutSession, isStripeDemoMode } from './stripe-sim.js';
+import { logDebug, logInfo } from '../logger.js';
 
 function successUrl(purpose: 'individual' | 'org'): string {
   return purpose === 'org' ? `${config.publicUrl}/team?checkout=success` : `${config.publicUrl}/home?checkout=success`;
@@ -40,6 +41,12 @@ export const stripeProvider: BillingProvider = {
   },
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutResult> {
+    logDebug('Creating Stripe checkout session', {
+      purpose: request.purpose,
+      interval: request.interval,
+      quantity: request.quantity,
+      demoMode: isStripeDemoMode(),
+    });
     const metadata = checkoutMetadata(request);
     const lineItems = [buildProLineItem(request.interval, request.quantity)];
 
@@ -52,12 +59,14 @@ export const stripeProvider: BillingProvider = {
         success_url: successUrl(request.purpose),
         cancel_url: cancelUrl(request.purpose),
       });
-      return {
+      const result = {
         url: demoSession.url,
         demo: true,
         sessionId: demoSession.id,
         note: 'Demo mode: call POST /v1/dev/stripe/webhook/checkout-completed with sessionId to simulate completion',
       };
+      logInfo('Stripe demo checkout session created', { purpose: request.purpose, quantity: request.quantity });
+      return result;
     }
 
     const stripe = stripeClient();
@@ -71,23 +80,29 @@ export const stripeProvider: BillingProvider = {
       cancel_url: cancelUrl(request.purpose),
     });
     if (!session.url) throw new Error('Stripe did not return a checkout URL');
+    logInfo('Stripe checkout session created', { purpose: request.purpose, quantity: request.quantity });
     return { url: session.url };
   },
 
   async createPortalSession(customerId: string, returnUrl: string) {
+    logDebug('Creating Stripe billing portal session');
     if (!isStripeConfigured()) throw new BillingConfigError('Billing is not configured on this server');
     const stripe = stripeClient();
     const portalSession = await stripe.billingPortal.sessions.create({ customer: customerId, return_url: returnUrl });
+    logInfo('Stripe billing portal session created');
     return { url: portalSession.url };
   },
 
   async cancelAtPeriodEnd(subscriptionId: string) {
+    logDebug('Scheduling Stripe subscription cancellation');
     if (!isStripeConfigured()) throw new BillingConfigError('Billing is not configured on this server');
     const stripe = stripeClient();
     await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+    logInfo('Stripe subscription cancellation scheduled');
   },
 
   async updateSeats({ subscriptionId, subscriptionItemId, seats }) {
+    logDebug('Updating Stripe subscription seats', { seats });
     if (!isStripeConfigured()) throw new BillingConfigError('Billing is not configured on this server');
     if (!subscriptionItemId) throw new Error('This subscription has no item to update');
     const stripe = stripeClient();
@@ -95,5 +110,6 @@ export const stripeProvider: BillingProvider = {
       items: [{ id: subscriptionItemId, quantity: seats }],
       proration_behavior: 'create_prorations',
     });
+    logInfo('Stripe subscription seats updated', { seats });
   },
 };

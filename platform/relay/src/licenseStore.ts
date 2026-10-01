@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { findUserById, markTrialStarted } from './auth/users.js';
 import { config } from './config.js';
 import { db } from './db.js';
+import { logDebug, logInfo, logWarning } from './logger.js';
 
 export interface LicenseRecord {
   plan: string;
@@ -120,6 +121,17 @@ export function lookupLicense(key: string): LicenseRecord | undefined {
   return toRecord(row);
 }
 
+export function userIdFromLicense(key: string): string | null {
+  const direct = db.prepare(`SELECT user_id FROM licenses WHERE key = ?`).get(key) as
+    | { user_id: string | null }
+    | undefined;
+  if (direct) return direct.user_id;
+  const seat = db
+    .prepare(`SELECT user_id FROM organization_members WHERE license_key = ? AND status = 'active'`)
+    .get(key) as { user_id: string } | undefined;
+  return seat?.user_id ?? null;
+}
+
 /** Same lazy-expiry path as lookupLicense, keyed by account instead of license key — used
  * by GET /v1/account (and anywhere else that should see a trial flip to 'expired' the
  * moment its time limit passes, not just the next time the key itself is used). */
@@ -144,10 +156,15 @@ export function hasHadTrial(userId: string): boolean {
  * on users.trial_started_at rather than the licenses row, since that row gets overwritten
  * by any later plan change (see createLicenseForUser). */
 export function grantFreeTrial(userId: string): { key: string; trialEndsAt: string } | { alreadyUsed: true } {
-  if (hasHadTrial(userId)) return { alreadyUsed: true };
+  logDebug('Granting free trial license', { userId });
+  if (hasHadTrial(userId)) {
+    logInfo('Free trial license not granted because the user already used a trial', { userId });
+    return { alreadyUsed: true };
+  }
   const trialEndsAt = new Date(Date.now() + FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const key = createLicenseForUser(userId, { plan: FREE_TRIAL_PLAN, quotaRemaining: FREE_TRIAL_QUOTA, trialEndsAt });
   markTrialStarted(userId);
+  logInfo('Free trial license granted', { userId, plan: FREE_TRIAL_PLAN });
   return { key, trialEndsAt };
 }
 
@@ -176,11 +193,15 @@ export function reserveQuota(key: string): boolean {
           )`,
     )
     .run({ key, now });
-  if (result.changes === 0) return false;
+  if (result.changes === 0) {
+    logWarning('AI request quota reservation rejected because no active quota was available');
+    return false;
+  }
   // Best-effort per-member usage attribution — a no-op update when `key` is a personal key.
   db.prepare(
     `UPDATE organization_members SET calls_used = calls_used + 1, updated_at = ? WHERE license_key = ? AND status = 'active'`,
   ).run(now, key);
+  logDebug('AI request quota reserved');
   return true;
 }
 
@@ -203,6 +224,7 @@ export function refundQuota(key: string): void {
   db.prepare(
     `UPDATE organization_members SET calls_used = MAX(calls_used - 1, 0), updated_at = ? WHERE license_key = ? AND status = 'active'`,
   ).run(now, key);
+  logInfo('AI request quota reservation refunded');
 }
 
 /** Resets a license's quota_remaining back to its quota_granted at the start of each
@@ -213,11 +235,15 @@ export function refundQuota(key: string): void {
  * subscription id, so this is never called for them — the one-time trial grant is
  * unaffected. */
 export function resetQuotaForSubscription(subscriptionId: string): void {
+  logDebug('Resetting license quota for billing cycle');
   const now = new Date().toISOString();
   const row = db
     .prepare(`SELECT id, org_id, quota_granted FROM licenses WHERE stripe_subscription_id = ?`)
     .get(subscriptionId) as { id: string; org_id: string | null; quota_granted: number } | undefined;
-  if (!row) return;
+  if (!row) {
+    logInfo('Billing-cycle quota reset skipped because no license matched');
+    return;
+  }
   if (row.org_id) {
     const org = db.prepare(`SELECT seats_purchased FROM organizations WHERE id = ?`).get(row.org_id) as
       | { seats_purchased: number }
@@ -229,8 +255,10 @@ export function resetQuotaForSubscription(subscriptionId: string): void {
       now,
       row.id,
     );
+    logInfo('Organization license quota reset', { orgId: row.org_id, quotaGranted: granted });
   } else {
     db.prepare(`UPDATE licenses SET quota_remaining = quota_granted, updated_at = ? WHERE id = ?`).run(now, row.id);
+    logInfo('Individual license quota reset');
   }
 }
 
@@ -241,6 +269,7 @@ export function createLicenseForUser(
   userId: string,
   opts: { plan: string; quotaRemaining: number; trialEndsAt?: string | null },
 ): string {
+  logDebug('Creating or replacing user license', { userId, plan: opts.plan });
   const key = `fk_live_${crypto.randomBytes(24).toString('hex')}`;
   const now = new Date().toISOString();
   const trialEndsAt = opts.trialEndsAt ?? null;
@@ -255,6 +284,7 @@ export function createLicenseForUser(
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
     ).run(crypto.randomUUID(), key, userId, opts.plan, opts.quotaRemaining, opts.quotaRemaining, trialEndsAt, now, now);
   }
+  logInfo('User license created or replaced', { userId, plan: opts.plan, quotaGranted: opts.quotaRemaining });
   return key;
 }
 
@@ -275,6 +305,7 @@ export function createOrgPoolLicense(
     currentPeriodEnd: string | null;
   },
 ): string {
+  logDebug('Creating or replacing organization pool license', { orgId, seats: opts.seats });
   const key = `fk_org_${crypto.randomBytes(24).toString('hex')}`;
   const now = new Date().toISOString();
   const granted = orgPoolSize(opts.seats);
@@ -317,6 +348,7 @@ export function createOrgPoolLicense(
       now,
     );
   }
+  logInfo('Organization pool license created or replaced', { orgId, seats: opts.seats, quotaGranted: granted });
   return key;
 }
 
@@ -328,8 +360,10 @@ export function createOrgPoolLicense(
 export function adjustOrgPoolForSeatChange(orgId: string, previousSeats: number, newSeats: number): void {
   const delta = orgPoolSize(newSeats) - orgPoolSize(previousSeats);
   if (delta === 0) return;
+  logDebug('Adjusting organization pool quota for seat change', { orgId, previousSeats, newSeats, quotaDelta: delta });
   const now = new Date().toISOString();
   db.prepare(
     `UPDATE licenses SET quota_granted = quota_granted + ?, quota_remaining = MAX(quota_remaining + ?, 0), updated_at = ? WHERE org_id = ?`,
   ).run(delta, delta, now, orgId);
+  logInfo('Organization pool quota adjusted for seat change', { orgId, quotaDelta: delta });
 }

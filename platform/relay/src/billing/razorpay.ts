@@ -10,6 +10,7 @@
  */
 import { config } from '../config.js';
 import { db } from '../db.js';
+import { logDebug, logInfo, logWarning } from '../logger.js';
 
 const API_BASE = 'https://api.razorpay.com/v1';
 
@@ -57,21 +58,34 @@ function authHeader(): string {
 }
 
 async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
-  if (!isRazorpayConfigured()) throw new RazorpayError('Razorpay is not configured on this server', 503);
+  const endpoint = path.replace(/\/subscriptions\/[^/]+/, '/subscriptions/:id');
+  logDebug('Calling Razorpay API', { method, endpoint });
+  if (!isRazorpayConfigured()) {
+    logWarning('Razorpay API call rejected because billing is not configured', { method, endpoint });
+    throw new RazorpayError('Razorpay is not configured on this server', 503);
+  }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: {
-      Authorization: authHeader(),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: {
+        Authorization: authHeader(),
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    logWarning('Razorpay API transport failed', { method, endpoint });
+    throw error;
+  }
 
   const payload = (await response.json().catch(() => ({}))) as { error?: { description?: string } };
   if (!response.ok) {
+    logWarning('Razorpay API returned an error response', { method, endpoint, statusCode: response.status });
     throw new RazorpayError(payload.error?.description ?? `Razorpay request failed (${response.status})`, response.status);
   }
+  logInfo('Razorpay API call completed', { method, endpoint, statusCode: response.status });
   return payload as T;
 }
 
@@ -87,10 +101,14 @@ export async function findOrCreatePlan(args: {
   currency: 'INR' | 'USD';
 }): Promise<string> {
   const planKey = `${args.interval}:${args.currency}:${args.amountMinor}`;
+  logDebug('Resolving Razorpay billing plan', { interval: args.interval, currency: args.currency });
   const cached = db.prepare(`SELECT plan_id FROM razorpay_plans WHERE plan_key = ?`).get(planKey) as
     | { plan_id: string }
     | undefined;
-  if (cached) return cached.plan_id;
+  if (cached) {
+    logInfo('Razorpay billing plan cache hit', { interval: args.interval, currency: args.currency });
+    return cached.plan_id;
+  }
 
   const plan = await call<{ id: string }>('POST', '/plans', {
     period: args.interval === 'year' ? 'yearly' : 'monthly',
@@ -114,6 +132,7 @@ export async function findOrCreatePlan(args: {
   const stored = db.prepare(`SELECT plan_id FROM razorpay_plans WHERE plan_key = ?`).get(planKey) as
     | { plan_id: string }
     | undefined;
+  logInfo('Razorpay billing plan created and cached', { interval: args.interval, currency: args.currency });
   return stored?.plan_id ?? plan.id;
 }
 
@@ -125,6 +144,7 @@ export async function createSubscription(args: {
   quantity: number;
   notes: Record<string, string>;
 }): Promise<RazorpaySubscription> {
+  logDebug('Creating Razorpay subscription', { interval: args.interval, quantity: args.quantity });
   return call<RazorpaySubscription>('POST', '/subscriptions', {
     plan_id: args.planId,
     total_count: args.interval === 'year' ? config.razorpay.totalCountYearly : config.razorpay.totalCountMonthly,
@@ -138,9 +158,11 @@ export async function createSubscription(args: {
  * and rejects it outright for UPI and eMandate subscriptions — call sites must let the
  * resulting RazorpayError reach the user rather than reporting a success that didn't happen. */
 export async function updateSubscriptionQuantity(subscriptionId: string, quantity: number): Promise<void> {
+  logDebug('Updating Razorpay subscription quantity', { quantity });
   await call('PATCH', `/subscriptions/${subscriptionId}`, { quantity, schedule_change_at: 'now' });
 }
 
 export async function cancelSubscriptionAtCycleEnd(subscriptionId: string): Promise<void> {
+  logDebug('Scheduling Razorpay subscription cancellation');
   await call('POST', `/subscriptions/${subscriptionId}/cancel`, { cancel_at_cycle_end: 1 });
 }

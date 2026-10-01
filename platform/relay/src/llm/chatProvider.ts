@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { config } from '../config.js';
+import { logDebug, logError, logInfo } from '../logger.js';
 
 export type ChatTurnMessage = Anthropic.MessageParam;
 
@@ -151,87 +152,119 @@ export async function streamChatTurn(
   onEvent: (event: ChatStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const startedAt = Date.now();
+  const requestDetails = { provider: config.aiProvider, model, messageCount: messages.length, toolCount: tools.length };
+  logDebug('Starting LLM streaming request', requestDetails);
+
   if (config.aiProvider === 'azure-openai') {
     if (!azureOpenai) throw new Error('Azure OpenAI is not configured (AI_PROVIDER=azure-openai)');
     const openAiTools = tools.length > 0 ? toOpenAiTools(tools) : undefined;
-    const stream = await azureOpenai.chat.completions.create(
-      {
-        // Azure addresses models by deployment name — the request's own `model` (a Claude
-        // model id from the old default) doesn't apply here.
-        model: config.azureOpenai.deployment,
-        messages: toOpenAiMessages(systemPrompt, messages),
-        // Current-generation models (gpt-5/o-series and newer) reject the legacy `max_tokens`
-        // outright ("Unsupported parameter") and require `max_completion_tokens` instead.
-        max_completion_tokens: maxTokens,
-        // On a reasoning model, unconstrained effort can consume the entire token budget on
-        // hidden reasoning before writing any visible answer — this is a chat assistant that
-        // needs a timely textual reply, not deep multi-step research, so bias toward actually
-        // producing output. Ignored (harmlessly) by non-reasoning deployments.
-        reasoning_effort: 'low',
-        stream: true,
-        ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' as const } : {}),
-      },
-      { signal },
-    );
+    try {
+      const stream = await azureOpenai.chat.completions.create(
+        {
+          // Azure addresses models by deployment name — the request's own `model` (a Claude
+          // model id from the old default) doesn't apply here.
+          model: config.azureOpenai.deployment,
+          messages: toOpenAiMessages(systemPrompt, messages),
+          // Current-generation models (gpt-5/o-series and newer) reject the legacy `max_tokens`
+          // outright ("Unsupported parameter") and require `max_completion_tokens` instead.
+          max_completion_tokens: maxTokens,
+          // On a reasoning model, unconstrained effort can consume the entire token budget on
+          // hidden reasoning before writing any visible answer — this is a chat assistant that
+          // needs a timely textual reply, not deep multi-step research, so bias toward actually
+          // producing output. Ignored (harmlessly) by non-reasoning deployments.
+          reasoning_effort: 'low',
+          stream: true,
+          ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' as const } : {}),
+        },
+        { signal },
+      );
 
-    // A streamed tool call's arguments arrive as JSON text fragments across many chunks,
-    // keyed only by their position (`delta.tool_calls[].index`) — id/name show up once, on
-    // the first fragment for that index, so they're captured defensively on every fragment
-    // in case a provider ever splits them too. Only assembled into a real tool_use event once
-    // the stream ends, mirroring the Anthropic branch's own wait for `finalMessage()` below.
-    const toolCalls = new Map<number, { id: string; name: string; argsText: string }>();
+      // A streamed tool call's arguments arrive as JSON text fragments across many chunks,
+      // keyed only by their position (`delta.tool_calls[].index`) — id/name show up once, on
+      // the first fragment for that index, so they're captured defensively on every fragment
+      // in case a provider ever splits them too. Only assembled into a real tool_use event once
+      // the stream ends, mirroring the Anthropic branch's own wait for `finalMessage()` below.
+      const toolCalls = new Map<number, { id: string; name: string; argsText: string }>();
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (!delta) continue;
-      if (delta.content) onEvent({ type: 'token', token: delta.content });
-      for (const call of delta.tool_calls ?? []) {
-        const existing = toolCalls.get(call.index);
-        if (existing) {
-          if (call.id) existing.id ||= call.id;
-          if (call.function?.name) existing.name ||= call.function.name;
-          if (call.function?.arguments) existing.argsText += call.function.arguments;
-        } else {
-          toolCalls.set(call.index, {
-            id: call.id ?? `call-${call.index}`,
-            name: call.function?.name ?? '',
-            argsText: call.function?.arguments ?? '',
-          });
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
+        if (delta.content) onEvent({ type: 'token', token: delta.content });
+        for (const call of delta.tool_calls ?? []) {
+          const existing = toolCalls.get(call.index);
+          if (existing) {
+            if (call.id) existing.id ||= call.id;
+            if (call.function?.name) existing.name ||= call.function.name;
+            if (call.function?.arguments) existing.argsText += call.function.arguments;
+          } else {
+            toolCalls.set(call.index, {
+              id: call.id ?? `call-${call.index}`,
+              name: call.function?.name ?? '',
+              argsText: call.function?.arguments ?? '',
+            });
+          }
         }
       }
-    }
 
-    for (const { id, name, argsText } of toolCalls.values()) {
-      if (!name) continue;
-      let input: unknown = {};
-      try {
-        input = argsText ? JSON.parse(argsText) : {};
-      } catch {
-        // Malformed JSON from the model — surface an empty input rather than crashing the
-        // turn; the tool executor's own required-field checks reject it with a clear error
-        // the model can see and correct on its next call.
+      for (const { id, name, argsText } of toolCalls.values()) {
+        if (!name) continue;
+        let input: unknown = {};
+        try {
+          input = argsText ? JSON.parse(argsText) : {};
+        } catch {
+          // Malformed JSON from the model — surface an empty input rather than crashing the
+          // turn; the tool executor's own required-field checks reject it with a clear error
+          // the model can see and correct on its next call.
+        }
+        onEvent({ type: 'tool_use', id, name, input });
       }
-      onEvent({ type: 'tool_use', id, name, input });
+      logInfo('LLM streaming request completed', {
+        ...requestDetails,
+        durationMs: Date.now() - startedAt,
+        toolCallCount: toolCalls.size,
+      });
+      return;
+    } catch (error) {
+      logError('Azure OpenAI streaming request failed', error, {
+        ...requestDetails,
+        durationMs: Date.now() - startedAt,
+      });
+      throw error;
     }
-    return;
   }
 
   if (!anthropic) throw new Error('Anthropic is not configured (AI_PROVIDER=anthropic)');
-  const stream = anthropic.messages.stream(
-    {
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-      tools: tools.length > 0 ? tools : undefined,
-    },
-    { signal },
-  );
-  stream.on('text', (token) => onEvent({ type: 'token', token }));
-  const finalMessage = await stream.finalMessage();
-  for (const block of finalMessage.content) {
-    if (block.type === 'tool_use') {
-      onEvent({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
+  try {
+    const stream = anthropic.messages.stream(
+      {
+        model,
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages,
+        tools: tools.length > 0 ? tools : undefined,
+      },
+      { signal },
+    );
+    stream.on('text', (token) => onEvent({ type: 'token', token }));
+    const finalMessage = await stream.finalMessage();
+    let toolCallCount = 0;
+    for (const block of finalMessage.content) {
+      if (block.type === 'tool_use') {
+        toolCallCount += 1;
+        onEvent({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
+      }
     }
+    logInfo('LLM streaming request completed', {
+      ...requestDetails,
+      durationMs: Date.now() - startedAt,
+      toolCallCount,
+    });
+  } catch (error) {
+    logError('Anthropic streaming request failed', error, {
+      ...requestDetails,
+      durationMs: Date.now() - startedAt,
+    });
+    throw error;
   }
 }

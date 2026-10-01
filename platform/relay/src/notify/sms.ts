@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import { config } from '../config.js';
+import { logDebug, logError, logInfo } from '../logger.js';
 
 let client: ReturnType<typeof twilio> | null = null;
 
@@ -13,10 +14,18 @@ async function sendSms(to: string, body: string): Promise<void> {
   const c = getClient();
   if (!c || !config.twilio.fromNumber) {
     // No Twilio configured — dev fallback so the flow is still testable locally.
-    console.log(`[dev sms] to=${to}\n${body}`);
+    logInfo('SMS delivery skipped because Twilio is not configured');
     return;
   }
-  await c.messages.create({ to, from: config.twilio.fromNumber, body });
+  const startedAt = Date.now();
+  logDebug('SMS delivery started');
+  try {
+    await c.messages.create({ to, from: config.twilio.fromNumber, body });
+    logInfo('SMS delivery completed', { durationMs: Date.now() - startedAt });
+  } catch (error) {
+    logError('SMS delivery failed', error, { durationMs: Date.now() - startedAt });
+    throw error;
+  }
 }
 
 export async function sendOtpSms(to: string, code: string): Promise<void> {
