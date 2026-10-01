@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAiEntitlement, useRequestCheckout } from '../api/aiAssistantApi';
 import { uiText } from '../text';
-import { Info } from 'lucide-react';
 
 interface Props {
   /** Rendered once the signed-in account has an active license. */
@@ -66,21 +65,6 @@ export function AiEntitlementGate({ children, sessionTitle }: Props) {
         <div className="ai-gate-enabled-bar">
           {sessionTitle && <span className="ai-gate-session-title" title={sessionTitle}>{sessionTitle}</span>}
           <div className="ai-gate-session-meta">
-            <span className="ai-gate-plan">
-              {uiText.aiAssistant.planLabel}: {entitlement.plan ?? '—'}
-            </span>
-            {typeof entitlement.quotaRemaining === 'number' && (
-              <span className="ai-gate-quota">
-                {uiText.aiAssistant.quotaRemainingLabel}: {entitlement.quotaRemaining}
-                <span
-                  className="ai-gate-quota-info"
-                  title={uiText.aiAssistant.quotaExplainer}
-                  aria-label={uiText.aiAssistant.quotaExplainer}
-                >
-                  <Info size={14} aria-hidden="true" />
-                </span>
-              </span>
-            )}
             {isTrial && !checkoutOpened && (
               <button
                 type="button"

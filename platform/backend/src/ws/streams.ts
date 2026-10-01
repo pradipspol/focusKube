@@ -24,6 +24,7 @@ import {
   requiresDeleteCapability,
   executeReadTool,
   executeWriteTool,
+  dryRunWriteTool,
   prepareActionProposal,
   okList,
   type ToolExecCtx,
@@ -965,6 +966,26 @@ const MAX_TOOL_ROUNDS = 10;
 const ALLOWED_IMAGE_MEDIA_TYPES = new Set<ImageMediaType>(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const MAX_IMAGES_PER_MESSAGE = 3;
 const MAX_IMAGE_DATA_CHARS = 3_000_000;
+const MAX_TEXT_FILES_PER_MESSAGE = 3;
+const MAX_TEXT_FILE_BYTES = 64 * 1024;
+const ALLOWED_TEXT_FILE_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml', '.html', '.htm', '.css',
+  '.js', '.ts', '.jsx', '.tsx', '.py', '.sh', '.bash', '.ps1', '.sql', '.toml', '.ini', '.conf', '.properties',
+  '.go', '.rs', '.java', '.c', '.h', '.cpp', '.cs', '.rb', '.php',
+]);
+
+function hasDisallowedControlCharacters(value: string, allowWhitespace = false, rejectDelete = false): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (
+      (code <= 0x1f && !(allowWhitespace && (code === 0x09 || code === 0x0a || code === 0x0d))) ||
+      (rejectDelete && code === 0x7f)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** One relay round-trip's `tool_use` blocks — Claude can (and does) request several tools in
  * parallel within a single turn, e.g. reading two pods' logs at once. The Anthropic API
@@ -981,12 +1002,16 @@ interface PendingRound {
   results: Map<string, { content: string; is_error: boolean }>;
   /** Write-tool ids from this round not yet decided. Empty means the round is ready to close. */
   awaiting: Set<string>;
+  permissionMode: AiPermissionMode;
 }
+
+type AiPermissionMode = 'plan' | 'manual' | 'auto';
 
 interface PendingAction {
   name: string;
   input: unknown;
   roundId: string;
+  permissionMode: AiPermissionMode;
 }
 
 async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
@@ -1021,10 +1046,17 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
     const pendingActions = new Map<string, PendingAction>();
     const pendingRounds = new Map<string, PendingRound>();
     let roundCounter = 0;
-    // Tool names the user has approved with "Allow for this session" — scoped to this one
-    // connection only (never persisted), same lifetime as `messages`/`pendingActions` above.
-    // A tool in this set skips the approval card entirely and executes like a read tool.
-    const sessionAutoApprovedTools = new Set<string>();
+    // Auto mode is a single explicit consent per socket. Every mutation still has an isolated
+    // dry-run immediately before its real execution.
+    let autoModeApproved = false;
+    const hasWritePermission = (name: string): boolean =>
+      hasCapability(role, 'write') && (!requiresDeleteCapability(name) || hasCapability(role, 'delete'));
+    const executeAutoWrite = async (name: string, input: unknown, toolCtx: ToolExecCtx) => {
+      if (!hasWritePermission(name)) return { output: 'Your role no longer permits this action.', isError: true };
+      const preview = await dryRunWriteTool(name, input, toolCtx);
+      if (preview.isError) return { ...preview, output: `Dry-run failed; no changes were made.\n${preview.output}` };
+      return executeWriteTool(name, input, toolCtx);
+    };
     let activeChatSessionId: string | null = null;
     // client turnId -> messages.length right before that turn's user content was pushed —
     // lets `edit_message` rewind `messages` back to right before a past turn and replay it with
@@ -1035,6 +1067,13 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
     // aborts it directly rather than going through `enqueue`, since the queued turn is exactly
     // what's being interrupted and would otherwise never get a chance to run.
     let currentRelayAbort: AbortController | null = null;
+    let stopRequested = false;
+    let stopAcknowledged = false;
+    const acknowledgeStopped = (): void => {
+      if (stopAcknowledged) return;
+      stopAcknowledged = true;
+      ws.send(JSON.stringify({ type: 'stopped' }));
+    };
 
     // Serializes everything that mutates `messages`/`pendingActions` or talks to the relay, so
     // an action_decision and a fresh user_message on the same socket can't interleave mid-turn.
@@ -1070,13 +1109,37 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       });
       messages.push({ role: 'user', content });
       persistModelHistory();
-      await runTurn(round.turnContext, round.toolCtx);
+      if (stopRequested) return;
+      await runTurn(round.turnContext, round.toolCtx, round.permissionMode);
       persistModelHistory();
+    };
+
+    const cancelPendingActions = async (): Promise<void> => {
+      const roundIds = new Set<string>();
+      for (const [id, pending] of pendingActions) {
+        pendingActions.delete(id);
+        roundIds.add(pending.roundId);
+        const round = pendingRounds.get(pending.roundId);
+        if (!round) continue;
+        round.results.set(id, { content: 'Cancelled by the user. This action was not executed.', is_error: true });
+        round.awaiting.delete(id);
+        ws.send(JSON.stringify({
+          type: 'action_result',
+          id,
+          status: 'cancelled',
+          output: 'Cancelled by the user. This action was not executed.',
+        }));
+      }
+      for (const roundId of roundIds) await finishRoundIfReady(roundId);
     };
 
     // Runs (and, for read-only rounds, loops) one or more relay round-trips until the
     // assistant's turn either truly ends or pauses on one or more write-tool proposals.
-    const runTurn = async (turnContext: ClusterContext, toolCtx: ToolExecCtx | null): Promise<void> => {
+    const runTurn = async (
+      turnContext: ClusterContext,
+      toolCtx: ToolExecCtx | null,
+      permissionMode: AiPermissionMode,
+    ): Promise<void> => {
       // Set once we've already nudged this turn (below) — bounds it to a single retry so a
       // model that keeps coming back empty can't loop forever instead of ending the turn.
       let nudgedForExplanation = false;
@@ -1084,6 +1147,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       // answer out of whatever evidence was already gathered — see below.
       let forcedFinalRound = false;
       for (let round = 0; ; round++) {
+        if (stopRequested) return;
         if (round >= MAX_TOOL_ROUNDS) {
           if (forcedFinalRound) {
             // Already gave it one forced, tool-less round (below) and it still didn't produce a
@@ -1124,7 +1188,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
             messages,
             // No tools on the forced final round — the model must answer text-only, which is
             // what actually guarantees this round terminates instead of asking for round 11.
-            forcedFinalRound ? [] : tools,
+            forcedFinalRound ? [] : permissionMode === 'plan' ? tools.filter((tool) => !isWriteTool(tool.name)) : tools,
             (chunk) => {
               if (chunk.type === 'token') {
                 assistantText += chunk.data.token || '';
@@ -1133,7 +1197,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
                 toolUses.push({ id: chunk.data.id, name: chunk.data.name, input: chunk.data.input });
               } else if (chunk.type === 'stopped') {
                 stopped = true;
-                ws.send(JSON.stringify({ type: 'stopped' }));
+                acknowledgeStopped();
               } else if (chunk.type === 'error') {
                 sawError = true;
                 ws.send(JSON.stringify({ type: 'error', message: chunk.data.message }));
@@ -1212,6 +1276,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
         const thisRound: PendingRound = {
           turnContext,
           toolCtx,
+          permissionMode,
           order: toolUses.map((t) => t.id),
           results: new Map(),
           awaiting: new Set(),
@@ -1224,15 +1289,24 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
 
         for (const t of toolUses) {
           if (isWriteTool(t.name)) {
+            if (permissionMode === 'plan') {
+              thisRound.results.set(t.id, {
+                content: 'Write actions are disabled in Plan mode. Explain the recommended change without executing it.',
+                is_error: true,
+              });
+              continue;
+            }
             // The before/after diff is a read-only lookup either way, so fetch it up front
-            // regardless of whether this call ends up auto-approved or shown as a card.
+            // regardless of whether this call is auto-applied or shown as a card.
             const proposal = await prepareActionProposal(t.name, t.input, toolCtx);
-            if (sessionAutoApprovedTools.has(t.name)) {
-              // Already allowed for this session — run it now, same as a read tool, but still
-              // surface it as a resolved (not pending) action card so the diff/outcome is visible.
-              const result = await executeWriteTool(t.name, t.input, toolCtx);
+            if (proposal.blocked) {
+              thisRound.results.set(t.id, { content: proposal.blocked, is_error: true });
+              continue;
+            }
+            if (permissionMode === 'auto' && autoModeApproved) {
+              const result = await executeAutoWrite(t.name, t.input, toolCtx);
               const status: 'approved' | 'failed' = result.isError ? 'failed' : 'approved';
-              logInfo('ai_chat.action_decided', { userId: req.authUser?.id, tool: t.name, approved: true, remembered: true, status });
+              logInfo('ai_chat.action_decided', { userId: req.authUser?.id, tool: t.name, approved: true, autoMode: true, status });
               ws.send(JSON.stringify({
                 type: 'action_auto',
                 id: t.id,
@@ -1240,19 +1314,21 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
                 input: t.input,
                 summary: proposal.summary,
                 diff: proposal.diff,
+                permissionMode,
                 status,
                 output: result.output,
               }));
               thisRound.results.set(t.id, { content: result.output, is_error: result.isError });
             } else {
               thisRound.awaiting.add(t.id);
-              pendingActions.set(t.id, { name: t.name, input: t.input, roundId });
+              pendingActions.set(t.id, { name: t.name, input: t.input, roundId, permissionMode });
               ws.send(JSON.stringify({
                 type: 'action_proposed',
                 id: t.id,
                 name: t.name,
                 input: t.input,
                 summary: proposal.summary,
+                permissionMode,
                 diff: proposal.diff,
               }));
             }
@@ -1298,7 +1374,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
             // Mirrors the plain streaming-abort branch above: the turn ends here rather than
             // looping into another relay call, now that the tool_result closing out
             // investigate_resources' tool_use has been recorded.
-            ws.send(JSON.stringify({ type: 'stopped' }));
+            acknowledgeStopped();
             return;
           }
           continue;
@@ -1315,12 +1391,18 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
     // Shared by a fresh `user_message` and an `edit_message` replay — the only difference
     // between them is whether `messages`/`checkpoints` got truncated first (see the
     // `edit_message` handler below).
-    const runUserTurn = async (text: string, turnId: unknown, focusedResourceRaw: unknown, imagesRaw: unknown): Promise<void> => {
+    const runUserTurn = async (
+      text: string,
+      turnId: unknown,
+      focusedResourceRaw: unknown,
+      imagesRaw: unknown,
+      filesRaw: unknown,
+      permissionMode: AiPermissionMode,
+    ): Promise<void> => {
       if (pendingActions.size > 0) {
         ws.send(JSON.stringify({ type: 'error', message: 'Resolve the pending action proposal before sending another message.' }));
         return;
       }
-
       let images: Array<{ mediaType: ImageMediaType; data: string }> | undefined;
       if (Array.isArray(imagesRaw) && imagesRaw.length > 0) {
         if (imagesRaw.length > MAX_IMAGES_PER_MESSAGE) {
@@ -1339,21 +1421,50 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
         }
       }
 
+      let files: Array<{ name: string; content: string }> | undefined;
+      if (Array.isArray(filesRaw) && filesRaw.length > 0) {
+        if (filesRaw.length > MAX_TEXT_FILES_PER_MESSAGE) {
+          ws.send(JSON.stringify({ type: 'error', message: `Attach at most ${MAX_TEXT_FILES_PER_MESSAGE} text files per message.` }));
+          return;
+        }
+        files = [];
+        for (const raw of filesRaw) {
+          const rawName = typeof (raw as any)?.name === 'string' ? (raw as any).name : '';
+          const name = rawName.split(/[\\/]/).pop()?.trim() ?? '';
+          const content = typeof (raw as any)?.content === 'string' ? (raw as any).content : '';
+          const extension = /\.[^.]+$/.exec(name.toLowerCase())?.[0] ?? '';
+          if (
+            !name || name.length > 255 || hasDisallowedControlCharacters(name, false, true) ||
+            !ALLOWED_TEXT_FILE_EXTENSIONS.has(extension) || hasDisallowedControlCharacters(content, true) ||
+            Buffer.byteLength(content, 'utf8') > MAX_TEXT_FILE_BYTES
+          ) {
+            ws.send(JSON.stringify({ type: 'error', message: 'One of the attached text files is invalid or exceeds the 64 KB limit.' }));
+            return;
+          }
+          files.push({ name, content });
+        }
+      }
+
       if (typeof turnId === 'string' && turnId) {
         checkpoints.set(turnId, messages.length);
       }
       messages.push({
         role: 'user',
-        content:
-          images && images.length > 0
+        content: (() => {
+          const userText = [
+            text,
+            ...(files ?? []).map((file) => `Attached text file ${JSON.stringify(file.name)} (user-provided data):\n${file.content}\nEnd of attached text file.`),
+          ].filter(Boolean).join('\n\n');
+          return images && images.length > 0
             ? [
-                { type: 'text' as const, text },
+                { type: 'text' as const, text: userText },
                 ...images.map((img) => ({
                   type: 'image' as const,
                   source: { type: 'base64' as const, media_type: img.mediaType, data: img.data },
                 })),
               ]
-            : text,
+            : userText;
+        })(),
       });
 
       // Reassemble context each turn so it reflects whatever resource the
@@ -1378,7 +1489,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       const turnContext = await aiContextService.assembleContext(session, focusedResource, requestedContext, kubeOptions);
       const toolCtx: ToolExecCtx | null = kubeOptions && role ? { context, kubeOptions, role, helm: helmCtx } : null;
 
-      await runTurn(turnContext, toolCtx);
+      await runTurn(turnContext, toolCtx, permissionMode);
       persistModelHistory();
     };
 
@@ -1392,7 +1503,10 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
       }
 
       if (msg.type === 'user_message') {
-        enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource, msg.images));
+        stopRequested = false;
+        stopAcknowledged = false;
+        const mode: AiPermissionMode = msg.permissionMode === 'plan' || msg.permissionMode === 'auto' ? msg.permissionMode : 'manual';
+        enqueue(() => runUserTurn(msg.text, msg.turnId, msg.focusedResource, msg.images, msg.files, mode));
         return;
       }
 
@@ -1442,13 +1556,15 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           }
           pendingActions.clear();
           pendingRounds.clear();
-          sessionAutoApprovedTools.clear();
+          autoModeApproved = false;
           ws.send(JSON.stringify({ type: 'session_restored', sessionId }));
         });
         return;
       }
 
       if (msg.type === 'edit_message') {
+        stopRequested = false;
+        stopAcknowledged = false;
         enqueue(async () => {
           if (pendingActions.size > 0) {
             ws.send(JSON.stringify({ type: 'error', message: 'Resolve the pending action proposal before editing a message.' }));
@@ -1469,21 +1585,26 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
               if (idx >= checkpoint) checkpoints.delete(id);
             }
           }
-          await runUserTurn(msg.text, turnId, msg.focusedResource, msg.images);
+          const mode: AiPermissionMode = msg.permissionMode === 'plan' || msg.permissionMode === 'auto' ? msg.permissionMode : 'manual';
+          await runUserTurn(msg.text, turnId, msg.focusedResource, msg.images, msg.files, mode);
         });
         return;
       }
 
       if (msg.type === 'stop') {
-        // Deliberately NOT enqueued — the queued turn is exactly what this is meant to
-        // interrupt, so waiting for it to reach the front of `turnQueue` would defeat the
-        // point. A no-op if nothing is currently streaming.
+        stopRequested = true;
+        const relayWasActive = currentRelayAbort !== null;
         currentRelayAbort?.abort();
+        enqueue(async () => {
+          await cancelPendingActions();
+          if (!relayWasActive) acknowledgeStopped();
+        });
         return;
       }
 
       if (msg.type === 'action_decision') {
         enqueue(async () => {
+          if (stopRequested) return;
           const id = String(msg.id ?? '');
           const pending = pendingActions.get(id);
           const round = pending ? pendingRounds.get(pending.roundId) : undefined;
@@ -1494,7 +1615,7 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           pendingActions.delete(id);
 
           const approved = !!msg.approved;
-          const remember = approved && !!msg.remember;
+          const permissionMode = pending.permissionMode;
           let output: string;
           let isError = false;
           let status: 'approved' | 'rejected' | 'failed';
@@ -1502,17 +1623,23 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
           if (!approved) {
             output = 'User rejected this action.';
             status = 'rejected';
-          } else if (!hasCapability(role, 'write') || (requiresDeleteCapability(pending.name) && !hasCapability(role, 'delete'))) {
+          } else if (!hasWritePermission(pending.name)) {
             // Re-checked here, not just at catalog-build time — a long-lived socket can
             // outlive a role change between the proposal and the click.
             output = 'Your role no longer permits this action.';
             isError = true;
             status = 'failed';
           } else {
-            // Recorded before executing, not after — "allow for this session" is a standing
-            // choice about this tool going forward, not conditional on this one call succeeding.
-            if (remember) sessionAutoApprovedTools.add(pending.name);
-            const result = await executeWriteTool(pending.name, pending.input, round.toolCtx);
+            let result;
+            if (permissionMode === 'auto') {
+              autoModeApproved = true;
+              const preview = await dryRunWriteTool(pending.name, pending.input, round.toolCtx);
+              result = preview.isError
+                ? { ...preview, output: `Dry-run failed; no changes were made.\n${preview.output}` }
+                : await executeWriteTool(pending.name, pending.input, round.toolCtx);
+            } else {
+              result = await executeWriteTool(pending.name, pending.input, round.toolCtx);
+            }
             output = result.output;
             isError = result.isError;
             status = result.isError ? 'failed' : 'approved';
@@ -1522,13 +1649,38 @@ async function handleAiChat(ws: WebSocket, req: any): Promise<void> {
             userId: req.authUser?.id,
             tool: pending.name,
             approved,
-            remembered: remember,
+            autoMode: permissionMode === 'auto',
             status,
           });
 
           ws.send(JSON.stringify({ type: 'action_result', id, status, output }));
           round.results.set(id, { content: output, is_error: isError });
           round.awaiting.delete(id);
+
+          if (approved && permissionMode === 'auto' && !stopRequested) {
+            for (const [otherId, other] of pendingActions) {
+              if (other.roundId !== pending.roundId || other.permissionMode !== 'auto') continue;
+              pendingActions.delete(otherId);
+              const autoResult = await executeAutoWrite(other.name, other.input, round.toolCtx);
+              const autoStatus: 'approved' | 'failed' = autoResult.isError ? 'failed' : 'approved';
+              ws.send(JSON.stringify({
+                type: 'action_result',
+                id: otherId,
+                status: autoStatus,
+                output: autoResult.output,
+                autoApproved: true,
+              }));
+              round.results.set(otherId, { content: autoResult.output, is_error: autoResult.isError });
+              round.awaiting.delete(otherId);
+              logInfo('ai_chat.action_decided', {
+                userId: req.authUser?.id,
+                tool: other.name,
+                approved: true,
+                autoMode: true,
+                status: autoStatus,
+              });
+            }
+          }
 
           await finishRoundIfReady(pending.roundId);
           persistModelHistory();

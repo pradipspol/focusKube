@@ -52,12 +52,13 @@ export class WorkloadsService {
     namespace: string,
     context: string | undefined,
     options: WorkloadKubeOptions,
+    dryRun = false,
   ) {
     const dep: any = await getResource('deployments', name, context, namespace, options);
     dep.spec.template.metadata = dep.spec.template.metadata ?? {};
     dep.spec.template.metadata.annotations = dep.spec.template.metadata.annotations ?? {};
     dep.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
-    return replaceResource(dep, context, options);
+    return replaceResource(dep, context, options, dryRun);
   }
 
   async scaleDeployment(
@@ -66,10 +67,11 @@ export class WorkloadsService {
     context: string | undefined,
     replicas: number,
     options: WorkloadKubeOptions,
+    dryRun = false,
   ) {
     const dep: any = await getResource('deployments', name, context, namespace, options);
     dep.spec.replicas = replicas;
-    return replaceResource(dep, context, options);
+    return replaceResource(dep, context, options, dryRun);
   }
 
   async deploymentHistory(
@@ -95,6 +97,7 @@ export class WorkloadsService {
     context: string | undefined,
     revision: number | undefined,
     options: WorkloadKubeOptions,
+    dryRun = false,
   ) {
     const revisions = await getDeploymentRevisions(name, context, namespace, options);
     if (revisions.length < 2) throw badRequest('No previous revision to roll back to');
@@ -111,7 +114,7 @@ export class WorkloadsService {
     dep.metadata.annotations = dep.metadata.annotations ?? {};
     dep.metadata.annotations['kubernetes.io/change-cause'] = `Rollback to revision ${target.revision}`;
 
-    const updated = await replaceResource(dep, context, options);
+    const updated = await replaceResource(dep, context, options, dryRun);
     return { rolledBackTo: target.revision, deployment: updated };
   }
 }

@@ -798,6 +798,86 @@ export async function executeReadTool(name: string, input: any, ctx: ToolExecCtx
   }
 }
 
+/** Validates a write against the cluster without persisting it. Auto mode always calls this
+ * immediately before executeWriteTool; any preview failure therefore prevents the mutation. */
+export async function dryRunWriteTool(name: string, input: any, ctx: ToolExecCtx): Promise<ToolResult> {
+  try {
+    switch (name) {
+      case 'scale_deployment': {
+        const { name: depName, namespace, replicas } = input ?? {};
+        if (!depName || !namespace || typeof replicas !== 'number') throw badRequest('name, namespace, and replicas are required');
+        await workloadsService.scaleDeployment(String(depName), String(namespace), ctx.context, replicas, ctx.kubeOptions, true);
+        break;
+      }
+      case 'restart_deployment': {
+        const { name: depName, namespace } = input ?? {};
+        if (!depName || !namespace) throw badRequest('name and namespace are required');
+        await workloadsService.restartDeployment(String(depName), String(namespace), ctx.context, ctx.kubeOptions, true);
+        break;
+      }
+      case 'rollback_deployment': {
+        const { name: depName, namespace, revision } = input ?? {};
+        if (!depName || !namespace) throw badRequest('name and namespace are required');
+        await workloadsService.rollbackDeployment(
+          String(depName), String(namespace), ctx.context,
+          typeof revision === 'number' ? revision : undefined, ctx.kubeOptions, true,
+        );
+        break;
+      }
+      case 'apply_manifest': {
+        const manifest = input?.manifest;
+        if (!manifest || typeof manifest !== 'object') throw badRequest('manifest is required');
+        await applyManifest(manifest, ctx.context, ctx.kubeOptions, true);
+        break;
+      }
+      case 'delete_resource': {
+        const { kind, name: resourceName, namespace } = input ?? {};
+        if (!kind || !resourceName) throw badRequest('kind and name are required');
+        await deleteResource(String(kind), String(resourceName), ctx.context, namespace ? String(namespace) : undefined, ctx.kubeOptions, true);
+        break;
+      }
+      case 'helm_install': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { chart, releaseName, namespace, version, values } = input ?? {};
+        if (!chart || !releaseName || !namespace) throw badRequest('chart, releaseName, and namespace are required');
+        await helmService.installRelease(ctx.helm.session, ctx.helm.scoped, {
+          chart: String(chart), releaseName: String(releaseName), namespace: String(namespace),
+          version: version ? String(version) : undefined, values: values ? String(values) : undefined,
+        }, { dryRun: true });
+        break;
+      }
+      case 'helm_upgrade': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace, version, values } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        await helmService.previewUpgrade(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace), {
+          version: version ? String(version) : undefined, values: values ? String(values) : undefined,
+        });
+        break;
+      }
+      case 'helm_rollback': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace, revision } = input ?? {};
+        if (!releaseName || !namespace || typeof revision !== 'number') throw badRequest('name, namespace, and revision are required');
+        await helmService.previewRollbackRelease(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace), revision);
+        break;
+      }
+      case 'helm_uninstall': {
+        if (!ctx.helm) return { output: HELM_ACCESS_UNAVAILABLE, isError: true };
+        const { name: releaseName, namespace } = input ?? {};
+        if (!releaseName || !namespace) throw badRequest('name and namespace are required');
+        await helmService.previewUninstallRelease(ctx.helm.session, ctx.helm.scoped, String(releaseName), String(namespace));
+        break;
+      }
+      default:
+        return { output: `No dry-run is available for ${name}; no changes were made.`, isError: true };
+    }
+    return ok(`Dry-run succeeded for ${name}.`);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
 /** Only ever called from the approval-decision path (see ws/streams.ts), never from the
  * auto-executing read-tool loop. */
 export async function executeWriteTool(name: string, input: any, ctx: ToolExecCtx): Promise<ToolResult> {

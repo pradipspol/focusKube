@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 const realResources = await import('../kube/resources.js');
 const realHelmService = await import('./helmService.js');
 let getResourceMock: (...args: any[]) => Promise<any> = realResources.getResource;
+let replaceResourceMock: (...args: any[]) => Promise<any> = realResources.replaceResource;
 let listReleasesMock: (...args: any[]) => Promise<any[]> = realHelmService.listReleases;
 let previewInstallMock: (...args: any[]) => Promise<string> = realHelmService.previewInstall;
 
@@ -11,6 +12,7 @@ mock.module('../kube/resources.js', {
   namedExports: {
     ...realResources,
     getResource: (...args: any[]) => getResourceMock(...args),
+    replaceResource: (...args: any[]) => replaceResourceMock(...args),
   },
 });
 mock.module('./helmService.js', {
@@ -29,6 +31,7 @@ const {
   isInvestigationTool,
   isWriteTool,
   okList,
+  dryRunWriteTool,
   prepareActionProposal,
   requiresDeleteCapability,
   toolCatalogForRole,
@@ -84,6 +87,30 @@ test('write proposals always identify the exact target and scope', () => {
     describeProposedAction('scale_deployment', { name: 'checkout', namespace: 'payments', replicas: 0 }),
     'Scale deployment "checkout" in namespace "payments" to 0 replica(s)',
   );
+});
+
+test('Auto-mode workload validation uses Kubernetes dry-run and reports failures', async () => {
+  let dryRunFlag: boolean | undefined;
+  getResourceMock = async () => ({
+    spec: { template: { metadata: {}, spec: { containers: [] } } },
+  });
+  replaceResourceMock = async (_manifest, _context, _options, dryRun) => {
+    dryRunFlag = dryRun;
+    return {};
+  };
+
+  const result = await dryRunWriteTool('scale_deployment', {
+    name: 'checkout', namespace: 'payments', replicas: 2,
+  }, proposalContext);
+  assert.equal(dryRunFlag, true);
+  assert.equal(result.isError, false);
+
+  replaceResourceMock = async () => { throw new Error('API server rejected dry-run'); };
+  const rejected = await dryRunWriteTool('scale_deployment', {
+    name: 'checkout', namespace: 'payments', replicas: 2,
+  }, proposalContext);
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.output, /API server rejected dry-run/);
 });
 
 test('apply_manifest blocks approval when the target already exists', async () => {

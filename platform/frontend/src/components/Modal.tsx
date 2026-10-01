@@ -20,6 +20,7 @@ export function Modal({ title, onClose, children, footer, cardClassName, bodyCla
         className={['modal-card', cardClassName].filter(Boolean).join(' ')}
         role={role}
         aria-modal={role ? true : undefined}
+        aria-label={role ? title : undefined}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">

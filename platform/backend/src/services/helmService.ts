@@ -171,6 +171,19 @@ export async function rollbackRelease(
   return (result.stdout || result.stderr).trim();
 }
 
+export async function previewRollbackRelease(
+  session: UserSessionState,
+  scoped: ScopedRequestContext,
+  name: string,
+  namespace: string,
+  revision: number,
+): Promise<string> {
+  const args = ['rollback', name, String(revision), '--dry-run', ...(await helmFlags(session, scoped, namespace, true))];
+  const result = await runHelm(session, scoped, args);
+  if (result.code !== 0) throw badRequest('Helm rollback preview failed', (result.stderr || result.stdout).trim());
+  return (result.stdout || result.stderr).trim();
+}
+
 export interface InstallParams {
   chart: string;
   releaseName: string;
@@ -287,6 +300,18 @@ export async function uninstallRelease(
   const args = ['uninstall', name, ...(await helmFlags(session, scoped, namespace, true))];
   const result = await runHelm(session, scoped, args);
   if (result.code !== 0) throw badRequest('Helm uninstall failed', (result.stderr || result.stdout).trim());
+  return (result.stdout || result.stderr).trim();
+}
+
+export async function previewUninstallRelease(
+  session: UserSessionState,
+  scoped: ScopedRequestContext,
+  name: string,
+  namespace: string,
+): Promise<string> {
+  const args = ['uninstall', name, '--dry-run', ...(await helmFlags(session, scoped, namespace, true))];
+  const result = await runHelm(session, scoped, args);
+  if (result.code !== 0) throw badRequest('Helm uninstall preview failed', (result.stderr || result.stdout).trim());
   return (result.stdout || result.stderr).trim();
 }
 

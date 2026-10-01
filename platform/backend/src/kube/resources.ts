@@ -460,10 +460,11 @@ export async function applyManifest(
   manifest: k8s.KubernetesObject,
   context?: string,
   options: KubeAccessOptions = {},
+  dryRun = false,
 ): Promise<{ object: any; created: boolean }> {
   const api = await objectApi(context, options);
   try {
-    const res = await callK8s(() => api.create(manifest), {
+    const res = await callK8s(() => api.create(manifest, undefined, dryRun ? 'All' : undefined), {
       action: 'create',
       plural: `${manifest.kind ?? 'unknown'}`.toLowerCase(),
       context,
@@ -492,7 +493,7 @@ export async function applyManifest(
         resourceVersion: existing.metadata?.resourceVersion,
       },
     };
-    const res = await callK8s(() => api.replace(merged), {
+    const res = await callK8s(() => api.replace(merged, undefined, dryRun ? 'All' : undefined), {
       action: 'replace',
       plural: `${manifest.kind ?? 'unknown'}`.toLowerCase(),
       context,
@@ -510,6 +511,7 @@ export async function deleteResource(
   context?: string,
   namespace?: string,
   options: KubeAccessOptions = {},
+  dryRun = false,
 ) {
   const rk = resolveKind(plural);
   if (rk.namespaced && !namespace) throw badRequest('namespace is required for this resource');
@@ -519,7 +521,7 @@ export async function deleteResource(
       apiVersion: rk.apiVersion,
       kind: rk.kind,
       metadata: { name, namespace: rk.namespaced ? namespace : undefined },
-    } as k8s.KubernetesObject),
+    } as k8s.KubernetesObject, undefined, dryRun ? 'All' : undefined),
     { action: 'delete', plural: rk.plural, context, namespace, name, azureConfigDir: options.azureConfigDir },
   );
   return unwrapBody(res);

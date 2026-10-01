@@ -20,6 +20,8 @@ export interface AiChatMessage {
   content: string;
 }
 
+export type AiPermissionMode = 'plan' | 'manual' | 'auto';
+
 export interface AiChatSession {
   id: string;
   title: string;
@@ -36,25 +38,26 @@ export interface AiImageAttachment {
   data: string;
 }
 
+export interface AiTextFileAttachment {
+  name: string;
+  content: string;
+}
+
 /** Wire messages sent to /ws/ai. */
 export type AiChatOutboundMessage =
   /** Loads server-owned model history for the selected chat session. */
   | { type: 'restore_session'; sessionId: string }
   /** `turnId` identifies this turn for later editing/regenerating (see `edit_message` below)
    * and is otherwise unused by the backend for a fresh message. */
-  | { type: 'user_message'; text: string; turnId?: string; focusedResource?: AiFocusedResource; images?: AiImageAttachment[] }
-  /** Approve/reject a write-tool proposal previously received as `action_proposed`. `id` is
-   * that proposal's tool_use id, used to correlate the decision back to the paused turn.
-   * `remember: true` (only meaningful alongside `approved: true`) additionally tells the
-   * backend to auto-approve this tool name for the rest of the connection — see `action_auto`
-   * below for how a later occurrence of that tool is then reported. */
-  | { type: 'action_decision'; id: string; approved: boolean; remember?: boolean }
+  | { type: 'user_message'; text: string; turnId?: string; permissionMode?: AiPermissionMode; focusedResource?: AiFocusedResource; images?: AiImageAttachment[]; files?: AiTextFileAttachment[] }
+  /** Approve/reject a write-tool proposal previously received as `action_proposed`. */
+  | { type: 'action_decision'; id: string; approved: boolean }
   /** Rewinds the conversation back to right before the turn identified by `turnId` (dropping
    * everything that turn and any later ones produced) and resends `text` as that turn's user
    * message — used for both "edit a past message" (text differs) and "regenerate" (text is the
    * original, unchanged). `images`, when the original turn had any, are resent verbatim — v1's
    * edit UI doesn't offer changing attachments, only text. */
-  | { type: 'edit_message'; turnId: string; text: string; focusedResource?: AiFocusedResource; images?: AiImageAttachment[] }
+  | { type: 'edit_message'; turnId: string; text: string; permissionMode?: AiPermissionMode; focusedResource?: AiFocusedResource; images?: AiImageAttachment[]; files?: AiTextFileAttachment[] }
   /** Aborts whichever turn is currently streaming on this connection, if any. A no-op if
    * nothing is in flight. */
   | { type: 'stop' };
@@ -82,17 +85,17 @@ export type AiChatInboundMessage =
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean }
   /** A write tool (scale/restart/apply/delete) was requested — render an approval card and
    * send an `action_decision` back; nothing has touched the cluster yet. */
-  | { type: 'action_proposed'; id: string; name: string; input: unknown; summary: string; diff?: AiActionDiff }
+  | { type: 'action_proposed'; id: string; name: string; input: unknown; summary: string; permissionMode?: AiPermissionMode; diff?: AiActionDiff }
   /** The outcome once the user decided (or the proposal was re-checked and denied). */
-  | { type: 'action_result'; id: string; status: 'approved' | 'rejected' | 'failed'; output?: string }
-  /** A write tool that matched an earlier "Allow for this session" choice — already executed,
-   * with no pending step at all. Render it the same as a resolved action card. */
+  | { type: 'action_result'; id: string; status: 'approved' | 'rejected' | 'cancelled' | 'failed'; output?: string; autoApproved?: boolean }
+  /** A write tool run after Auto mode was approved and its dry-run succeeded. */
   | {
       type: 'action_auto';
       id: string;
       name: string;
       input: unknown;
       summary: string;
+      permissionMode?: AiPermissionMode;
       diff?: AiActionDiff;
       status: 'approved' | 'failed';
       output: string;

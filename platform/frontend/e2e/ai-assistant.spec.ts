@@ -3,7 +3,7 @@ import { expect, test, type Page, type WebSocketRoute } from '@playwright/test';
 type OutboundMessage = { type: string; [key: string]: unknown };
 
 async function mockAssistantApi(page: Page): Promise<void> {
-  const sessions = new Map<string, { id: string; title: string; messages: unknown[]; updatedAt: number }>();
+  const sessions = new Map<string, { id: string; context: string; title: string; messages: unknown[]; updatedAt: number }>();
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;
@@ -20,13 +20,15 @@ async function mockAssistantApi(page: Page): Promise<void> {
       return;
     }
     if (pathname === '/api/ai/sessions') {
-      await route.fulfill({ json: { sessions: [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt) } });
+      const context = url.searchParams.get('context') ?? 'default';
+      await route.fulfill({ json: { sessions: [...sessions.values()].filter((session) => session.context === context).sort((a, b) => b.updatedAt - a.updatedAt) } });
       return;
     }
     if (pathname.startsWith('/api/ai/sessions/')) {
       const segments = pathname.split('/');
       const id = decodeURIComponent(segments[4] ?? '');
-      const key = `${url.searchParams.get('context') ?? 'default'}:${id}`;
+      const context = url.searchParams.get('context') ?? 'default';
+      const key = `${context}:${id}`;
       if (route.request().method() === 'DELETE') {
         sessions.delete(key);
         await route.fulfill({ status: 204 });
@@ -34,9 +36,9 @@ async function mockAssistantApi(page: Page): Promise<void> {
       }
       const body = route.request().postDataJSON() as { title: string; messages: unknown[] };
       if (route.request().method() === 'POST') {
-        if (!sessions.has(key)) sessions.set(key, { id, ...body, updatedAt: Date.now() });
+        if (!sessions.has(key)) sessions.set(key, { id, context, ...body, updatedAt: Date.now() });
       } else {
-        sessions.set(key, { id, ...body, updatedAt: Date.now() });
+        sessions.set(key, { id, context, ...body, updatedAt: Date.now() });
       }
       await route.fulfill({ json: sessions.get(key) });
       return;
@@ -68,6 +70,68 @@ async function openAssistant(page: Page): Promise<void> {
   await expect(page.getByText('FocusKube AI Assistant', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
 }
+
+test('composer starts without an internal scrollbar and account details live in the bottom-bar popover', async ({ page }) => {
+  await mockAssistantSocket(page, () => undefined);
+  await openAssistant(page);
+
+  await expect(page.locator('.ai-composer-context-name')).toHaveText('focus-e2e');
+  const input = page.getByPlaceholder('Ask about resource…');
+  expect(await input.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
+  await expect(input).toHaveCSS('overflow-y', 'hidden');
+  await expect(page.getByText('Plan: pro')).toHaveCount(0);
+  await page.getByRole('button', { name: 'AI account information' }).click();
+  await expect(page.getByRole('dialog', { name: 'AI account information' })).toContainText('pro');
+  await expect(page.getByRole('dialog', { name: 'AI account information' })).toContainText('42');
+});
+
+test('permission mode is sent with each prompt', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') socket.send(JSON.stringify({ type: 'stop' }));
+  });
+  await openAssistant(page);
+
+  await page.getByRole('button', { name: 'Permission mode: Manual' }).click();
+  await page.getByRole('menuitemradio', { name: /Plan/ }).click();
+  await page.getByPlaceholder('Ask about resource…').fill('Suggest a safe rollout');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect.poll(() => sent).toContainEqual(expect.objectContaining({
+    type: 'user_message',
+    text: 'Suggest a safe rollout',
+    permissionMode: 'plan',
+  }));
+});
+
+test('closes assistant popups on outside click and clears attachment focus on cancel', async ({ page }) => {
+  await mockAssistantSocket(page, () => undefined);
+  await openAssistant(page);
+
+  const modeButton = page.getByRole('button', { name: 'Permission mode: Manual' });
+  await modeButton.click();
+  await expect(page.getByRole('menu', { name: 'Permission mode' })).toBeVisible();
+  await page.getByText('FocusKube AI Assistant', { exact: true }).click();
+  await expect(page.getByRole('menu', { name: 'Permission mode' })).toHaveCount(0);
+
+  const infoButton = page.getByRole('button', { name: 'AI account information' });
+  await infoButton.click();
+  await expect(page.getByRole('dialog', { name: 'AI account information' })).toBeVisible();
+  await page.getByPlaceholder('Ask about resource…').click();
+  await expect(page.getByRole('dialog', { name: 'AI account information' })).toHaveCount(0);
+
+  const attachButton = page.getByRole('button', { name: 'Attach images or text files' });
+  await attachButton.click();
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toBeVisible();
+  await page.getByPlaceholder('Ask about resource…').click();
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toHaveCount(0);
+  await attachButton.click();
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toBeVisible();
+  await page.locator('input[accept^="image/"]').evaluate((input) => input.dispatchEvent(new Event('cancel')));
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toHaveCount(0);
+  await expect(page.getByPlaceholder('Ask about resource…')).toBeFocused();
+  await modeButton.click();
+  await expect(page.getByRole('menu', { name: 'Permission mode' })).toBeVisible();
+});
 
 test.beforeEach(async ({ page }) => {
   await mockAssistantApi(page);
@@ -212,9 +276,9 @@ test('requires an explicit decision before a proposed write action is resolved',
         JSON.stringify({
           type: 'action_proposed',
           id: 'scale-checkout',
-          name: 'scale_deployment',
-          input: { name: 'checkout', namespace: 'payments', replicas: 0 },
-          summary: 'Scale deployment "checkout" in namespace "payments" to 0 replica(s)',
+          name: 'delete_resource',
+          input: { kind: 'deployments', name: 'checkout', namespace: 'payments' },
+          summary: 'Delete deployment "checkout" in namespace "payments"',
         }),
       );
     }
@@ -226,12 +290,14 @@ test('requires an explicit decision before a proposed write action is resolved',
 
   await page.getByPlaceholder('Ask about resource…').fill('Scale checkout to zero');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('Scale deployment "checkout" in namespace "payments" to 0 replica(s)')).toBeVisible();
+  await expect(page.getByText('Delete deployment "checkout" in namespace "payments"')).toBeVisible();
+  await expect(page.getByText('Review and approve')).toBeVisible();
+  await expect(page.getByText('Destructive action')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reject' })).toBeVisible();
 
-  await page.getByPlaceholder('Ask about resource…').fill('Do something else');
-  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await expect(page.getByPlaceholder('Ask about resource…')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toBeEnabled();
   await page.getByRole('button', { name: 'Reject' }).click();
 
   await expect.poll(() => sent).toContainEqual(expect.objectContaining({ type: 'action_decision', id: 'scale-checkout', approved: false }));
@@ -267,6 +333,146 @@ test('sends an approval decision and renders the completed write action', async 
     expect.objectContaining({ type: 'action_decision', id: 'restart-checkout', approved: true }),
   );
   await expect(page.getByText('Approved — executed.')).toBeVisible();
+});
+
+test('approves all pending proposals from the review bar', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') {
+      for (const [id, name] of [['restart-api', 'restart_deployment'], ['scale-worker', 'scale_deployment']]) {
+        socket.send(JSON.stringify({
+          type: 'action_proposed',
+          id,
+          name,
+          input: { name: id, namespace: 'default' },
+          summary: `${name} ${id}`,
+        }));
+      }
+    }
+  });
+  await openAssistant(page);
+
+  await page.getByPlaceholder('Ask about resource…').fill('Restart the api and scale the worker');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const reviewBar = page.getByRole('group', { name: 'Pending actions' });
+  await expect(reviewBar).toContainText('2 actions require a decision');
+  expect(await reviewBar.evaluate((element) => element.closest('.ai-panel-messages'))).toBeNull();
+  expect(await page.locator('.ai-panel-input-row').evaluate((element) => element.previousElementSibling?.classList.contains('ai-action-review-bar'))).toBe(true);
+  await expect(page.getByPlaceholder('Ask about resource…')).toBeDisabled();
+  await page.getByRole('button', { name: 'Approve all' }).click();
+
+  await expect.poll(() => sent.filter((message) => message.type === 'action_decision')).toHaveLength(2);
+  expect(sent.filter((message) => message.type === 'action_decision')).toEqual([
+    expect.objectContaining({ id: 'restart-api', approved: true }),
+    expect.objectContaining({ id: 'scale-worker', approved: true }),
+  ]);
+});
+
+test('disables the composer while an assistant response is streaming', async ({ page }) => {
+  await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') socket.send(JSON.stringify({ type: 'token', token: 'Still working…' }));
+    if (message.type === 'stop') socket.send(JSON.stringify({ type: 'stopped' }));
+  });
+  await openAssistant(page);
+
+  const input = page.getByPlaceholder('Ask about resource…');
+  await input.fill('Inspect the cluster');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByText('Still working…')).toBeVisible();
+  await expect(input).toBeDisabled();
+  const stopButton = page.getByRole('button', { name: 'Stop generating' });
+  await expect(stopButton).toBeEnabled();
+  const expectedDangerColor = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = 'var(--danger)';
+    document.body.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
+  await page.mouse.move(0, 0);
+  await expect(stopButton).toHaveCSS('background-color', expectedDangerColor);
+  await stopButton.click();
+  await expect(input).toBeEnabled();
+});
+
+test('keeps individual decisions available and rejects all remaining proposals', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') {
+      for (const id of ['delete-api', 'delete-worker', 'delete-scheduler']) {
+        socket.send(JSON.stringify({
+          type: 'action_proposed',
+          id,
+          name: 'delete_resource',
+          input: { kind: 'deployments', name: id, namespace: 'default' },
+          summary: `Delete deployment ${id}`,
+        }));
+      }
+    }
+    if (message.type === 'action_decision') {
+      socket.send(JSON.stringify({
+        type: 'action_result',
+        id: message.id,
+        status: message.approved ? 'approved' : 'rejected',
+      }));
+    }
+  });
+  await openAssistant(page);
+
+  await page.getByPlaceholder('Ask about resource…').fill('Remove the old deployments');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const reviewBar = page.getByRole('group', { name: 'Pending actions' });
+  await expect(reviewBar).toContainText('3 actions require a decision');
+  const firstProposal = page.locator('.ai-action-card').filter({ hasText: 'Delete deployment delete-api' });
+  await firstProposal.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect(firstProposal).toContainText('Approved — executed.');
+  await expect(reviewBar).toContainText('2 actions require a decision');
+  await reviewBar.getByRole('button', { name: 'Reject all' }).click();
+
+  await expect.poll(() => sent.filter((message) => message.type === 'action_decision')).toHaveLength(3);
+  expect(sent.filter((message) => message.type === 'action_decision')).toEqual([
+    expect.objectContaining({ id: 'delete-api', approved: true }),
+    expect.objectContaining({ id: 'delete-worker', approved: false }),
+    expect.objectContaining({ id: 'delete-scheduler', approved: false }),
+  ]);
+});
+
+test('Stop cancels all pending proposals and blocks another message until stopped', async ({ page }) => {
+  const proposals = [
+    { id: 'delete-api', name: 'delete_resource', summary: 'Delete deployment api' },
+    { id: 'delete-worker', name: 'delete_resource', summary: 'Delete deployment worker' },
+  ];
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') {
+      for (const proposal of proposals) {
+        socket.send(JSON.stringify({
+          type: 'action_proposed',
+          ...proposal,
+          input: { kind: 'deployments', name: proposal.id, namespace: 'default' },
+        }));
+      }
+    }
+    if (message.type === 'stop') {
+      for (const proposal of proposals) {
+        socket.send(JSON.stringify({ type: 'action_result', id: proposal.id, status: 'cancelled' }));
+      }
+      socket.send(JSON.stringify({ type: 'stopped' }));
+    }
+  });
+  await openAssistant(page);
+
+  const input = page.getByPlaceholder('Ask about resource…');
+  await input.fill('Clean up the old deployments');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toBeEnabled();
+  await expect(input).toBeDisabled();
+  expect(sent.filter((message) => message.type === 'user_message')).toHaveLength(1);
+
+  await page.getByRole('button', { name: 'Stop generating' }).click();
+  await expect(page.locator('.ai-action-card-cancelled')).toHaveCount(2);
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  expect(sent.filter((message) => message.type === 'action_decision')).toHaveLength(0);
+  expect(sent.filter((message) => message.type === 'stop')).toHaveLength(1);
 });
 
 const skillPrompts = [
@@ -335,13 +541,64 @@ test('restores backend chat history across reload and supports editing a sent tu
   await page.reload();
   await expect(page.getByRole('paragraph').filter({ hasText: 'Why is api-0 pending?' })).toBeVisible();
   await expect(page.locator('.ai-gate-session-title')).toHaveText('Why is api-0 pending?');
-  await page.getByRole('button', { name: 'Edit' }).click();
-  await page.locator('.ai-message-edit-input').fill('Why is api-1 pending?');
-  await page.getByRole('button', { name: 'Save' }).click();
+  const userBubble = page.locator('.ai-panel-message-user .ai-panel-message-bubble').filter({ hasText: 'Why is api-0 pending?' });
+  await userBubble.click();
+  const editInput = page.locator('.ai-message-edit-input');
+  await expect(editInput).toBeVisible();
+  await page.getByPlaceholder('Ask about resource…').click();
+  await expect(editInput).toHaveCount(0);
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Why is api-0 pending?' })).toBeVisible();
+
+  const editButton = page.getByRole('button', { name: 'Edit' });
+  await editButton.hover();
+  await expect(editButton).toHaveAttribute('title', 'Edit');
+  await editButton.click();
+  await expect.poll(() => editInput.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(240);
+  await editInput.fill('Why is api-1 pending?');
+  await page.getByPlaceholder('Ask about resource…').click();
+  const discardDialog = page.getByRole('alertdialog', { name: 'Unsaved message changes' });
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editInput).toHaveValue('Why is api-1 pending?');
+  await editInput.press('Escape');
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole('button', { name: 'Save' }).click();
 
   await expect.poll(() => sent).toContainEqual(
     expect.objectContaining({ type: 'edit_message', text: 'Why is api-1 pending?' }),
   );
+
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await page.locator('.ai-message-edit-input').fill('Discard this edit');
+  await page.getByPlaceholder('Ask about resource…').click();
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole('button', { name: 'Discard' }).click();
+  await expect(page.locator('.ai-message-edit-input')).toHaveCount(0);
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Why is api-1 pending?' })).toBeVisible();
+});
+
+test('preserves chat history when switching Kubernetes contexts before the save debounce fires', async ({ page }) => {
+  await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') {
+      socket.send(JSON.stringify({ type: 'token', token: 'Minikube response.' }));
+      socket.send(JSON.stringify({ type: 'stop' }));
+    }
+  });
+  await openAssistant(page);
+
+  await page.getByPlaceholder('Ask about resource…').fill('Keep this Minikube conversation');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByText('Minikube response.')).toBeVisible();
+
+  const contextPicker = page.getByRole('combobox', { name: 'Test Kubernetes context' });
+  await contextPicker.selectOption('minikube');
+  await expect(page.locator('.ai-composer-context-name')).toHaveText('minikube');
+  await expect(page.getByText('Keep this Minikube conversation')).toHaveCount(0);
+
+  await contextPicker.selectOption('focus-e2e');
+  await expect(page.locator('.ai-composer-context-name')).toHaveText('focus-e2e');
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Keep this Minikube conversation' })).toBeVisible();
+  await expect(page.getByText('Minikube response.')).toBeVisible();
 });
 
 test('starts a separate chat, reopens a saved session, and deletes it from history', async ({ page }) => {
@@ -442,7 +699,10 @@ test('attaches and serializes a supported image with the user message', async ({
   await openAssistant(page);
 
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6ioAAAAASUVORK5CYII=', 'base64');
-  await page.locator('input[type="file"]').setInputFiles({ name: 'pod.png', mimeType: 'image/png', buffer: png });
+  await page.getByRole('button', { name: 'Attach images or text files' }).click();
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Upload images' }).click();
+  await page.locator('input[accept^="image/"]').setInputFiles({ name: 'pod.png', mimeType: 'image/png', buffer: png });
   await expect(page.locator('.ai-attached-image-thumb img')).toHaveCount(1);
   await page.getByPlaceholder('Ask about resource…').fill('What is shown in this screenshot?');
   await page.getByRole('button', { name: 'Send' }).click();
@@ -456,6 +716,53 @@ test('attaches and serializes a supported image with the user message', async ({
   );
 });
 
+test('attaches a text file, displays its name, and submits its contents', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') socket.send(JSON.stringify({ type: 'stop' }));
+  });
+  await openAssistant(page);
+
+  await page.getByRole('button', { name: 'Attach images or text files' }).click();
+  await expect(page.getByRole('menu', { name: 'Add an attachment' })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Upload text files' }).click();
+  await page.locator('input[accept^="."]').setInputFiles({
+    name: 'incident.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('The api pod is failing its readiness probe.'),
+  });
+  await expect(page.locator('.ai-attached-file')).toContainText('incident.txt');
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect.poll(() => sent).toContainEqual(expect.objectContaining({
+    type: 'user_message',
+    files: [{ name: 'incident.txt', content: 'The api pod is failing its readiness probe.' }],
+  }));
+  await expect(page.locator('.ai-message-file')).toContainText('incident.txt');
+});
+
+test('drops a text file onto the chat to attach it', async ({ page }) => {
+  const sent = await mockAssistantSocket(page, (socket, message) => {
+    if (message.type === 'user_message') socket.send(JSON.stringify({ type: 'stop' }));
+  });
+  await openAssistant(page);
+
+  await page.locator('.ai-panel-chat-col').evaluate((element) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(['Dropped incident details'], 'dropped.txt', { type: 'text/plain' }));
+    element.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+  });
+
+  await expect(page.locator('.ai-attached-file')).toContainText('dropped.txt');
+  await expect(page.getByText('Drop images or text files to attach')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect.poll(() => sent).toContainEqual(expect.objectContaining({
+    type: 'user_message',
+    files: [{ name: 'dropped.txt', content: 'Dropped incident details' }],
+  }));
+});
+
 test('enforces the per-message image limit and allows removing an attachment', async ({ page }) => {
   await mockAssistantSocket(page, () => undefined);
   await openAssistant(page);
@@ -465,18 +772,34 @@ test('enforces the per-message image limit and allows removing an attachment', a
     mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6ioAAAAASUVORK5CYII=', 'base64'),
   };
-  const chooser = page.locator('input[type="file"]');
+  const chooser = page.locator('input[accept^="image/"]');
   await chooser.setInputFiles([image, image, image]);
   await expect(page.locator('.ai-attached-image-thumb')).toHaveCount(3);
-  await expect(page.getByRole('button', { name: 'Attach image' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Attach images or text files' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Remove image' }).first().click();
   await expect(page.locator('.ai-attached-image-thumb')).toHaveCount(2);
-  await expect(page.getByRole('button', { name: 'Attach image' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Attach images or text files' })).toBeEnabled();
   await chooser.setInputFiles(image);
   await expect(page.locator('.ai-attached-image-thumb')).toHaveCount(3);
   await chooser.setInputFiles(image);
   await expect(page.getByText('Attach at most 3 images per message.')).toBeVisible();
+});
+
+test('limits text attachments and allows removing one to make room', async ({ page }) => {
+  await mockAssistantSocket(page, () => undefined);
+  await openAssistant(page);
+
+  const file = (name: string) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(`Contents of ${name}`) });
+  const chooser = page.locator('input[accept^="."]');
+  await chooser.setInputFiles([file('one.txt'), file('two.txt'), file('three.txt'), file('four.txt')]);
+  await expect(page.locator('.ai-attached-file')).toHaveCount(3);
+  await expect(page.getByText('Attach at most 3 text files per message.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Remove attachment' }).first().click();
+  await chooser.setInputFiles(file('four.txt'));
+  await expect(page.locator('.ai-attached-file')).toHaveCount(3);
+  await expect(page.locator('.ai-attached-file').filter({ hasText: 'four.txt' })).toHaveCount(1);
 });
 
 test('does not allow model output to create executable HTML', async ({ page }) => {
@@ -527,7 +850,7 @@ test('keeps chat controls usable without horizontal overflow on a narrow viewpor
   expect(hasHorizontalOverflow).toBe(false);
 });
 
-test('sends the session-scoped approval choice and renders an auto-approved later action', async ({ page }) => {
+test('Auto mode asks once for consent and renders later actions as dry-run applied', async ({ page }) => {
   const sent = await mockAssistantSocket(page, (socket, message) => {
     if (message.type === 'user_message' && message.text === 'Scale checkout') {
       socket.send(JSON.stringify({
@@ -536,6 +859,7 @@ test('sends the session-scoped approval choice and renders an auto-approved late
         name: 'scale_deployment',
         input: { name: 'checkout', namespace: 'payments', replicas: 2 },
         summary: 'Scale checkout to 2 replicas',
+        permissionMode: 'auto',
       }));
     } else if (message.type === 'action_decision') {
       socket.send(JSON.stringify({ type: 'action_result', id: 'scale-once', status: 'approved' }));
@@ -555,15 +879,18 @@ test('sends the session-scoped approval choice and renders an auto-approved late
   });
   await openAssistant(page);
 
+  await page.getByRole('button', { name: 'Permission mode: Manual' }).click();
+  await page.getByRole('menuitemradio', { name: /Auto/ }).click();
   await page.getByPlaceholder('Ask about resource…').fill('Scale checkout');
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByRole('button', { name: 'Allow for this session' }).click();
+  await page.getByRole('button', { name: 'Approve and enable Auto' }).click();
   await expect.poll(() => sent).toContainEqual(
-    expect.objectContaining({ type: 'action_decision', id: 'scale-once', approved: true, remember: true }),
+    expect.objectContaining({ type: 'action_decision', id: 'scale-once', approved: true }),
   );
+  expect(sent.find((message) => message.type === 'action_decision')).not.toHaveProperty('remember');
 
   await page.getByPlaceholder('Ask about resource…').fill('Scale checkout again');
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText('Scale checkout to 3 replicas')).toBeVisible();
-  await expect(page.getByText('(auto-approved — allowed for this session)')).toBeVisible();
+  await expect(page.getByText('(approved once; dry-run passed before apply)')).toBeVisible();
 });

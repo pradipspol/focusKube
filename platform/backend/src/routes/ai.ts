@@ -5,6 +5,7 @@ import { logError, logInfo } from '../util/logger.js';
 import { getEntitlementState } from '../runtime/aiLicenseStore.js';
 import { getSessionToken } from '../runtime/accountStore.js';
 import { aiChatSessionStore } from '../services/aiChatSessionStore.js';
+import type { ChatMessage } from '../services/aiService.js';
 
 const router = Router();
 
@@ -21,6 +22,33 @@ export const aiRouter = router;
 function chatContext(req: Request): string {
   const requested = req.query.context;
   return typeof requested === 'string' && requested ? requested : (req as any).userSession?.activeContext || 'default';
+}
+
+function recoverTranscript(session: {
+  id: string;
+  messages: Array<{ id: string; kind: string; [key: string]: unknown }>;
+  modelMessages: ChatMessage[];
+  checkpoints: Array<{ turnId: string; index: number }>;
+}) {
+  if (session.messages.length > 0) return session.messages;
+
+  const turnIds = new Map(session.checkpoints.map((checkpoint) => [checkpoint.index, checkpoint.turnId]));
+  return session.modelMessages.flatMap((message, index) => {
+    const content = typeof message.content === 'string'
+      ? message.content
+      : message.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n');
+    if (!content) return [];
+    return [{
+      id: `recovered-${session.id}-${index}`,
+      kind: 'text',
+      role: message.role,
+      content,
+      ...(message.role === 'user' && turnIds.has(index) ? { turnId: turnIds.get(index) } : {}),
+    }];
+  });
 }
 
 // GET /api/ai/entitlement — Check if the signed-in account has an active AI license.
@@ -88,7 +116,12 @@ router.get('/sessions', (req: Request, res: Response, next: NextFunction) => {
     res.json({
       sessions: aiChatSessionStore
         .list(userId, chatContext(req))
-        .map(({ id, title, messages, updatedAt }) => ({ id, title, messages, updatedAt })),
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          messages: recoverTranscript(session),
+          updatedAt: session.updatedAt,
+        })),
     });
   } catch (err) {
     next(err);

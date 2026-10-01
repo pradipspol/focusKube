@@ -10,7 +10,7 @@ interface Props {
   disabled?: boolean;
   ariaPressed?: boolean;
   ariaExpanded?: boolean;
-  ariaHasPopup?: boolean | 'menu';
+  ariaHasPopup?: boolean | 'menu' | 'dialog';
 }
 
 export function IconActionButton({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -13,13 +13,17 @@ import {
   type AiChatInboundMessage,
   type AiFocusedResource,
   type AiImageAttachment,
+  type AiTextFileAttachment,
   type AiChatSession,
+  type AiPermissionMode,
 } from '../api/aiAssistantApi';
 import { AiEntitlementGate } from './AiEntitlementGate';
+import { AiAssistantInfoButton } from './AiAssistantInfoButton';
 import { uiText } from '../text';
 import { IconActionButton } from './IconActionButton';
 import { AnchoredMenu } from './AnchoredMenu';
 import { CopyButton } from './CopyButton';
+import { Modal } from './Modal';
 import { SegmentedControl } from './SegmentedControl';
 import { SelectControl } from './SelectControl';
 import {
@@ -39,9 +43,11 @@ import {
   MessageSquarePlus,
   Network,
   Package,
+  Paperclip,
   Pencil,
   SendHorizontal,
   Server,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Square,
@@ -68,6 +74,8 @@ interface AttachedImage {
   data: string;
 }
 
+type AttachedTextFile = AiTextFileAttachment;
+
 interface TextChatMessage {
   id: string;
   kind: 'text';
@@ -79,6 +87,7 @@ interface TextChatMessage {
   turnId?: string;
   /** Only ever set on a user message. */
   images?: AttachedImage[];
+  files?: AttachedTextFile[];
 }
 
 function createTurnId(): string {
@@ -110,16 +119,16 @@ interface ActionChatMessage {
   name: string;
   input: unknown;
   summary: string;
+  permissionMode?: AiPermissionMode;
   diff?: AiActionDiff;
   // 'expired' is a terminal, frontend-only state: a card whose socket connection reset before
   // it was decided (see the WS-connect effect, which sweeps any still-'pending' card to this
   // status on every fresh connection) — the backend holds no memory of it across a reconnect,
   // so it can never actually be resolved. Kept out of hasPendingAction's check so it doesn't
   // block the chat forever (see that computation below for the full explanation).
-  status: 'pending' | 'approved' | 'rejected' | 'failed' | 'expired';
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'failed' | 'expired';
   output?: string;
-  /** Executed straight away because the user had already picked "Allow for this session" for
-   * this tool name earlier in the conversation — never true for a card that was ever 'pending'. */
+  /** Executed automatically after one-time Auto consent and a successful dry-run. */
   autoApproved?: boolean;
 }
 
@@ -137,6 +146,22 @@ let nextMessageId = 1;
 // Mirrors the backend's own caps (ws/streams.ts) — kept in sync deliberately, not derived from a
 // shared constant, since one is a client-side UX guard and the other is the real enforcement.
 const MAX_IMAGES_PER_MESSAGE = 3;
+const MAX_TEXT_FILES_PER_MESSAGE = 3;
+const MAX_TEXT_FILE_BYTES = 64 * 1024;
+const TEXT_FILE_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml', '.html', '.htm', '.css',
+  '.js', '.ts', '.jsx', '.tsx', '.py', '.sh', '.bash', '.ps1', '.sql', '.toml', '.ini', '.conf', '.properties',
+  '.go', '.rs', '.java', '.c', '.h', '.cpp', '.cs', '.rb', '.php',
+]);
+
+function hasDisallowedControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) return true;
+  }
+  return false;
+}
+
 // Anthropic's own documented vision guidance for the long edge, applied uniformly regardless of
 // source format so a raw 4K screenshot never needs the user to think about size at all.
 const IMAGE_MAX_DIMENSION = 1568;
@@ -189,7 +214,10 @@ function isValidMessage(m: unknown): m is ChatMessage {
   // so history saved before this change still loads.
   const kind = anyM.kind ?? 'text';
   if (kind === 'text') {
-    return (anyM.role === 'user' || anyM.role === 'assistant') && typeof anyM.content === 'string';
+    return (anyM.role === 'user' || anyM.role === 'assistant') && typeof anyM.content === 'string' &&
+      (anyM.files === undefined || (Array.isArray(anyM.files) && anyM.files.every(
+        (file: unknown) => !!file && typeof file === 'object' && typeof (file as any).name === 'string' && typeof (file as any).content === 'string',
+      )));
   }
   if (kind === 'tool') {
     return typeof anyM.name === 'string' && (anyM.status === 'running' || anyM.status === 'done');
@@ -234,7 +262,7 @@ function buildSessionHistory(messages: ChatMessage[]): AiChatMessage[] {
 
   for (const message of messages) {
     if (message.kind === 'text') {
-      append(message.role, `${message.content}${message.images?.length ? '\n[Image attachment from this earlier turn is not available in restored context.]' : ''}`);
+      append(message.role, `${message.content}${message.images?.length ? '\n[Image attachment from this earlier turn is not available in restored context.]' : ''}${message.files?.map((file) => `\n[Earlier attached text file: ${file.name}]\n${file.content}`).join('') ?? ''}`);
     } else if (message.kind === 'tool') {
       append('user', `[Earlier tool result: ${message.name}]\n${message.output ?? 'No result was recorded.'}`);
     } else {
@@ -806,17 +834,33 @@ function ActionCard({
   message,
   onDecide,
   isLive,
+  actionsBusy,
 }: {
   message: ActionChatMessage;
-  onDecide: (id: string, approved: boolean, remember?: boolean) => void;
+  onDecide: (id: string, approved: boolean) => void;
   isLive: boolean;
+  actionsBusy: boolean;
 }) {
   const pending = message.status === 'pending';
   const canDecide = pending && isLive;
+  const destructive = /delete|uninstall|rollback/.test(message.name);
 
   return (
-    <div className={`ai-action-card ai-action-card-${message.status}`}>
-      <div className="ai-action-card-summary">{message.summary}</div>
+    <div className={`ai-action-card ai-action-card-${message.status}${destructive ? ' ai-action-card-destructive' : ''}`}>
+      <div className="ai-action-card-header">
+        <span className={`ai-action-card-icon${destructive ? ' ai-action-card-icon-destructive' : ''}`} aria-hidden="true">
+          {destructive ? <ShieldAlert size={17} /> : <ShieldCheck size={17} />}
+        </span>
+        <div className="ai-action-card-heading">
+          <div className="ai-action-card-eyebrow">
+            {pending ? uiText.aiAssistant.approvalRequired : uiText.aiAssistant.actionProposal}
+          </div>
+          <div className="ai-action-card-summary">{message.summary}</div>
+        </div>
+        {destructive && pending && (
+          <span className="ai-action-card-risk">{uiText.aiAssistant.destructiveAction}</span>
+        )}
+      </div>
       {message.diff && (
         <div className="ai-action-card-diff">
           {message.diff.before && (
@@ -839,21 +883,16 @@ function ActionCard({
       )}
       {pending ? (
         canDecide ? (
-          <>
-            <div className="ai-action-card-buttons">
-              <button type="button" className="ai-action-approve" onClick={() => onDecide(message.id, true)}>
-                {uiText.aiAssistant.approve}
-              </button>
-              <button type="button" className="ai-action-reject" onClick={() => onDecide(message.id, false)}>
-                {uiText.aiAssistant.reject}
-              </button>
-            </div>
-            <div className="ai-action-card-buttons-secondary">
-              <button type="button" className="ai-action-allow-session" onClick={() => onDecide(message.id, true, true)}>
-                {uiText.aiAssistant.allowSession}
-              </button>
-            </div>
-          </>
+          <div className="ai-action-card-buttons">
+            <button type="button" className="ai-action-reject" disabled={actionsBusy} onClick={() => onDecide(message.id, false)}>
+              <X size={14} aria-hidden="true" />
+              <span>{uiText.aiAssistant.reject}</span>
+            </button>
+            <button type="button" className="ai-action-approve" disabled={actionsBusy} onClick={() => onDecide(message.id, true)}>
+              <Check size={14} aria-hidden="true" />
+              <span>{message.permissionMode === 'auto' ? uiText.aiAssistant.approveAndEnableAuto : uiText.aiAssistant.approve}</span>
+            </button>
+          </div>
         ) : (
           <div className="ai-action-card-footer ai-action-card-footer-expired">{uiText.aiAssistant.actionExpired}</div>
         )
@@ -861,10 +900,11 @@ function ActionCard({
         <div className={`ai-action-card-footer${message.status === 'expired' ? ' ai-action-card-footer-expired' : ''}`}>
           {message.status === 'approved' && uiText.aiAssistant.actionApproved}
           {message.status === 'rejected' && uiText.aiAssistant.actionRejected}
+          {message.status === 'cancelled' && uiText.aiAssistant.actionCancelled}
           {message.status === 'failed' && uiText.aiAssistant.actionFailed(message.output)}
           {message.status === 'expired' && uiText.aiAssistant.actionExpired}
-          {message.autoApproved && message.status !== 'expired' && (
-            <span className="ai-action-card-auto-note"> {uiText.aiAssistant.actionAutoApprovedNote}</span>
+          {message.autoApproved && message.status === 'approved' && (
+            <span className="ai-action-card-auto-note"> {uiText.aiAssistant.actionAutoAppliedNote}</span>
           )}
         </div>
       )}
@@ -876,6 +916,7 @@ function ChatMessages({
   messages,
   onDecide,
   liveActionIds,
+  resolvingActionIds,
   canEdit,
   editingId,
   editText,
@@ -886,8 +927,9 @@ function ChatMessages({
   onExpandTool,
 }: {
   messages: ChatMessage[];
-  onDecide: (id: string, approved: boolean, remember?: boolean) => void;
+  onDecide: (id: string, approved: boolean) => void;
   liveActionIds: Set<string>;
+  resolvingActionIds: Set<string>;
   /** Editing/regenerating requires rewinding the backend's own `messages` array — disabled
    * while a turn is in flight or a write-tool proposal is pending, same as sending a new
    * message would be. */
@@ -901,7 +943,6 @@ function ChatMessages({
   onExpandTool: (message: ToolChatMessage) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -929,7 +970,12 @@ function ChatMessages({
         if (message.kind === 'action') {
           return (
             <div key={message.id} className="ai-panel-message ai-panel-message-action">
-              <ActionCard message={message} onDecide={onDecide} isLive={liveActionIds.has(message.id)} />
+              <ActionCard
+                message={message}
+                onDecide={onDecide}
+                isLive={liveActionIds.has(message.id)}
+                actionsBusy={resolvingActionIds.has(message.id)}
+              />
             </div>
           );
         }
@@ -944,10 +990,28 @@ function ChatMessages({
                     ))}
                   </div>
                 )}
+                {message.files && message.files.length > 0 && (
+                  <div className="ai-message-file-list">
+                    {message.files.map((file, index) => (
+                      <span className="ai-message-file" key={`${file.name}-${index}`}>
+                        <Paperclip size={12} aria-hidden="true" /> {file.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   className="ai-message-edit-input"
                   value={editText}
                   onChange={(e) => onEditTextChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      onEditCancel();
+                    } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      onEditSave();
+                    }
+                  }}
                   rows={Math.min(8, Math.max(2, editText.split('\n').length))}
                   autoFocus
                 />
@@ -975,11 +1039,27 @@ function ChatMessages({
         return (
           <div key={message.id} className={`ai-panel-message ai-panel-message-${message.role}`}>
             <div className="ai-panel-message-col">
-              <div className="ai-panel-message-bubble">
+              <div
+                className={`ai-panel-message-bubble${message.role === 'user' && canEdit ? ' ai-user-message-editable' : ''}`}
+                onClick={(event) => {
+                  if (message.role !== 'user' || !canEdit) return;
+                  if (event.target instanceof Element && event.target.closest('a, button, input, textarea, [role="button"]')) return;
+                  onEditStart(message.id, message.content);
+                }}
+              >
                 {message.images && message.images.length > 0 && (
                   <div className="ai-message-images">
                     {message.images.map((image, index) => (
                       <img key={index} src={image.dataUrl} alt="" />
+                    ))}
+                  </div>
+                )}
+                {message.files && message.files.length > 0 && (
+                  <div className="ai-message-file-list">
+                    {message.files.map((file, index) => (
+                      <span className="ai-message-file" key={`${file.name}-${index}`}>
+                        <Paperclip size={12} aria-hidden="true" /> {file.name}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -1083,7 +1163,9 @@ function SkillsMenu({ onSelect, onClose }: { onSelect: (skill: Skill) => void; o
 }
 
 export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props) {
-  const chatContext = scope.context;
+  // Always provide a context value to ensure backend filtering is consistent and predictable.
+  // Falls back to 'default' if scope.context is undefined (e.g., before context is fully initialized).
+  const chatContext = scope.context ?? 'default';
   const initialRef = useRef<{ sessions: ChatSession[]; activeSessionId: string } | null>(null);
   if (initialRef.current === null) {
     const loaded = loadStoredSessions();
@@ -1102,6 +1184,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const [sessions, setSessions] = useState<ChatSession[]>(initial.sessions);
   const [activeSessionId, setActiveSessionId] = useState<string>(initial.activeSessionId);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const loadedContextRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     return initial.sessions.find((s) => s.id === initial.activeSessionId)?.messages ?? [];
   });
@@ -1112,9 +1195,12 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const sessionReadyRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [permissionMenuOpen, setPermissionMenuOpen] = useState(false);
+  const [permissionMode, setPermissionMode] = useState<'plan' | 'manual' | 'auto'>('manual');
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focusedResource, setFocusedResource] = useState<AiFocusedResource | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1122,14 +1208,20 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   const [pickerNamespace, setPickerNamespace] = useState(scope.namespace ?? 'default');
   const [pickerName, setPickerName] = useState('');
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedTextFile[]>([]);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const textFileInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingIdRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const permissionButtonRef = useRef<HTMLButtonElement>(null);
+  const [resolvingActionIds, setResolvingActionIds] = useState<Set<string>>(new Set());
+  const resolvingActionIdsRef = useRef<Set<string>>(new Set());
   // Tool_use ids for action_proposed cards received on the CURRENT live socket connection —
   // reset on every (re)connect, since the backend holds no conversation state across a
   // reconnect and any card from before it simply can no longer be resolved. A card restored
@@ -1155,6 +1247,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
 
   useEffect(() => {
     let cancelled = false;
+    loadedContextRef.current = null;
     setSessionsLoaded(false);
     const loadSessions = async () => {
       try {
@@ -1195,6 +1288,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
             return Number.isFinite(n) ? Math.max(messageMax, n) : messageMax;
           }, max), 0);
         if (maxId >= nextMessageId) nextMessageId = maxId + 1;
+        loadedContextRef.current = chatContext;
         setSessionsLoaded(true);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load chat sessions');
@@ -1203,7 +1297,22 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     void loadSessions();
     return () => {
       cancelled = true;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        if (loadedContextRef.current === chatContext) {
+          const snapshot = sessionSnapshotRef.current;
+          const pending: ChatSession = {
+            id: snapshot.sessionId,
+            title: deriveSessionTitle(snapshot.messages),
+            messages: snapshot.messages,
+            updatedAt: Date.now(),
+          };
+          saveQueueRef.current = saveQueueRef.current
+            .then(() => aiAssistantApi.saveChatSession(pending, chatContext))
+            .catch((err) => setError(err instanceof Error ? err.message : 'Failed to save chat session'));
+        }
+      }
     };
   }, [chatContext]);
 
@@ -1225,7 +1334,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
   }, [messages, activeSessionId, sessionsLoaded]);
 
   useEffect(() => {
-    if (!sessionsLoaded) return;
+    if (!sessionsLoaded || loadedContextRef.current !== chatContext) return;
     const active = sessions.find((session) => session.id === activeSessionId);
     if (!active) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -1241,7 +1350,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     // locked/checkout screen instead of this panel anyway. Once entitlement flips to true
     // (e.g. right after a trial/checkout completes), this effect re-runs and connects fresh,
     // rather than leaving a stale "AI feature not enabled" error from an earlier attempt.
-    if (!entitled || !sessionsLoaded) return;
+    if (!entitled || !sessionsLoaded || loadedContextRef.current !== chatContext) return;
 
     // Reconnects automatically if the socket drops for a reason unrelated to this effect
     // tearing down (a backend restart during dev, a network blip) — without this, a dropped
@@ -1259,6 +1368,9 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       // in that WS handler's closure, see ws/streams.ts's handleAiChat) starts empty too — any
       // action_proposed id from before this point can no longer be resolved.
       liveActionIdsRef.current = new Set();
+      resolvingActionIdsRef.current = new Set();
+      setResolvingActionIds(new Set());
+      setIsStopping(false);
       // A card left 'pending' from before this connection can never actually be decided now —
       // expire it (a terminal status, unlike 'pending') so it stops blocking hasPendingAction
       // forever. Sweep every stored session, not just the one currently displayed, since a
@@ -1266,7 +1378,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       setMessages((current) => expirePendingActions(current));
       setSessions((current) => current.map((s) => ({ ...s, messages: expirePendingActions(s.messages) })));
 
-      const ws = openAiChatSocket(scope.context);
+      const ws = openAiChatSocket(chatContext);
       wsRef.current = ws;
       ws.onopen = () => {
         sessionReadyRef.current = false;
@@ -1296,6 +1408,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         } else if (msg.type === 'error') {
           streamingIdRef.current = null;
           setBusy(false);
+          setIsStopping(false);
           if (msg.code === 'NO_ENTITLEMENT') {
             // The cached entitlement said enabled but the backend just found otherwise (license
             // expired/canceled mid-session) — refetch it so AiEntitlementGate swaps this panel
@@ -1328,11 +1441,15 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         } else if (msg.type === 'stop') {
           streamingIdRef.current = null;
           setBusy(false);
+          setIsStopping(false);
         } else if (msg.type === 'stopped') {
           // A deliberate Stop click, not a failure — leave whatever text streamed so far in
           // place and end the "thinking" state without showing an error banner.
           streamingIdRef.current = null;
           setBusy(false);
+          setIsStopping(false);
+          resolvingActionIdsRef.current = new Set();
+          setResolvingActionIds(new Set());
         } else if (msg.type === 'tool_call') {
           // A read tool starting also marks the end of whatever text bubble was streaming —
           // tokens after the tool result land in a new bubble rather than this one.
@@ -1355,15 +1472,21 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           liveActionIdsRef.current.add(msg.id);
           setMessages((current) => [
             ...current,
-            { id: msg.id, kind: 'action', name: msg.name, input: msg.input, summary: msg.summary, diff: msg.diff, status: 'pending' },
+            { id: msg.id, kind: 'action', name: msg.name, input: msg.input, summary: msg.summary, permissionMode: msg.permissionMode, diff: msg.diff, status: 'pending' },
           ]);
         } else if (msg.type === 'action_result') {
+          const resolving = new Set(resolvingActionIdsRef.current);
+          resolving.delete(msg.id);
+          resolvingActionIdsRef.current = resolving;
+          setResolvingActionIds(resolving);
+          liveActionIdsRef.current.delete(msg.id);
           setMessages((current) =>
-            current.map((m) => (m.id === msg.id && m.kind === 'action' ? { ...m, status: msg.status, output: msg.output } : m)),
+            current.map((m) => (m.id === msg.id && m.kind === 'action'
+              ? { ...m, status: msg.status, output: msg.output, autoApproved: msg.autoApproved }
+              : m)),
           );
         } else if (msg.type === 'action_auto') {
-          // Already executed — matched an earlier "Allow for this session" choice, so this never
-          // passes through a 'pending' state at all.
+          // Already executed after Auto consent and a successful dry-run.
           streamingIdRef.current = null;
           setBusy(false);
           setMessages((current) => [
@@ -1392,28 +1515,82 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
       if (reconnectTimer) clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, [scope.context, entitled, sessionsLoaded]);
+  }, [chatContext, entitled, sessionsLoaded]);
 
   // Grows the input with its content (up to the CSS max-height, after which it scrolls
   // internally) — plain textareas don't do this on their own, and a fixed height clips
   // longer messages instead of showing them.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    const contentHeight = el.scrollHeight;
+    const maxHeight = 160;
+    el.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+    el.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
   }, [input]);
+
+  useEffect(() => {
+    if (!permissionMenuOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      const menu = document.querySelector('.ai-permission-menu');
+      if (target instanceof Node && (permissionButtonRef.current?.contains(target) || menu?.contains(target))) return;
+      setPermissionMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    return () => document.removeEventListener('pointerdown', dismissOutside);
+  }, [permissionMenuOpen]);
+
+  useEffect(() => {
+    if (!attachmentMenuOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      const menu = document.querySelector('.ai-attachment-menu');
+      const trigger = document.querySelector('.ai-attachment-trigger');
+      if (target instanceof Node && (trigger?.contains(target) || menu?.contains(target))) return;
+      setAttachmentMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    return () => document.removeEventListener('pointerdown', dismissOutside);
+  }, [attachmentMenuOpen]);
 
   // A pending write-tool proposal blocks new free-form messages — the backend enforces this
   // too (a plain user_message can't be sandwiched between an assistant's tool_use and its
   // tool_result in the Anthropic API's own message shape), this is just the matching UI state.
   const hasPendingAction = useMemo(() => messages.some((m) => m.kind === 'action' && m.status === 'pending'), [messages]);
+  const isTurnActive = busy || hasPendingAction;
   // Editing/regenerating rewinds the backend's own turn history (see ws/streams.ts's
   // `checkpoints` map) — disallowed mid-turn or with an unresolved proposal for the same reason
   // a fresh message is: the backend can't interleave that with an in-flight round.
   const canEditOrRegenerate = !busy && !hasPendingAction;
+  const pendingActionIds = messages
+    .filter((message): message is ActionChatMessage =>
+      message.kind === 'action' && message.status === 'pending' && liveActionIdsRef.current.has(message.id) && !resolvingActionIds.has(message.id),
+    )
+    .map((message) => message.id);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
+  const editingMessage = messages.find((message) => message.id === editingId);
+  const editHasChanges = editingMessage?.kind === 'text' && editText !== editingMessage.content;
+
+  useEffect(() => {
+    if (!editingId || discardConfirmationOpen) return;
+    const editingBubble = document.querySelector('.ai-panel-message-editing');
+    const handleOutsidePointer = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || editingBubble?.contains(event.target)) return;
+      if (editHasChanges) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDiscardConfirmationOpen(true);
+      } else {
+        setEditingId(null);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointer, true);
+  }, [editingId, discardConfirmationOpen, editHasChanges]);
 
   // A tool result "popped out" of the chat — looked up by id (rather than storing the message
   // itself) so it always reflects the latest state, though in practice a 'tool' message never
@@ -1431,16 +1608,28 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     setActiveArtifactId(null);
     onArtifactOpenChange?.(false);
   };
-  const addImageFiles = async (files: File[]) => {
+  const addAttachmentFiles = async (files: File[]) => {
+    const errors: string[] = [];
     const imageFiles = files.filter((f) => f.type.startsWith('image/'));
-    if (imageFiles.length === 0) return;
-    if (attachedImages.length + imageFiles.length > MAX_IMAGES_PER_MESSAGE) {
-      setError(uiText.aiAssistant.tooManyImages(MAX_IMAGES_PER_MESSAGE));
-      return;
+    const allowedImageFiles = imageFiles.slice(0, Math.max(0, MAX_IMAGES_PER_MESSAGE - attachedImages.length));
+    if (allowedImageFiles.length < imageFiles.length) {
+      errors.push(uiText.aiAssistant.tooManyImages(MAX_IMAGES_PER_MESSAGE));
     }
-    for (const file of imageFiles) {
+    const textFiles: File[] = [];
+    const unsupportedFiles: File[] = [];
+    for (const file of files.filter((candidate) => !imageFiles.includes(candidate))) {
+      const extension = /\.[^.]+$/.exec(file.name.toLowerCase())?.[0] ?? '';
+      if (TEXT_FILE_EXTENSIONS.has(extension)) textFiles.push(file);
+      else unsupportedFiles.push(file);
+    }
+    const allowedTextFiles = textFiles.slice(0, Math.max(0, MAX_TEXT_FILES_PER_MESSAGE - attachedFiles.length));
+    if (allowedTextFiles.length < textFiles.length) {
+      errors.push(uiText.aiAssistant.tooManyTextFiles(MAX_TEXT_FILES_PER_MESSAGE));
+    }
+    if (unsupportedFiles.length > 0) errors.push(uiText.aiAssistant.unsupportedAttachment);
+    for (const file of allowedImageFiles) {
       if (file.size > MAX_SOURCE_FILE_BYTES) {
-        setError(uiText.aiAssistant.imageTooLarge(Math.round(MAX_SOURCE_FILE_BYTES / (1024 * 1024))));
+        errors.push(uiText.aiAssistant.imageTooLarge(Math.round(MAX_SOURCE_FILE_BYTES / (1024 * 1024))));
         continue;
       }
       try {
@@ -1448,20 +1637,57 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         setAttachedImages((current) =>
           current.length >= MAX_IMAGES_PER_MESSAGE ? current : [...current, image],
         );
-        setError(null);
       } catch {
-        setError(uiText.aiAssistant.unsupportedImageType);
+        errors.push(uiText.aiAssistant.unsupportedImageType);
       }
     }
+    for (const file of allowedTextFiles) {
+      if (file.size > MAX_TEXT_FILE_BYTES) {
+        errors.push(uiText.aiAssistant.textFileTooLarge(file.name, Math.round(MAX_TEXT_FILE_BYTES / 1024)));
+        continue;
+      }
+      try {
+        const content = await file.text();
+        if (hasDisallowedControlCharacters(content)) {
+          errors.push(uiText.aiAssistant.unsupportedAttachment);
+          continue;
+        }
+        setAttachedFiles((current) => [...current, { name: file.name, content }]);
+      } catch {
+        errors.push(uiText.aiAssistant.unsupportedAttachment);
+      }
+    }
+    setError(errors.length > 0 ? errors.join(' ') : null);
   };
 
   const removeAttachedImage = (index: number) => {
     setAttachedImages((current) => current.filter((_, i) => i !== index));
   };
 
+  const removeAttachedFile = (index: number) => {
+    setAttachedFiles((current) => current.filter((_, i) => i !== index));
+  };
+
+  const clearFilePickerFocus = () => {
+    imageInputRef.current?.blur();
+    textFileInputRef.current?.blur();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    textareaRef.current?.focus();
+  };
+
+  useEffect(() => {
+    const inputs = [imageInputRef.current, textFileInputRef.current];
+    const handleCancel = () => {
+      setAttachmentMenuOpen(false);
+      clearFilePickerFocus();
+    };
+    inputs.forEach((fileInput) => fileInput?.addEventListener('cancel', handleCancel));
+    return () => inputs.forEach((fileInput) => fileInput?.removeEventListener('cancel', handleCancel));
+  }, [entitled]);
+
   const sendMessage = () => {
     const text = input.trim();
-    if ((!text && attachedImages.length === 0) || hasPendingAction) return;
+    if ((!text && attachedImages.length === 0 && attachedFiles.length === 0) || hasPendingAction) return;
     if (!sessionReadyRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       // Distinct from the no-op guards above — this is the one the user actually needs to see:
       // without it, a dropped connection (e.g. mid-reconnect) swallowed the send with nothing
@@ -1476,39 +1702,57 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
     // above for why mutating nextMessageId inside a setState updater is unsafe under StrictMode.
     const id = `user-${nextMessageId++}`;
     const images = attachedImages;
+    const files = attachedFiles;
     setMessages((current) => [
       ...current,
-      { id, kind: 'text', role: 'user', content: text, turnId, ...(images.length > 0 ? { images } : {}) },
+      { id, kind: 'text', role: 'user', content: text, turnId, ...(images.length > 0 ? { images } : {}), ...(files.length > 0 ? { files } : {}) },
     ]);
     wsRef.current.send(
       JSON.stringify({
         type: 'user_message',
         text,
+        permissionMode,
         turnId,
         ...(focusedResource ? { focusedResource } : {}),
         ...(images.length > 0 ? { images: images.map(({ mediaType, data }) => ({ mediaType, data })) } : {}),
+        ...(files.length > 0 ? { files } : {}),
       }),
     );
     setInput('');
     setAttachedImages([]);
+    setAttachedFiles([]);
   };
 
   const startEdit = (id: string, content: string) => {
     if (!canEditOrRegenerate) return;
+    setDiscardConfirmationOpen(false);
     setEditingId(id);
     setEditText(content);
   };
-  const cancelEdit = () => setEditingId(null);
+  const cancelEdit = () => {
+    if (editHasChanges) {
+      setDiscardConfirmationOpen(true);
+      return;
+    }
+    setEditingId(null);
+    setDiscardConfirmationOpen(false);
+  };
+  const discardEdit = () => {
+    setDiscardConfirmationOpen(false);
+    setEditingId(null);
+  };
 
   const saveEdit = () => {
     const idx = messages.findIndex((m) => m.id === editingId);
     const target = idx !== -1 ? messages[idx] : undefined;
     const text = editText.trim();
     if (!target || target.kind !== 'text' || target.role !== 'user' || !target.turnId || !text) {
+      setDiscardConfirmationOpen(false);
       setEditingId(null);
       return;
     }
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    setDiscardConfirmationOpen(false);
     setEditingId(null);
     setError(null);
     setBusy(true);
@@ -1522,23 +1766,38 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
         type: 'edit_message',
         turnId: target.turnId,
         text,
+        permissionMode,
         ...(focusedResource ? { focusedResource } : {}),
         ...(target.images && target.images.length > 0
           ? { images: target.images.map(({ mediaType, data }) => ({ mediaType, data })) }
           : {}),
+        ...(target.files && target.files.length > 0 ? { files: target.files } : {}),
       }),
     );
   };
 
   const stopGenerating = () => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    setIsStopping(true);
+    setBusy(true);
     wsRef.current.send(JSON.stringify({ type: 'stop' }));
   };
 
-  const sendActionDecision = (id: string, approved: boolean, remember?: boolean) => {
+  const sendActionDecision = (id: string, approved: boolean) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (resolvingActionIdsRef.current.has(id) || !liveActionIdsRef.current.has(id)) return;
+    const action = messages.find((message) => message.id === id);
+    if (!action || action.kind !== 'action' || action.status !== 'pending') return;
+    const resolving = new Set(resolvingActionIdsRef.current);
+    resolving.add(id);
+    resolvingActionIdsRef.current = resolving;
+    setResolvingActionIds(resolving);
     setBusy(true);
-    wsRef.current.send(JSON.stringify({ type: 'action_decision', id, approved, ...(remember ? { remember: true } : {}) }));
+    wsRef.current.send(JSON.stringify({ type: 'action_decision', id, approved }));
+  };
+
+  const sendActionDecisions = (ids: string[], approved: boolean) => {
+    for (const id of ids) sendActionDecision(id, approved);
   };
 
   const applyPicker = () => {
@@ -1703,7 +1962,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes('Files')) return;
             e.preventDefault();
-            setDragOver(true);
+            setDragOver(!isTurnActive);
           }}
           onDragLeave={(e) => {
             // dragleave also fires when the pointer crosses into a CHILD element, which would
@@ -1715,10 +1974,10 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
             if (!e.dataTransfer.types.includes('Files')) return;
             e.preventDefault();
             setDragOver(false);
-            void addImageFiles(Array.from(e.dataTransfer.files));
+            if (!isTurnActive) void addAttachmentFiles(Array.from(e.dataTransfer.files));
           }}
         >
-          {dragOver && <div className="ai-panel-drop-hint">{uiText.aiAssistant.dropImageHint}</div>}
+          {dragOver && <div className="ai-panel-drop-hint">{uiText.aiAssistant.dropFilesHint}</div>}
 
           {pickerOpen && (
             <div className="ai-panel-picker">
@@ -1755,6 +2014,7 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
             messages={messages}
             onDecide={sendActionDecision}
             liveActionIds={liveActionIdsRef.current}
+            resolvingActionIds={resolvingActionIds}
             canEdit={canEditOrRegenerate}
             editingId={editingId}
             editText={editText}
@@ -1778,8 +2038,29 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           {!connected && !busy && <div className="ai-panel-pending-hint">{uiText.aiAssistant.reconnecting}</div>}
           {hasPendingAction && <div className="ai-panel-pending-hint">{uiText.aiAssistant.pendingActionHint}</div>}
 
+          {pendingActionIds.length > 0 && (
+            <div className="ai-action-review-bar" role="group" aria-label={uiText.aiAssistant.pendingActionGroup}>
+              <span>{uiText.aiAssistant.pendingActionCount(pendingActionIds.length)}</span>
+              {pendingActionIds.length > 1 && !isStopping && (
+                <div className="ai-action-review-bulk-buttons">
+                  <button type="button" className="ai-action-review-reject-all" onClick={() => sendActionDecisions(pendingActionIds, false)}>
+                    {uiText.aiAssistant.rejectAll}
+                  </button>
+                  <button type="button" className="ai-action-review-approve-all" onClick={() => sendActionDecisions(pendingActionIds, true)}>
+                    {uiText.aiAssistant.approveAll}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="ai-panel-input-row">
             <div className={`ai-input-shell${dragOver ? ' ai-input-shell-drag-over' : ''}`}>
+              <div className="ai-composer-context" title={`Kubernetes context: ${scope.context ?? 'Not connected'}`}>
+                <Network size={13} aria-hidden="true" />
+                {/* <span className="ai-composer-context-label">Kubernetes context</span> */}
+                <span className="ai-composer-context-name">{scope.context ?? 'Not connected'}</span>
+              </div>
               {attachedImages.length > 0 && (
                 <div className="ai-attached-images">
                   {attachedImages.map((image, index) => (
@@ -1789,6 +2070,25 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                         baseClassName="ai-attached-image-remove"
                         title={uiText.aiAssistant.removeImage}
                         onClick={() => removeAttachedImage(index)}
+                        disabled={isTurnActive}
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </IconActionButton>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {attachedFiles.length > 0 && (
+                <div className="ai-attached-files">
+                  {attachedFiles.map((file, index) => (
+                    <div key={`${file.name}-${index}`} className="ai-attached-file">
+                      <Paperclip size={14} aria-hidden="true" />
+                      <span title={file.name}>{file.name}</span>
+                      <IconActionButton
+                        baseClassName="ai-attached-file-remove"
+                        title={uiText.aiAssistant.removeAttachment}
+                        onClick={() => removeAttachedFile(index)}
+                        disabled={isTurnActive}
                       >
                         <X size={12} aria-hidden="true" />
                       </IconActionButton>
@@ -1818,20 +2118,38 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                     .filter((f): f is File => f !== null);
                   if (files.length === 0) return;
                   e.preventDefault();
-                  void addImageFiles(files);
+                  void addAttachmentFiles(files);
                 }}
                 placeholder={uiText.aiAssistant.inputPlaceholder}
                 rows={1}
+                disabled={isTurnActive}
               />
               <input
-                ref={fileInputRef}
+                ref={imageInputRef}
                 type="file"
                 accept="image/png,image/jpeg,image/gif,image/webp"
                 multiple
                 hidden
+                disabled={isTurnActive}
                 onChange={(e) => {
-                  void addImageFiles(Array.from(e.target.files ?? []));
+                  void addAttachmentFiles(Array.from(e.target.files ?? []));
                   e.target.value = '';
+                  setAttachmentMenuOpen(false);
+                  clearFilePickerFocus();
+                }}
+              />
+              <input
+                ref={textFileInputRef}
+                type="file"
+                accept=".txt,.md,.markdown,.log,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.jsx,.tsx,.py,.sh,.bash,.ps1,.sql,.toml,.ini,.conf,.properties,.go,.rs,.java,.c,.h,.cpp,.cs,.rb,.php"
+                multiple
+                hidden
+                disabled={isTurnActive}
+                onChange={(e) => {
+                  void addAttachmentFiles(Array.from(e.target.files ?? []));
+                  e.target.value = '';
+                  setAttachmentMenuOpen(false);
+                  clearFilePickerFocus();
                 }}
               />
               <div className="ai-input-toolbar-row">
@@ -1840,36 +2158,118 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
                 <div className="ai-input-toolbar-left">
                   <IconActionButton
                     baseClassName="ai-skills-button"
-                    title={uiText.aiAssistant.attachImageButton}
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={attachedImages.length >= MAX_IMAGES_PER_MESSAGE}
+                    className={`${attachmentMenuOpen ? 'active' : ''} ai-attachment-trigger`}
+                    title={uiText.aiAssistant.attachFilesButton}
+                    ariaExpanded={attachmentMenuOpen}
+                    ariaHasPopup="menu"
+                    onClick={() => setAttachmentMenuOpen((current) => !current)}
+                    disabled={isTurnActive || (attachedImages.length >= MAX_IMAGES_PER_MESSAGE && attachedFiles.length >= MAX_TEXT_FILES_PER_MESSAGE)}
                   >
-                    <ImagePlus size={16} aria-hidden="true" />
+                    <Paperclip size={16} aria-hidden="true" />
                   </IconActionButton>
-                  <IconActionButton
+                  {/* <IconActionButton
                     baseClassName="ai-skills-button"
                     className={skillsOpen ? 'active' : undefined}
                     title={uiText.aiAssistant.skillsButton}
                     ariaPressed={skillsOpen}
                     onClick={() => setSkillsOpen((v) => !v)}
+                    disabled={isTurnActive}
                   >
                     <Sparkles size={16} aria-hidden="true" />
-                  </IconActionButton>
+                  </IconActionButton> */}
+                  <button
+                    ref={permissionButtonRef}
+                    type="button"
+                    className={`ai-permission-button${permissionMenuOpen ? ' active' : ''}`}
+                    title={uiText.aiAssistant.permissionModeTitle}
+                    aria-label={`${uiText.aiAssistant.permissionModeTitle}: ${uiText.aiAssistant.permissionModes[permissionMode].label}`}
+                    aria-expanded={permissionMenuOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setPermissionMenuOpen((current) => !current)}
+                    disabled={isTurnActive}
+                  >
+                    <ShieldCheck size={15} aria-hidden="true" />
+                    <span>{uiText.aiAssistant.permissionModes[permissionMode].label}</span>
+                  </button>
+                  <AiAssistantInfoButton />
                 </div>
                 <IconActionButton
                   baseClassName="ai-send-button"
-                  className={busy ? 'ai-send-button-stop' : undefined}
-                  onClick={busy ? stopGenerating : sendMessage}
-                  disabled={busy ? false : !connected || (!input.trim() && attachedImages.length === 0) || hasPendingAction}
-                  title={busy ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
+                  className={isTurnActive ? 'ai-send-button-stop' : undefined}
+                  onClick={isTurnActive ? stopGenerating : sendMessage}
+                  disabled={isTurnActive
+                    ? !connected || isStopping
+                    : !connected || (!input.trim() && attachedImages.length === 0 && attachedFiles.length === 0)}
+                  title={isTurnActive ? uiText.aiAssistant.stopGenerating : uiText.aiAssistant.send}
                 >
-                  {busy ? <Square size={12} aria-hidden="true" /> : <SendHorizontal size={16} aria-hidden="true" />}
+                  {isTurnActive ? <Square size={12} aria-hidden="true" /> : <SendHorizontal size={16} aria-hidden="true" />}
                 </IconActionButton>
               </div>
               {skillsOpen && <SkillsMenu onSelect={applySkill} onClose={() => setSkillsOpen(false)} />}
+              {permissionMenuOpen && permissionButtonRef.current && (
+                <AnchoredMenu
+                  anchorRef={permissionButtonRef}
+                  ariaLabel={uiText.aiAssistant.permissionModeTitle}
+                  className="ai-permission-menu"
+                >
+                  {(['plan', 'manual', 'auto'] as const).map((mode) => (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={permissionMode === mode}
+                      className="action-menu-item ai-permission-menu-item"
+                      key={mode}
+                      onClick={() => {
+                        setPermissionMode(mode);
+                        setPermissionMenuOpen(false);
+                      }}
+                    >
+                      <span className="ai-permission-menu-copy">
+                        <strong>{uiText.aiAssistant.permissionModes[mode].label}</strong>
+                        <small>{uiText.aiAssistant.permissionModes[mode].description}</small>
+                      </span>
+                      {permissionMode === mode && <Check size={15} aria-hidden="true" />}
+                    </button>
+                  ))}
+                </AnchoredMenu>
+              )}
             </div>
           </div>
         </div>
+        {attachmentMenuOpen && (
+          <AnchoredMenu
+            anchorSelector=".ai-attachment-trigger"
+            ariaLabel={uiText.aiAssistant.attachmentMenuTitle}
+            className="ai-attachment-menu"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="action-menu-item ai-attachment-menu-item"
+              disabled={attachedImages.length >= MAX_IMAGES_PER_MESSAGE}
+              onClick={() => {
+                setAttachmentMenuOpen(false);
+                imageInputRef.current?.click();
+              }}
+            >
+              <ImagePlus size={16} aria-hidden="true" />
+              <span>{uiText.aiAssistant.attachImageOption}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="action-menu-item ai-attachment-menu-item"
+              disabled={attachedFiles.length >= MAX_TEXT_FILES_PER_MESSAGE}
+              onClick={() => {
+                setAttachmentMenuOpen(false);
+                textFileInputRef.current?.click();
+              }}
+            >
+              <FileText size={16} aria-hidden="true" />
+              <span>{uiText.aiAssistant.attachTextFileOption}</span>
+            </button>
+          </AnchoredMenu>
+        )}
         {activeArtifact && (
           <div className="ai-panel-artifact-col">
             <div className="ai-artifact-header">
@@ -1895,6 +2295,24 @@ export function AiAssistantPanel({ scope, onClose, onArtifactOpenChange }: Props
           </div>
         )}
         </div>
+        {discardConfirmationOpen && (
+          <Modal
+            title={uiText.aiAssistant.unsavedEditTitle}
+            onClose={() => setDiscardConfirmationOpen(false)}
+            cardClassName="confirm-modal"
+            bodyClassName="confirm-body"
+            role="alertdialog"
+            footer={(
+              <>
+                <button onClick={() => setDiscardConfirmationOpen(false)}>{uiText.aiAssistant.cancel}</button>
+                <button className="confirm-danger" onClick={discardEdit}>{uiText.aiAssistant.discardEdit}</button>
+                <button className="primary" onClick={saveEdit}>{uiText.aiAssistant.save}</button>
+              </>
+            )}
+          >
+            <div className="confirm-message">{uiText.aiAssistant.unsavedEditMessage}</div>
+          </Modal>
+        )}
       </AiEntitlementGate>
     </div>
   );

@@ -899,14 +899,24 @@ export default function App() {
   // Keep global active context aligned with the active context-scoped tab.
   useEffect(() => {
     const tabContext = activeTab?.originContext;
-    if (!tabContext) return;
+    if (!tabContext || !contextInitialized || contextsQuery.isFetching || !contextsQuery.data) return;
     const alreadyActive =
       tabContext === context &&
       (activeTab?.originSource ?? undefined) === (activeContextOrigin?.source ?? undefined) &&
       (activeTab?.originKubeconfigId ?? undefined) === (activeContextOrigin?.kubeconfigId ?? undefined);
     if (alreadyActive) return;
     void handleContextChange(tabContext, { source: activeTab?.originSource, kubeconfigId: activeTab?.originKubeconfigId });
-  }, [activeTabId]);
+  }, [
+    activeTabId,
+    activeTab?.originContext,
+    activeTab?.originSource,
+    activeTab?.originKubeconfigId,
+    activeContextOrigin,
+    context,
+    contextInitialized,
+    contextsQuery.data,
+    contextsQuery.isFetching,
+  ]);
 
   const openView = (
     view: View,
