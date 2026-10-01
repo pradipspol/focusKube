@@ -138,7 +138,7 @@ export function TimelinePanel({ scope }: Props) {
         onToggleLive={(live) => setCurrentTime(live ? now : currentTime)}
       />
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
+      <div className="data-table-content" style={{ padding: '1rem' }}>
         <h3 style={{ margin: '0 0 1rem 0' }}>{uiText.timeline.clusterStatePrefix} {new Date(currentTime).toLocaleString()}</h3>
 
         {reconstructedState.length === 0 ? (

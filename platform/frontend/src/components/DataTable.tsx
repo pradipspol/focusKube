@@ -11,6 +11,9 @@ import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility'
 import { AnchoredMenu } from './AnchoredMenu';
 import { uiText } from '../text';
 import { ActionMenuTrigger } from './ActionMenuTrigger';
+import { useColumnLayout } from './useColumnLayout';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { TableScrollArea } from './TableScrollArea';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 
 export interface DataColumn<T> {
@@ -85,13 +88,10 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string>(initialSortKey ?? columns[0]?.key ?? '');
   const [sortDir, setSortDir] = useState<SortDir>(initialSortDirection);
-  const [widths, setWidths] = useState<Record<string, number>>({});
-  const [autoWidths, setAutoWidths] = useState<Record<string, number>>({});
-  const [hasManualResize, setHasManualResize] = useState(false);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const menuAnchorRef = useRef<HTMLElement | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
   const hasActions = !!onShowDetails || actions.length > 0;
@@ -103,8 +103,17 @@ export function DataTable<T>({
     () => columns.filter((column) => visibleColumns.includes(column.key)),
     [columns, visibleColumns],
   );
-
-  const colSignature = displayColumns.map((c) => `${c.key}:${c.width ?? ''}`).join('|');
+  const widthLayout = useMemo(() => [
+    ...(selectable ? [{ key: SELECT_KEY, width: SELECT_WIDTH, minWidth: SELECT_WIDTH }] : []),
+    ...columns.map((column) => ({ key: column.key, width: column.width ?? 120, minWidth: 56 })),
+    ...(hasActions || showColumnPicker ? [{ key: ACTIONS_KEY, width: ACTIONS_WIDTH, minWidth: 48 }] : []),
+  ], [columns, hasActions, selectable, showColumnPicker]);
+  const { hasManualResize, startResize, widthFor: colWidth } = useColumnLayout({
+    hostRef: wrapperRef,
+    columns: widthLayout,
+    fillKey: columns[0]?.key,
+    fitKey: rows.length,
+  });
 
   useEffect(() => {
     setSortDir(initialSortDirection);
@@ -121,57 +130,15 @@ export function DataTable<T>({
       return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
     });
   }, [rows, columns, sortKey, sortDir]);
-
-  // ---- Auto-fit columns to the available width (unless manually resized) ----
-  useEffect(() => {
-    if (hasManualResize) return;
-
-    const fit = () => {
-      const host = wrapperRef.current;
-      if (!host) return;
-      const available = host.clientWidth - 2;
-      if (available <= 0) return;
-
-      const layout = [
-        ...(selectable ? [{ key: SELECT_KEY, base: SELECT_WIDTH, floor: SELECT_WIDTH }] : []),
-        ...columns.map((c) => ({ key: c.key, base: c.width ?? 120, floor: 56 })),
-        ...(hasActions ? [{ key: ACTIONS_KEY, base: ACTIONS_WIDTH, floor: 48 }] : []),
-      ];
-      const totalBase = layout.reduce((sum, c) => sum + c.base, 0);
-      if (totalBase <= available) {
-        setAutoWidths({});
-        return;
-      }
-
-      const totalFloor = layout.reduce((sum, c) => sum + c.floor, 0);
-      const next: Record<string, number> = {};
-      if (totalFloor >= available) {
-        layout.forEach((c) => {
-          next[c.key] = c.floor;
-        });
-      } else {
-        const slack = available - totalFloor;
-        let used = 0;
-        layout.forEach((c) => {
-          next[c.key] = c.floor + Math.floor((c.base / totalBase) * slack);
-          used += next[c.key];
-        });
-        const fillKey = columns[0]?.key ?? layout[0].key;
-        next[fillKey] += available - used;
-      }
-      setAutoWidths(next);
-    };
-
-    fit();
-    const rafId = window.requestAnimationFrame(fit);
-    window.addEventListener('resize', fit);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', fit);
-    };
-  }, [colSignature, rows.length, selectable, hasActions, hasManualResize]);
-
-  const colWidth = (key: string, fallback?: number) => widths[key] ?? autoWidths[key] ?? fallback;
+  const rowVirtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => wrapperRef.current,
+    estimateSize: () => 40,
+    getItemKey: (index) => rowKey(sorted[index]),
+    measureElement: (element) => element.getBoundingClientRect().height,
+    overscan: 10,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
 
   const toggleSort = (col: DataColumn<T>) => {
     if (col.sortable === false) return;
@@ -181,20 +148,6 @@ export function DataTable<T>({
       setSortKey(col.key);
       setSortDir('asc');
     }
-  };
-
-  const startResize = (key: string, startWidth: number, startX: number) => {
-    setHasManualResize(true);
-    const onMove = (e: MouseEvent) => {
-      const next = Math.max(60, startWidth + e.clientX - startX);
-      setWidths((cur) => ({ ...cur, [key]: next }));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
   };
 
   const emitSelection = (next: Set<string>) => {
@@ -256,7 +209,7 @@ export function DataTable<T>({
   }, [columnMenuOpen]);
 
   return (
-    <div className="data-table-wrapper" ref={wrapperRef} onScroll={onScroll}>
+    <TableScrollArea scrollRef={wrapperRef} onScroll={onScroll}>
       <table className="data-table">
         <colgroup>
           {selectable && <col style={{ width: colWidth(SELECT_KEY, SELECT_WIDTH) }} />}
@@ -324,12 +277,20 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row) => {
+          {virtualRows[0]?.start > 0 && (
+            <tr aria-hidden="true">
+              <td colSpan={displayColumns.length + Number(selectable) + Number(hasActions || showColumnPicker)} style={{ height: virtualRows[0].start, padding: 0, border: 0 }} />
+            </tr>
+          )}
+          {virtualRows.map((virtualRow) => {
+            const row = sorted[virtualRow.index];
             const key = rowKey(row);
             const extraRowClassName = rowClassName?.(row);
             return (
               <tr
                 key={key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
                 className={`${extraRowClassName ?? ''} ${rowClick ? 'clickable-row' : ''}`.trim()}
                 onClick={rowClick ? () => rowClick(row) : undefined}
               >
@@ -388,8 +349,16 @@ export function DataTable<T>({
               </tr>
             );
           })}
+          {virtualRows.length > 0 && rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end > 0 && (
+            <tr aria-hidden="true">
+              <td
+                colSpan={displayColumns.length + Number(selectable) + Number(hasActions || showColumnPicker)}
+                style={{ height: rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, padding: 0, border: 0 }}
+              />
+            </tr>
+          )}
         </tbody>
       </table>
-    </div>
+    </TableScrollArea>
   );
 }

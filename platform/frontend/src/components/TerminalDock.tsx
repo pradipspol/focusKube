@@ -9,7 +9,10 @@ import { uiText } from '../text';
 import { PanelResizer } from './PanelResizer';
 import { FollowToggle } from './FollowToggle';
 import { CloseButton } from './CloseButton';
+import { TerminalSearchControls } from './TerminalSearchControls';
 import { Maximize2, Minus, Plus } from 'lucide-react';
+
+const MAX_TERMINAL_LOG_LINES = 5000;
 
 export type TerminalSession =
   | {
@@ -637,26 +640,25 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
           </span>
         </div>
         <div className="terminal-session-status-group terminal-session-status-group-search">
-          <input
-            className="terminal-session-search-input"
-            type="search"
-            value={searchQuery}
-            onChange={(event) => {
-              setSearchQuery(event.target.value);
+          <TerminalSearchControls
+            query={searchQuery}
+            onQueryChange={(query) => {
+              setSearchQuery(query);
               setSearchIndex(0);
             }}
             placeholder={uiText.terminalDock.searchTerminal}
-            aria-label={uiText.terminalDock.searchTerminalContents}
+            ariaLabel={uiText.terminalDock.searchTerminalContents}
+            canNavigate={!!searchQuery.trim()}
+            onPrevious={() => {
+              setSearchIndex((current) => (searchHits ? (current - 1 + searchHits) % searchHits : 0));
+              runTerminalSearch('previous');
+            }}
+            onNext={() => {
+              setSearchIndex((current) => current + 1);
+              runTerminalSearch('next');
+            }}
+            countLabel={searchQuery.trim() ? `${searchHits ? `${Math.min(searchIndex + 1, searchHits)}/${searchHits}` : '0/0'} matches` : 'scrollback'}
           />
-          <button className="terminal-search-nav-button" type="button" onClick={() => { setSearchIndex((current) => (searchHits ? (current - 1 + searchHits) % searchHits : 0)); runTerminalSearch('previous'); }} disabled={!searchQuery.trim()}>
-            Prev
-          </button>
-          <button className="terminal-search-nav-button" type="button" onClick={() => { setSearchIndex((current) => current + 1); runTerminalSearch('next'); }} disabled={!searchQuery.trim()}>
-            Next
-          </button>
-          <span className="terminal-session-search-count">
-            {searchQuery.trim() ? `${searchHits ? `${Math.min(searchIndex + 1, searchHits)}/${searchHits}` : '0/0'} matches` : 'scrollback'}
-          </span>
           {/* <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? 'connected' : 'disconnected'}</span> */}
                     <span className={`badge ${connected ? 'ok' : 'warn'}`}>{connected ? uiText.terminalDock.connected : uiText.terminalDock.disconnected}</span>
           {/* <span className="terminal-session-status">{statusText}</span> */}
@@ -676,14 +678,19 @@ function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSe
   const [connected, setConnected] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
-  const [logText, setLogText] = useState('');
+  const [logLines, setLogLines] = useState<string[]>([]);
   const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const shouldScrollRef = useRef(false);
+  const pendingLinesRef = useRef<string[]>([]);
+  const partialLineRef = useRef('');
+  const flushFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!container) return;
-    setLogText('');
+    setLogLines([]);
+    pendingLinesRef.current = [];
+    partialLineRef.current = '';
     setSearchIndex(0);
 
     const url = wsUrl('/ws/logs', {
@@ -698,14 +705,36 @@ function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSe
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
+    const scheduleFlush = () => {
+      if (flushFrameRef.current !== null) return;
+      flushFrameRef.current = window.requestAnimationFrame(() => {
+        flushFrameRef.current = null;
+        const incomingLines = pendingLinesRef.current;
+        pendingLinesRef.current = [];
+        const partialLine = partialLineRef.current;
+        setLogLines((current) => {
+          const completeLines = current.length > 0 ? current.slice(0, -1) : [];
+          return [...completeLines, ...incomingLines, partialLine].slice(-MAX_TERMINAL_LOG_LINES);
+        });
+      });
+    };
     ws.onmessage = (event) => {
       const chunk = typeof event.data === 'string' ? event.data : '';
       const hostNow = hostRef.current;
       const atBottom = hostNow ? hostNow.scrollHeight - hostNow.scrollTop - hostNow.clientHeight < 40 : false;
       shouldScrollRef.current = follow && atBottom;
-      setLogText((current) => `${current}${chunk}`);
+      const parts = `${partialLineRef.current}${chunk}`.split(/\r?\n/);
+      partialLineRef.current = parts.pop() ?? '';
+      pendingLinesRef.current = [...pendingLinesRef.current, ...parts].slice(-MAX_TERMINAL_LOG_LINES);
+      scheduleFlush();
     };
-    return () => closeSocket(ws);
+    return () => {
+      if (flushFrameRef.current !== null) {
+        window.cancelAnimationFrame(flushFrameRef.current);
+        flushFrameRef.current = null;
+      }
+      closeSocket(ws);
+    };
   }, [container, follow, session]);
 
   useEffect(() => {
@@ -713,10 +742,10 @@ function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSe
     if (!host || !shouldScrollRef.current) return;
     host.scrollTop = host.scrollHeight;
     shouldScrollRef.current = false;
-  }, [logText, searchQuery]);
+  }, [logLines, searchQuery]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const lines = useMemo(() => logText.split(/\r?\n/), [logText]);
+  const lines = logLines;
   const matchingLineIndexes = useMemo(() => {
     if (!normalizedQuery) return [] as number[];
     const matches: number[] = [];
@@ -762,24 +791,19 @@ function DockedPodLogsSessionPane({ session, active }: { session: LogsTerminalSe
         <div className="terminal-session-title-group terminal-session-title-group-search">
           <span className="terminal-session-title">{session.title}</span>
           <span className="terminal-session-meta">{uiText.terminalDock.podLogs}</span>
-          <input
-            className="terminal-session-search-input"
-            type="search"
-            value={searchQuery}
-            onChange={(event) => {
-              setSearchQuery(event.target.value);
+          <TerminalSearchControls
+            query={searchQuery}
+            onQueryChange={(query) => {
+              setSearchQuery(query);
               setSearchIndex(0);
             }}
             placeholder={uiText.terminalDock.searchPodLogs}
-            aria-label={uiText.terminalDock.searchPodLogs}
+            ariaLabel={uiText.terminalDock.searchPodLogs}
+            countLabel={normalizedQuery ? uiText.terminalDock.matches(matchCount) : uiText.terminalDock.allLines}
+            canNavigate={!!normalizedQuery}
+            onPrevious={() => setSearchIndex((current) => (matchCount ? (current - 1 + matchCount) % matchCount : 0))}
+            onNext={() => setSearchIndex((current) => (matchCount ? (current + 1) % matchCount : 0))}
           />
-          <span className="terminal-session-search-count">{normalizedQuery ? uiText.terminalDock.matches(matchCount) : uiText.terminalDock.allLines}</span>
-          <button className="terminal-search-nav-button" type="button" onClick={() => setSearchIndex((current) => (matchCount ? (current - 1 + matchCount) % matchCount : 0))} disabled={!normalizedQuery}>
-            {uiText.terminalDock.previous}
-          </button>
-          <button className="terminal-search-nav-button" type="button" onClick={() => setSearchIndex((current) => (matchCount ? (current + 1) % matchCount : 0))} disabled={!normalizedQuery}>
-            {uiText.terminalDock.next}
-          </button>
         </div>
         <div className="terminal-session-status-group terminal-session-status-group-logs">
           <div className="field terminal-session-log-field">

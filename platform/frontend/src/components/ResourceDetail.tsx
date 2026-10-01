@@ -6,6 +6,7 @@ import { api, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { getMetricsWorker } from '../utils/workerRuntime';
+import { parseCpuToMillicores, parseMemoryToBytes } from '../utils/kubernetesQuantities';
 import { useWatchedResourceList } from '../hooks/useWatchedResourceList';
 import { LogsPanel } from './LogsPanel';
 import { ExecTerminal } from './ExecTerminal';
@@ -22,6 +23,7 @@ import { TreeDisclosure } from './TreeDisclosure';
 import { uiText } from '../text';
 import { Spinner } from './Spinner';
 import { CloseButton } from './CloseButton';
+import { DrawerShell } from './DrawerShell';
 import { SelectControl } from './SelectControl';
 import { Ellipsis, Eye, List, Pencil, RotateCw, Save, Terminal, Trash2 } from 'lucide-react';
 
@@ -137,9 +139,10 @@ export function ResourceDetail({
   }, [needsHydration, fullObjectQuery.data, fullObjectQuery.isLoading]);
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-header">
+    <DrawerShell
+      onClose={onClose}
+      header={
+        <>
           <span className="badge">{currentObject.kind ?? plural}</span>
           <h3>{ns ? `${ns} / ${name}` : name}</h3>
           <div className="drawer-header-actions">
@@ -188,7 +191,9 @@ export function ResourceDetail({
             )}
             <CloseButton className="drawer-action-icon" label={uiText.common.close} onClick={onClose} />
           </div>
-        </div>
+        </>
+      }
+    >
 
         <div className="tabs">
           {tabs.map((t) => (
@@ -255,8 +260,7 @@ export function ResourceDetail({
         )}
         {tab === 'exec' && <ExecTerminal pod={currentObject} context={scope.context} onOpenInTerminal={onOpenPodTerminal} />}
         {tab === 'secret' && <SecretTab name={name} scope={opScope} />}
-      </div>
-    </div>
+    </DrawerShell>
   );
 }
 
@@ -1735,24 +1739,6 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} Mi`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} Ki`;
   return `${bytes.toFixed(0)} B`;
-}
-
-function parseCpuToMillicores(value?: string): number {
-  if (!value) return 0;
-  if (value.endsWith('n')) return Number(value.slice(0, -1)) / 1_000_000;
-  if (value.endsWith('u')) return Number(value.slice(0, -1)) / 1_000;
-  if (value.endsWith('m')) return Number(value.slice(0, -1));
-  return Number(value) * 1000;
-}
-
-function parseMemoryToBytes(value?: string): number {
-  if (!value) return 0;
-  const match = /^([0-9.]+)([KMGTE]i|[kMGTPE]|m)?$/.exec(value);
-  if (!match) return Number(value) || 0;
-  const amount = Number(match[1]);
-  const unit = match[2] ?? '';
-  const factors: Record<string, number> = { '': 1, k: 1_000, M: 1_000_000, G: 1_000_000_000, T: 1_000_000_000_000, P: 1_000_000_000_000_000, E: 1_000_000_000_000_000_000, Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, Pi: 1024 ** 5, Ei: 1024 ** 6, m: 0.001 };
-  return amount * (factors[unit] ?? 1);
 }
 
 function sumContainerResources(containers: any[], key: 'requests' | 'limits') {

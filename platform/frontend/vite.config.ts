@@ -9,6 +9,9 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
+  optimizeDeps: {
+    include: ['@tanstack/react-virtual'],
+  },
   server: {
     port: 5173,
     allowedHosts: [

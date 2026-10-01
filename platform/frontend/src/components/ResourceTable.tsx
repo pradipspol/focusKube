@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { api, ApiError, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { usePermissions } from '../auth/permissions';
 import { age, statusOf } from '../utils/format';
 import { downloadFile, toCsv, toTxt, type ExportFormat } from '../utils/export';
 import { getWatchWorker, releaseWatchWorker } from '../utils/workerRuntime';
+import { parseCpuToMillicores, parseMemoryToBytes } from '../utils/kubernetesQuantities';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 import { NamespaceSelector } from './NamespaceSelector';
 import { LoadingOverlay } from './LoadingOverlay';
@@ -14,6 +16,8 @@ import { EmptyState } from './EmptyState';
 import { RefreshButton } from './RefreshButton';
 import { Notice } from './Notice';
 import { ColumnVisibilityPicker, useColumnVisibility } from './columnVisibility';
+import { useColumnLayout } from './useColumnLayout';
+import { TableScrollArea } from './TableScrollArea';
 import { AnchoredMenu } from './AnchoredMenu';
 import { useConfirm, type ConfirmFn } from './ConfirmDialog';
 import type { OpenPodLogsTerminalRequest, OpenPodTerminalRequest } from './TerminalDock';
@@ -23,7 +27,7 @@ import { Spinner } from './Spinner';
 import { ActionMenuTrigger } from './ActionMenuTrigger';
 import { CloseButton } from './CloseButton';
 import { IconActionButton } from './IconActionButton';
-import { ArrowDown, ArrowUp, CircleAlert, Download, Ellipsis, LayoutDashboard, List, Pencil, Plus, RotateCw, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleAlert, Download, Ellipsis, LayoutDashboard, List, Pencil, Plus, RotateCw, Terminal, Trash2, TriangleAlert, type LucideIcon } from 'lucide-react';
 
 interface Props {
   watchKey?: string;
@@ -76,6 +80,15 @@ const EVENT_TIME_RANGE_MS: Record<Exclude<EventTimeRange, 'all'>, number> = {
 function eventTimestampOf(o: K8sObject): number {
   const value = (o as any).lastTimestamp ?? (o as any).eventTime ?? o.metadata?.creationTimestamp;
   return new Date(value ?? '').getTime() || 0;
+}
+
+function resourceSelectionKey(resource: K8sObject): string {
+  return resource.metadata?.uid ?? `${resource.metadata?.namespace}/${resource.metadata?.name}`;
+}
+
+function errorMessageOf(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim() || uiText.resource.unknownDeleteFailure;
 }
 
 type ActionItem = {
@@ -271,41 +284,6 @@ const COLUMNS_BY_PLURAL: Record<string, ColumnDef[]> = {
   events: EVENTS_COLUMNS,
 };
 
-const COLUMN_VISIBILITY_STORAGE_PREFIX = 'k8sExplorer.resourceColumns';
-
-function getColumnVisibilityStorageKey(plural: string): string {
-  return `${COLUMN_VISIBILITY_STORAGE_PREFIX}.${plural}`;
-}
-
-function getDefaultVisibleColumns(plural: string): string[] {
-  return (COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS)
-    .filter((column) => column.key !== 'select' && column.key !== 'actions')
-    .map((column) => column.key);
-}
-
-function readVisibleColumns(plural: string): string[] {
-  const defaults = getDefaultVisibleColumns(plural);
-  if (typeof window === 'undefined') {
-    return defaults;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(getColumnVisibilityStorageKey(plural));
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return defaults;
-    const valid = parsed.filter((key): key is string => typeof key === 'string' && defaults.includes(key));
-    return valid.length > 0 ? valid : defaults;
-  } catch {
-    return defaults;
-  }
-}
-
-function persistVisibleColumns(plural: string, next: string[]) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(getColumnVisibilityStorageKey(plural), JSON.stringify(next));
-}
-
 const QUICK_ACTION_KEYS_BY_PLURAL: Record<string, string[]> = {
   pods: ['pods.logs', 'pods.shell', 'common.editYaml'],
   deployments: ['deploy.restart', 'deploy.logs', 'deploy.overview', 'deploy.actions', 'common.editYaml'],
@@ -454,6 +432,10 @@ export function ResourceTable({
   const { canWrite, canDelete } = usePermissions();
   const confirm = useConfirm();
   const [selected, setSelected] = useState<{ obj: K8sObject; tab?: string } | null>(null);
+  const [selectedResourceKeys, setSelectedResourceKeys] = useState<Set<string>>(() => new Set());
+  const [bulkDeletePending, setBulkDeletePending] = useState(false);
+  const bulkDeleteLockRef = useRef(false);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const [warningDetails, setWarningDetails] = useState<PodHealthDetails | null>(null);
   const [filter, setFilter] = useState('');
   const [eventTimeRange, setEventTimeRange] = useState<EventTimeRange>('all');
@@ -461,13 +443,10 @@ export function ResourceTable({
   const rowActionAnchorRef = useRef<HTMLElement | null>(null);
   const [sortKey, setSortKey] = useState<string>('name');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-  const [autoColumnWidths, setAutoColumnWidths] = useState<Record<string, number>>({});
-  const [hasManualResize, setHasManualResize] = useState(false);
   const [watchedRollout, setWatchedRollout] = useState<string | null>(null);
   const [highlightedPodRows, setHighlightedPodRows] = useState<Record<string, true>>({});
   const seenPodRowsRef = useRef<Set<string>>(new Set());
-  const tableWrapperRef = useRef<HTMLDivElement | null>(null);
+  const tableWrapperRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [watchState, setWatchState] = useState<WatchState>('connecting');
   const [, setAgeTick] = useState(0);
@@ -578,6 +557,63 @@ export function ResourceTable({
     onError: (error) => onToast('error', (error as Error).message, 4200),
   });
 
+  const deleteSelectedResources = async (resources: K8sObject[]) => {
+    if (resources.length === 0 || !canDelete || bulkDeleteLockRef.current) return;
+    bulkDeleteLockRef.current = true;
+    try {
+      const confirmed = await confirm({
+        title: uiText.confirmDialog.deleteTitle,
+        message: uiText.confirmDialog.deleteQuestion(`${resources.length} selected ${plural}`),
+        confirmLabel: uiText.common.delete,
+        tone: 'danger',
+      });
+      if (!confirmed) return;
+
+      setBulkDeletePending(true);
+      const results = await Promise.allSettled(
+        resources.map(async (resource) => {
+          const name = resource.metadata?.name;
+          if (!name) throw new Error(uiText.resource.missingDeleteName);
+          return api.deleteResource(plural, name, {
+            ...scope,
+            namespace: resource.metadata?.namespace,
+          });
+        }),
+      );
+      const deletedKeys = new Set<string>();
+      const failures: string[] = [];
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') deletedKeys.add(resourceSelectionKey(resources[index]));
+        else {
+          const resource = resources[index];
+          const name = resource.metadata?.name ?? uiText.resource.unknownResourceName;
+          const identifier = resource.metadata?.namespace ? `${resource.metadata.namespace}/${name}` : name;
+          failures.push(`${identifier}: ${errorMessageOf(result.reason)}`);
+        }
+      });
+      setSelectedResourceKeys((current) => new Set([...current].filter((key) => !deletedKeys.has(key))));
+      if (deletedKeys.size > 0) {
+        void qc.resetQueries({ queryKey: pagedQueryKey }).catch((error: unknown) => {
+          onToast('error', uiText.resource.bulkDeleteRefreshFailed(errorMessageOf(error)), 6000);
+        });
+      }
+      const failureSummary = [
+        ...failures.slice(0, 3),
+        ...(failures.length > 3 ? [uiText.resource.moreDeleteFailures(failures.length - 3)] : []),
+      ].join('; ');
+      onToast(
+        failures.length > 0 ? 'error' : 'success',
+        uiText.resource.bulkDeleteSummary(deletedKeys.size, failures.length, plural, failureSummary),
+        failures.length > 0 ? 8000 : undefined,
+      );
+    } catch (error) {
+      onToast('error', uiText.resource.bulkDeleteUnexpectedFailure(errorMessageOf(error)), 8000);
+    } finally {
+      setBulkDeletePending(false);
+      bulkDeleteLockRef.current = false;
+    }
+  };
+
   // Count consecutive failures; stop auto-retrying after MAX_CONNECT_RETRIES.
   // A Forbidden (403) response never resolves itself on retry — stop immediately
   // instead of burning the retry budget hammering an endpoint the user can't access.
@@ -679,6 +715,18 @@ export function ResourceTable({
       return namespaceMatches && nameMatches && timeMatches;
     }
   );
+  const visibleResourceKeys = items.map(resourceSelectionKey);
+  const allVisibleSelected = visibleResourceKeys.length > 0 && visibleResourceKeys.every((key) => selectedResourceKeys.has(key));
+  const someVisibleSelected = visibleResourceKeys.some((key) => selectedResourceKeys.has(key));
+  const selectedResources = loadedItems.filter((resource) => selectedResourceKeys.has(resourceSelectionKey(resource)));
+
+  useEffect(() => {
+    selectAllRef.current && (selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected);
+  }, [allVisibleSelected, someVisibleSelected]);
+
+  useEffect(() => {
+    setSelectedResourceKeys(new Set());
+  }, [plural, scope.context, scope.source, scope.namespace, namespaceSelectionSignature]);
   const isSearchingRemainingPages = filter.trim().length > 0
     && items.length === 0
     && (pagedList.hasNextPage || pagedList.isFetchingNextPage);
@@ -726,7 +774,6 @@ export function ResourceTable({
       return new Map<string, { cpuMillicores: number; memoryBytes: number } | undefined>(rows);
     },
   });
-  const defaultColumnKeys = useMemo(() => getDefaultVisibleColumns(plural), [plural]);
   const columnVisibilityStorageKey = `k8sExplorer.resourceColumns.${plural}`;
   const { visibleColumns: visibleColumnKeys, toggleVisibleColumn, resetVisibleColumns, columnMenuOpen, setColumnMenuOpen } = useColumnVisibility(
     (COLUMNS_BY_PLURAL[plural] ?? DEFAULT_COLUMNS).filter((column) => column.key !== 'select' && column.key !== 'actions'),
@@ -739,6 +786,21 @@ export function ResourceTable({
       (column) => column.key === 'select' || column.key === 'actions' || allowed.has(column.key),
     );
   }, [plural, visibleColumnKeys]);
+  const widthLayout = useMemo(() => columns.map((column) => ({
+    key: column.key,
+    width: column.width,
+    minWidth: column.key === 'select' ? 26
+      : column.key === 'actions' ? 88
+      : column.key === 'name' ? 120
+      : column.key === 'status' ? 64
+      : 44,
+  })), [columns]);
+  const { hasManualResize, reset: resetColumnLayout, startResize, widthFor: columnWidth } = useColumnLayout({
+    hostRef: tableWrapperRef,
+    columns: widthLayout,
+    fillKey: columns.find((column) => column.key === 'name')?.key ?? columns[0]?.key,
+    fitKey: `${items.length}:${list.isLoading}`,
+  });
 
   const sortedItems = useMemo(() => {
     const working = items.slice();
@@ -747,28 +809,33 @@ export function ResourceTable({
     working.sort((a, b) => compareResourceRows(a, b, sortKey, plural, podMetrics.data));
     return sortDirection === 'asc' ? working : working.reverse();
   }, [items, plural, podMetrics.data, sortDirection, sortKey]);
+  const rowVirtualizer = useVirtualizer({
+    count: sortedItems.length,
+    getScrollElement: () => tableWrapperRef.current,
+    estimateSize: () => 40,
+    getItemKey: (index) => {
+      const item = sortedItems[index];
+      return item.metadata?.uid ?? `${item.metadata?.namespace}/${item.metadata?.name}`;
+    },
+    measureElement: (element) => element.getBoundingClientRect().height,
+    overscan: 10,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
 
   useEffect(() => {
     if (!focusName) return;
     const normalizedFocusName = focusName.trim().toLowerCase();
     const normalizedFocusContext = focusContext?.trim().toLowerCase();
-    const focusMatch = sortedItems.find((item) => {
+    const focusIndex = sortedItems.findIndex((item) => {
       const itemName = item.metadata?.name?.trim().toLowerCase();
       const itemNamespace = item.metadata?.namespace?.trim().toLowerCase();
       if (itemName !== normalizedFocusName) return false;
       if (!normalizedFocusContext) return true;
       return itemNamespace === normalizedFocusContext || itemName === normalizedFocusName;
     });
-    if (!focusMatch) return;
-
-    const rowKey = focusMatch.metadata?.uid ?? `${focusMatch.metadata?.namespace}/${focusMatch.metadata?.name}`;
-    const timer = window.setTimeout(() => {
-      const selector = `[data-resource-row-key="${CSS.escape(rowKey)}"]`;
-      const el = tableWrapperRef.current?.querySelector<HTMLElement>(selector);
-      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [focusContext, focusName, sortedItems]);
+    if (focusIndex < 0) return;
+    rowVirtualizer.scrollToIndex(focusIndex, { align: 'center', behavior: 'smooth' });
+  }, [focusContext, focusName, rowVirtualizer, sortedItems]);
   const errorMessage = list.isError ? (list.error as Error).message : '';
   const isForbiddenNow = list.isError && isForbiddenError(list.error);
   const needsNamespaceHint =
@@ -961,75 +1028,12 @@ export function ResourceTable({
   useEffect(() => {
     // Re-enable responsive auto-fit and reset the connection budget whenever
     // the resource/scope changes.
-    setHasManualResize(false);
-    setColumnWidths({});
+    resetColumnLayout();
     setHasInitialSnapshot(false);
     lastResyncInvalidateAtRef.current = 0;
     failureCountRef.current = 0;
     setConnectionState('ok');
-  }, [plural, scope.context, scope.namespace, namespaceSelectionSignature]);
-
-  useEffect(() => {
-    if (hasManualResize) return;
-
-    const fitColumns = () => {
-      const host = tableWrapperRef.current;
-      if (!host || columns.length === 0) return;
-
-      const available = host.clientWidth - 2;
-      if (available <= 0) return;
-
-      const baseWidths = columns.map((column) => column.width);
-      const totalBase = baseWidths.reduce((sum, width) => sum + width, 0);
-      if (totalBase <= available) {
-        setAutoColumnWidths({});
-        return;
-      }
-
-      // Columns are wider than the viewport: shrink them to fit so there is no
-      // horizontal scroll on load. Each column keeps a usable floor, and the
-      // remaining width is distributed proportionally to base width so the row
-      // exactly fills the available space.
-      const floorFor = (key: string) =>
-        key === 'select' ? 26
-        : key === 'actions' ? 88
-        : key === 'name' ? 120
-        : key === 'status' ? 64
-        : 44;
-      const floors = columns.map((column) => floorFor(column.key));
-      const totalFloor = floors.reduce((sum, width) => sum + width, 0);
-
-      const next: Record<string, number> = {};
-      if (totalFloor >= available) {
-        // Too many columns to fit even at floor widths on this screen;
-        // use floors and let the horizontal scrollbar handle the remainder.
-        columns.forEach((column, index) => {
-          next[column.key] = floors[index];
-        });
-      } else {
-        const slack = available - totalFloor;
-        let used = 0;
-        columns.forEach((column, index) => {
-          const extra = Math.floor((baseWidths[index] / totalBase) * slack);
-          next[column.key] = floors[index] + extra;
-          used += next[column.key];
-        });
-        // Hand any rounding remainder to the name column so the row fills exactly.
-        const fillKey = columns.find((column) => column.key === 'name')?.key ?? columns[0].key;
-        next[fillKey] += available - used;
-      }
-      setAutoColumnWidths(next);
-    };
-
-    // Run after first paint as well because wrapper width can be 0 during initial mount/loading.
-    fitColumns();
-    const rafId = window.requestAnimationFrame(fitColumns);
-    window.addEventListener('resize', fitColumns);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', fitColumns);
-    };
-  }, [columns, hasManualResize, items.length, list.isLoading]);
+  }, [plural, resetColumnLayout, scope.context, scope.namespace, namespaceSelectionSignature]);
 
   useEffect(() => {
     if (!isPods) return;
@@ -1093,20 +1097,6 @@ export function ResourceTable({
   if (!scope.context) {
     return <EmptyState>{uiText.resource.selectContextToBegin}</EmptyState>;
   }
-
-  const startResize = (key: string, startWidth: number, startX: number) => {
-    setHasManualResize(true);
-    const onMove = (event: MouseEvent) => {
-      const nextWidth = Math.max(60, startWidth + event.clientX - startX);
-      setColumnWidths((current) => ({ ...current, [key]: nextWidth }));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
 
   const toggleSort = (key: string) => {
     if (!isSortableColumn(key)) return;
@@ -1241,6 +1231,7 @@ export function ResourceTable({
 
   return (
     <>
+      <div className="resource-table-view">
       <div className="toolbar">
           <input
           className="resource-filter"
@@ -1346,17 +1337,38 @@ export function ResourceTable({
       )}
 
       {items.length > 0 && (
-        <div className={`data-table-wrapper ${hasManualResize ? 'allow-x-scroll' : 'lock-x-scroll'}`} ref={tableWrapperRef}>
+        <TableScrollArea
+          className={hasManualResize ? 'allow-x-scroll' : 'lock-x-scroll'}
+          scrollRef={tableWrapperRef}
+        >
         <table className="data-table">
           <colgroup>
             {columns.map((column) => (
-              <col key={column.key} style={{ width: columnWidths[column.key] ?? autoColumnWidths[column.key] ?? column.width }} />
+              <col key={column.key} style={{ width: columnWidth(column.key, column.width) }} />
             ))}
           </colgroup>
           <thead>
             <tr>
               {columns.map((column) => (
                 <th key={column.key} className={column.key === 'actions' ? 'column-actions-header' : ''}>
+                  {column.key === 'select' ? (
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      title={uiText.resource.selectAll}
+                      aria-label={uiText.resource.selectAll}
+                      checked={allVisibleSelected}
+                      disabled={visibleResourceKeys.length === 0}
+                      onChange={() => {
+                        setSelectedResourceKeys((current) => {
+                          const next = new Set(current);
+                          if (allVisibleSelected) visibleResourceKeys.forEach((key) => next.delete(key));
+                          else visibleResourceKeys.forEach((key) => next.add(key));
+                          return next;
+                        });
+                      }}
+                    />
+                  ) : (
                   <div
                     className={`th-content ${isSortableColumn(column.key) ? 'sortable' : ''}`}
                     title={headerTitle(column.key)}
@@ -1389,18 +1401,25 @@ export function ResourceTable({
                           onMouseDown={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            startResize(column.key, columnWidths[column.key] ?? column.width, event.clientX);
+                            startResize(column.key, columnWidth(column.key, column.width) ?? column.width, event.clientX);
                           }}
                         />
                       )
                     )}
                   </div>
+                  )}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {sortedItems.map((o) => {
+            {virtualRows[0]?.start > 0 && (
+              <tr aria-hidden="true">
+                <td colSpan={columns.length} style={{ height: virtualRows[0].start, padding: 0, border: 0 }} />
+              </tr>
+            )}
+            {virtualRows.map((virtualRow) => {
+              const o = sortedItems[virtualRow.index];
               const s = statusOf(plural, o);
               const podStatuses = (o.status?.containerStatuses ?? []) as Array<{ ready?: boolean; restartCount?: number }>;
               const allReady = podStatuses.length > 0 && podStatuses.every((c) => c.ready);
@@ -1437,7 +1456,7 @@ export function ResourceTable({
                 ? ((o.metadata as any).ownerReferences as Array<{ kind?: string; name?: string }>)
                 : [];
               const owner = ownerRefs[0];
-              const rowKey = o.metadata?.uid ?? `${o.metadata?.namespace}/${o.metadata?.name}`;
+              const rowKey = resourceSelectionKey(o);
               const podKey = podRowKey(o);
               const resourceName = o.metadata?.name ?? '';
               const podHealth = isPods ? currentPodHealth(o) : null;
@@ -1463,6 +1482,8 @@ export function ResourceTable({
               return (
                 <tr
                   key={rowKey}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={virtualRow.index}
                   data-resource-row-key={rowKey}
                   className={[
                     isPods && highlightedPodRows[podKey] ? 'row-highlight-new' : '',
@@ -1472,7 +1493,24 @@ export function ResourceTable({
                   {columns.map((column) => {
                     switch (column.key) {
                       case 'select':
-                        return <td key={column.key}><input type="checkbox" title={uiText.resource.selectRow} /></td>;
+                        return (
+                          <td key={column.key}>
+                            <input
+                              type="checkbox"
+                              title={uiText.resource.selectRow}
+                              aria-label={`${uiText.resource.selectRow} ${resourceName}`}
+                              checked={selectedResourceKeys.has(rowKey)}
+                              onChange={() => {
+                                setSelectedResourceKeys((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(rowKey)) next.delete(rowKey);
+                                  else next.add(rowKey);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                        );
                       case 'name':
                         return (
                           <td key={column.key} className="mono">
@@ -1681,11 +1719,33 @@ export function ResourceTable({
                 </tr>
               );
             })}
+            {virtualRows.length > 0 && rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end > 0 && (
+              <tr aria-hidden="true">
+                <td
+                  colSpan={columns.length}
+                  style={{ height: rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, padding: 0, border: 0 }}
+                />
+              </tr>
+            )}
           </tbody>
         </table>
         {pagedList.hasNextPage && <div ref={loadMoreRef} aria-hidden="true" style={{ height: 1 }} />}
-        </div>
+        </TableScrollArea>
       )}
+      {canDelete && selectedResources.length > 0 && (
+        <button
+          type="button"
+          className="resource-bulk-delete"
+          title={uiText.resource.deleteSelected(selectedResources.length)}
+          aria-label={uiText.resource.deleteSelected(selectedResources.length)}
+          disabled={bulkDeletePending}
+          onClick={() => void deleteSelectedResources(selectedResources)}
+        >
+          <Trash2 size={16} aria-hidden="true" />
+          <span>{bulkDeletePending ? uiText.resource.deletingSelected : uiText.resource.deleteSelected(selectedResources.length)}</span>
+        </button>
+      )}
+      </div>
 
       {selected && (
         <ResourceDetail
@@ -2068,44 +2128,6 @@ function sumPodResourceRequest(
   return containers.reduce((sum: number, container: any) => {
     return sum + parse(container?.resources?.requests?.[key]);
   }, 0);
-}
-
-function parseCpuToMillicores(value?: string): number {
-  if (!value) return 0;
-  if (value.endsWith('n')) return Number(value.slice(0, -1)) / 1_000_000;
-  if (value.endsWith('u')) return Number(value.slice(0, -1)) / 1_000;
-  if (value.endsWith('m')) return Number(value.slice(0, -1));
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed * 1000 : 0;
-}
-
-function parseMemoryToBytes(value?: string): number {
-  if (!value) return 0;
-  const match = /^([0-9.]+)([KMGTE]i|[kMGTPE]|m)?$/.exec(value);
-  if (!match) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  const amount = Number(match[1]);
-  const unit = match[2] ?? '';
-  const factors: Record<string, number> = {
-    '': 1,
-    k: 1_000,
-    M: 1_000_000,
-    G: 1_000_000_000,
-    T: 1_000_000_000_000,
-    P: 1_000_000_000_000_000,
-    E: 1_000_000_000_000_000_000,
-    Ki: 1024,
-    Mi: 1024 ** 2,
-    Gi: 1024 ** 3,
-    Ti: 1024 ** 4,
-    Pi: 1024 ** 5,
-    Ei: 1024 ** 6,
-    m: 0.001,
-  };
-  return amount * (factors[unit] ?? 1);
 }
 
 function formatBytes(bytes: number): string {

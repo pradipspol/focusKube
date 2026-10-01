@@ -17,6 +17,7 @@ import { HelmUpgradeModal } from './HelmUpgradeModal';
 import { useConfirm } from './ConfirmDialog';
 import { uiText } from '../text';
 import { Spinner } from './Spinner';
+import { Plus } from 'lucide-react';
 
 type DetailsState = { title: string; rows: Array<[string, string | number | undefined]> } | null;
 
@@ -154,7 +155,7 @@ export function HelmPanel({
               onClick={() => setShowInstallModal(true)}
               title={uiText.helm.installRelease}
             >
-              + {uiText.common.install}
+              <><Plus size={14} aria-hidden="true" /> {uiText.common.install}</>
             </button>
           )}
           <RefreshButton

@@ -10,6 +10,7 @@ import { NamespaceSelector } from './NamespaceSelector';
 import { EmptyState } from './EmptyState';
 import { RefreshButton } from './RefreshButton';
 import { Notice } from './Notice';
+import { parseCpuToMillicores, parseMemoryToBytes } from '../utils/kubernetesQuantities';
 
 type OverviewKind = 'pods' | 'deployments' | 'replicasets' | 'cronjobs' | 'daemonsets' | 'statefulsets' | 'jobs' | 'helmreleases';
 type MetricSample = { at: number; cpuMillicores: number; memoryBytes: number };
@@ -414,29 +415,13 @@ function aggregatePodResources (pods: K8sObject[]): { cpuRequest: number; cpuLim
   return pods.reduce<{ cpuRequest: number; cpuLimit: number; memoryRequest: number; memoryLimit: number }>((totals, pod) => {
     const containers = Array.isArray(pod.spec?.containers) ? pod.spec.containers : [];
     for (const container of containers) {
-      totals.cpuRequest += parseCpu(container.resources?.requests?.cpu);
-      totals.cpuLimit += parseCpu(container.resources?.limits?.cpu);
-      totals.memoryRequest += parseMemory(container.resources?.requests?.memory);
-      totals.memoryLimit += parseMemory(container.resources?.limits?.memory);
+      totals.cpuRequest += parseCpuToMillicores(container.resources?.requests?.cpu);
+      totals.cpuLimit += parseCpuToMillicores(container.resources?.limits?.cpu);
+      totals.memoryRequest += parseMemoryToBytes(container.resources?.requests?.memory);
+      totals.memoryLimit += parseMemoryToBytes(container.resources?.limits?.memory);
     }
     return totals;
   }, { cpuRequest: 0, cpuLimit: 0, memoryRequest: 0, memoryLimit: 0 });
-}
-
-function parseCpu (value?: string): number {
-  if (!value) return 0;
-  if (value.endsWith('m')) return Number(value.slice(0, -1));
-  if (value.endsWith('u')) return Number(value.slice(0, -1)) / 1000;
-  if (value.endsWith('n')) return Number(value.slice(0, -1)) / 1_000_000;
-  return Number(value) * 1000;
-}
-
-function parseMemory (value?: string): number {
-  if (!value) return 0;
-  const match = /^([\d.]+)(Ki|Mi|Gi|Ti)?$/.exec(value);
-  if (!match) return Number(value) || 0;
-  const factors: Record<string, number> = { Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4 };
-  return Number(match[1]) * (factors[match[2] ?? ''] ?? 1);
 }
 
 function formatEventTarget (event: any): string {

@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { EllipsisVertical } from 'lucide-react';
 
 interface Props {
   label: string;
@@ -19,11 +20,7 @@ export function SidebarAction({ label, onClick, disabled = false }: Props) {
         onClick(event);
       }}
     >
-      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <circle cx="8" cy="3" r="1" />
-        <circle cx="8" cy="8" r="1" />
-        <circle cx="8" cy="13" r="1" />
-      </svg>
+      <EllipsisVertical size={16} aria-hidden="true" />
     </button>
   );
 }

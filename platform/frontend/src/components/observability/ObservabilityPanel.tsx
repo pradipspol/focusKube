@@ -8,7 +8,7 @@ import { MultiPodLogsPanel } from './MultiPodLogsPanel';
 import { CorrelationDashboard } from './CorrelationDashboard';
 import { useObservabilityWs } from '../../lib/useObservabilityWs';
 import { uiText } from '../../text';
-import { Clock3 } from 'lucide-react';
+import { Clock3, ClipboardList, Link2 } from 'lucide-react';
 import { LoadingOverlay } from '../LoadingOverlay';
 import { Notice } from '../Notice';
 
@@ -199,8 +199,8 @@ export function ObservabilityPanel({ scope, namespaces, selectedNamespaces, onTo
             }}
           >
             {tab === 'timeline' && <><Clock3 size={14} aria-hidden="true" /> {uiText.observabilityPanel.timelineTab}</>}
-            {tab === 'logs' && uiText.observabilityPanel.logsTab}
-            {tab === 'correlation' && uiText.observabilityPanel.correlationTab}
+            {tab === 'logs' && <><ClipboardList size={14} aria-hidden="true" /> {uiText.observabilityPanel.logsTab}</>}
+            {tab === 'correlation' && <><Link2 size={14} aria-hidden="true" /> {uiText.observabilityPanel.correlationTab}</>}
           </button>
         ))}
       </div>

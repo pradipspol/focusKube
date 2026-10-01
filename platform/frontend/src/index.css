@@ -2754,16 +2754,14 @@ a {
   color: var(--text-muted);
 }
 .tree-disclosure-mark {
-  width: 6px;
-  height: 6px;
-  border-top: 1.75px solid currentColor;
-  border-right: 1.75px solid currentColor;
-  transform: rotate(135deg);
+  width: 12px;
+  height: 12px;
+  transform: rotate(90deg);
   transition: transform 120ms ease;
   transform-origin: center;
 }
 .tree-disclosure.collapsed .tree-disclosure-mark {
-  transform: rotate(45deg);
+  transform: rotate(0deg);
 }
 .tree-disclosure.inline-disclosure {
   vertical-align: middle;
@@ -2905,6 +2903,101 @@ a {
   min-width: 0;
   flex: 1 1 auto;
   overflow: auto;
+}
+
+.welcome-page {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 48px 36px;
+  color: var(--text);
+}
+
+.welcome-heading { margin-bottom: 32px; }
+.welcome-version { margin: 0 0 10px; color: var(--text-dim); font-size: 11px; }
+.welcome-heading h1 { margin: 0 0 12px; color: var(--text-heading); font-size: 27px; line-height: 1.25; }
+.welcome-intro { max-width: 600px; margin: 0; color: var(--text-muted); font-size: 14px; line-height: 1.6; }
+
+.welcome-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.welcome-feature { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.welcome-feature > svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+.welcome-feature h2,
+.welcome-connections h2 { margin: 0 0 6px; color: var(--text-heading); font-size: 13px; font-weight: 600; }
+.welcome-feature p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+
+.welcome-connections { padding: 24px 0; }
+.welcome-connect-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.welcome-connect-actions button,
+.welcome-done {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface-control);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.welcome-connect-actions button:hover,
+.welcome-done:hover { background: var(--surface-hover); }
+
+.welcome-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.welcome-optout { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.welcome-optout input { width: 15px; height: 15px; accent-color: var(--accent); }
+
+@media (max-width: 700px) {
+  .welcome-page { padding: 28px 20px; }
+  .welcome-capabilities { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .welcome-footer { align-items: flex-start; flex-direction: column; }
+}
+
+.resource-table-view {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.resource-table-view > .toolbar {
+  flex: 0 0 auto;
+}
+.resource-bulk-delete {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: 40px;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 3px 12px rgb(0 0 0 / 28%);
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--fw-semibold);
+}
+.resource-bulk-delete:hover:not(:disabled) {
+  background: var(--danger-bright);
+  border-color: var(--danger-bright);
+}
+.resource-bulk-delete:disabled {
+  cursor: wait;
+  opacity: 0.75;
 }
 .main-tabs {
   display: flex;
@@ -3347,15 +3440,53 @@ table {
 .data-table-wrapper {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-/* Show a horizontal scrollbar whenever the (min-width clamped) columns
-   overflow the container instead of clipping the trailing action buttons.
-   Scrollbar theming is handled globally by the `*` rules above. */
+.table-scroll-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.data-table-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.table-horizontal-scrollbar {
+  flex: 0 0 14px;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.table-horizontal-scrollbar::-webkit-scrollbar {
+  height: var(--scrollbar-size);
+}
+
+.table-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+.table-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+}
+
 .data-table-wrapper.lock-x-scroll,
 .data-table-wrapper.allow-x-scroll {
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 .resource-name-cell {
   display: flex;
@@ -3732,6 +3863,12 @@ table {
 .data-table {
   table-layout: fixed;
   min-width: 100%;
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--surface-raised);
 }
 .data-table .select-cell {
   text-align: center;

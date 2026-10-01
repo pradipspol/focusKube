@@ -12,6 +12,7 @@ import { Notice } from './Notice';
 import { uiText } from '../text';
 import { Spinner } from './Spinner';
 import { CloseButton } from './CloseButton';
+import { DrawerShell } from './DrawerShell';
 import { useAzureAuthRequiredEffect } from '../hooks/useAzureAuthRequired';
 
 interface Props {
@@ -285,13 +286,17 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
   });
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="drawer app-details-drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-header">
+    <DrawerShell
+      className="app-details-drawer"
+      onClose={onClose}
+      header={
+        <>
           <span className="badge">{uiText.applications.title}</span>
           <h3>{`${uiText.applications.instance}: ${row.instance}`}</h3>
           <CloseButton label={uiText.common.close} onClick={onClose} />
-        </div>
+        </>
+      }
+    >
         <div className="drawer-body pod-overview">
           <div className="app-details-grid">
         <section className="app-details-section">
@@ -405,8 +410,7 @@ function ApplicationDetailsDrawer({ row, scope, onClose }: { row: ApplicationRow
         </section>
           </div>
       </div>
-      </div>
-    </div>
+    </DrawerShell>
   );
 }
 

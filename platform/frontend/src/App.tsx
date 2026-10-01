@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from './api/client';
 import { useAiEntitlement } from './api/aiAssistantApi';
@@ -6,37 +6,42 @@ import type { AzureScope, ContextScope } from './api/client';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { ActivityBar, ActivityPanel } from './components/ActivityBar';
-import { ResourceTable } from './components/ResourceTable';
-import { HelmPanel } from './components/HelmPanel';
-import { AzurePanel } from './components/AzurePanel';
-import { AwsPanel } from './components/AwsPanel';
-import { ObservabilityPanel } from './components/observability/ObservabilityPanel';
 import { useToast } from './components/ToastViewport';
-import { ApplicationsPanel } from './components/ApplicationsPanel';
-import { ClusterOverviewPanel } from './components/ClusterOverviewPanel';
-import { TopologyPanel } from './components/TopologyPanel';
-import { PortForwardingPanel } from './components/PortForwardingPanel';
-import { MinikubePanel } from './components/MinikubePanel';
-import { AiAssistantPanel } from './components/AiAssistantPanel';
 import { PanelResizer } from './components/PanelResizer';
 import { CloseButton } from './components/CloseButton';
 import { SignInGate } from './components/SignInGate';
-import { CreateResourceModal } from './components/CreateResourceModal';
 import { Modal } from './components/Modal';
+import { WelcomePage } from './components/WelcomePage';
 import { uiText } from './text';
 import focusKubeBrand from '../assets/focusKube.png';
-import {
-  TerminalDock,
-  type DockSession,
-  type OpenDeploymentLogsTerminalRequest,
-  type OpenPodLogsTerminalRequest,
-  type OpenPodTerminalRequest,
-  type TerminalSession,
+import appPackage from '../../../package.json';
+import { LifeBuoy, Plus } from 'lucide-react';
+import type {
+  DockSession,
+  OpenDeploymentLogsTerminalRequest,
+  OpenPodLogsTerminalRequest,
+  OpenPodTerminalRequest,
+  TerminalSession,
 } from './components/TerminalDock';
 import { PermissionsProvider, capabilitiesFor } from './auth/permissions';
 import type { AwsIdentity, AzureAccount, ContextsResponse, KubeContext } from './api/types';
 
+const ResourceTable = lazy(() => import('./components/ResourceTable').then((module) => ({ default: module.ResourceTable })));
+const HelmPanel = lazy(() => import('./components/HelmPanel').then((module) => ({ default: module.HelmPanel })));
+const AzurePanel = lazy(() => import('./components/AzurePanel').then((module) => ({ default: module.AzurePanel })));
+const AwsPanel = lazy(() => import('./components/AwsPanel').then((module) => ({ default: module.AwsPanel })));
+const ObservabilityPanel = lazy(() => import('./components/observability/ObservabilityPanel').then((module) => ({ default: module.ObservabilityPanel })));
+const ApplicationsPanel = lazy(() => import('./components/ApplicationsPanel').then((module) => ({ default: module.ApplicationsPanel })));
+const ClusterOverviewPanel = lazy(() => import('./components/ClusterOverviewPanel').then((module) => ({ default: module.ClusterOverviewPanel })));
+const TopologyPanel = lazy(() => import('./components/TopologyPanel').then((module) => ({ default: module.TopologyPanel })));
+const PortForwardingPanel = lazy(() => import('./components/PortForwardingPanel').then((module) => ({ default: module.PortForwardingPanel })));
+const MinikubePanel = lazy(() => import('./components/MinikubePanel').then((module) => ({ default: module.MinikubePanel })));
+const AiAssistantPanel = lazy(() => import('./components/AiAssistantPanel').then((module) => ({ default: module.AiAssistantPanel })));
+const CreateResourceModal = lazy(() => import('./components/CreateResourceModal').then((module) => ({ default: module.CreateResourceModal })));
+const TerminalDock = lazy(() => import('./components/TerminalDock').then((module) => ({ default: module.TerminalDock })));
+
 export type View =
+  | { type: 'welcome' }
   | { type: 'resource'; plural: string; focusContext?: string; focusName?: string }
   | { type: 'overview' }
   | { type: 'applications' }
@@ -111,6 +116,7 @@ function originFromContextEntry(
 }
 
 function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube', originKubeconfigId?: string, azureSource?: AzureScope): string {
+  if (view.type === 'welcome') return WELCOME_VIEW_ID;
   const sourceKey = originSource ?? 'unknown';
   const contextKey = originContext ?? 'global';
   const kubeconfigKey = originKubeconfigId ?? '';
@@ -130,7 +136,9 @@ function viewId(view: View, originContext?: string, originSource?: 'aks' | 'eks'
 
 function viewLabel(view: View, context?: string, originSource?: 'aks' | 'eks' | 'local' | 'minikube' | 'cloud'): string {
   const base =
-    view.type === 'resource'
+    view.type === 'welcome'
+      ? 'Welcome'
+      : view.type === 'resource'
       ? view.plural.charAt(0).toUpperCase() + view.plural.slice(1)
       : view.type === 'overview'
         ? 'Overview'
@@ -165,9 +173,55 @@ function azureTabSource(tab?: ViewTab, fallback?: AzureScope): AzureScope {
 const TABS_STORAGE_KEY = 'k8sExplorer.openTabs';
 const ACTIVE_TAB_STORAGE_KEY = 'k8sExplorer.activeTab';
 const NAMESPACE_SELECTIONS_STORAGE_KEY = 'k8sExplorer.namespacesByContext';
+const WELCOME_VIEW_ID = 'welcome';
+const WELCOME_DISMISSED_VERSION_KEY = 'k8sExplorer.welcomeDismissedVersion';
+const WELCOME_CLOSED_SESSION_KEY = 'k8sExplorer.welcomeClosedThisSession';
+const APP_VERSION = appPackage.version;
 // Where the footer "Support" button points. Update to your team's support channel.
 const SUPPORT_URL = 'https://github.com/pradipspol/focusKube/issues';
 const THEME_STORAGE_KEY = 'k8sExplorer.theme';
+
+function hasDismissedWelcomeForCurrentVersion(): boolean {
+  try {
+    return localStorage.getItem(WELCOME_DISMISSED_VERSION_KEY) === APP_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function welcomeWasClosedThisSession(): boolean {
+  try {
+    return sessionStorage.getItem(WELCOME_CLOSED_SESSION_KEY) === APP_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function markWelcomeClosedThisSession(): void {
+  try {
+    sessionStorage.setItem(WELCOME_CLOSED_SESSION_KEY, APP_VERSION);
+  } catch {
+    // Session storage can be disabled by the browser.
+  }
+}
+
+function dismissWelcomeForCurrentVersion(): void {
+  try {
+    localStorage.setItem(WELCOME_DISMISSED_VERSION_KEY, APP_VERSION);
+  } catch {
+    // The Welcome page can still be closed if persistent storage is unavailable.
+  }
+}
+
+function clearWelcomeDismissal(): void {
+  try {
+    if (localStorage.getItem(WELCOME_DISMISSED_VERSION_KEY) === APP_VERSION) {
+      localStorage.removeItem(WELCOME_DISMISSED_VERSION_KEY);
+    }
+  } catch {
+    // Ignore storage failures and keep the in-memory checkbox usable.
+  }
+}
 export type Theme = 'dark' | 'light' | 'contrast';
 
 function loadStoredTheme(): Theme {
@@ -178,6 +232,7 @@ function loadStoredTheme(): Theme {
 function isView(value: unknown): value is View {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as { type?: unknown; plural?: unknown; mode?: unknown; provider?: unknown; tab?: unknown };
+  if (candidate.type === 'welcome') return true;
   if (candidate.type === 'resource') return typeof candidate.plural === 'string' && candidate.plural.length > 0;
   if (candidate.type === 'helm') return candidate.mode === 'charts' || candidate.mode === 'releases';
   if (candidate.type === 'observability') {
@@ -210,6 +265,7 @@ function loadStoredTabs(): ViewTab[] {
       const tab = item && typeof item === 'object' && 'view' in item ? (item as ViewTab) : undefined;
       const view = tab?.view ?? (isView(item) ? (item as View) : undefined);
       if (!view) continue;
+      if (view.type === 'welcome' && hasDismissedWelcomeForCurrentVersion()) continue;
       const azureSource = view.type === 'azure'
         ? tab?.azureSource ?? (tab?.originSource === 'local' ? 'local' : 'cloud')
         : undefined;
@@ -328,6 +384,7 @@ export default function App() {
   const [namespaceSelections, setNamespaceSelections] = useState<NamespaceSelections>(() => loadStoredNamespaceSelections());
   const [tabs, setTabs] = useState<ViewTab[]>(() => loadStoredTabs());
   const [activeTabId, setActiveTabId] = useState<string>(() => loadStoredActiveTabId(loadStoredTabs()));
+  const welcomeLaunchHandledRef = useRef(false);
   // Starred Contexts is a shortcut meant to bypass the full Azure/AWS tree, so
   // selecting from it shouldn't force that tree open - see handleContextChange's
   // `reveal` origin flag below. Stays false for every other way of changing the
@@ -710,6 +767,21 @@ export default function App() {
   }, [authQuery.isLoading, route, user]);
 
   useEffect(() => {
+    if (authQuery.isLoading || !user || route !== 'focusKube' || welcomeLaunchHandledRef.current) return;
+    welcomeLaunchHandledRef.current = true;
+    if (tabs.length > 0 || hasDismissedWelcomeForCurrentVersion() || welcomeWasClosedThisSession()) return;
+
+    const welcomeView: View = { type: 'welcome' };
+    const welcomeTab: ViewTab = {
+      id: WELCOME_VIEW_ID,
+      label: viewLabel(welcomeView),
+      view: welcomeView,
+    };
+    setTabs([welcomeTab]);
+    setActiveTabId(WELCOME_VIEW_ID);
+  }, [authQuery.isLoading, route, tabs.length, user]);
+
+  useEffect(() => {
     const root = document.documentElement;
 
     const applyAutoFit = () => {
@@ -950,6 +1022,9 @@ export default function App() {
   };
 
   const closeTab = (id: string) => {
+    if (tabs.some((tab) => tab.id === id && tab.view.type === 'welcome')) {
+      markWelcomeClosedThisSession();
+    }
     setTabs((current) => {
       const index = current.findIndex((tab) => tab.id === id);
       const next = current.filter((tab) => tab.id !== id);
@@ -967,6 +1042,9 @@ export default function App() {
   };
 
   const closeAllTabs = () => {
+    if (tabs.some((tab) => tab.view.type === 'welcome')) {
+      markWelcomeClosedThisSession();
+    }
     setTabs([]);
     setActiveTabId('');
   };
@@ -1357,6 +1435,7 @@ export default function App() {
                 )}
 
                 <div className="main-content-body">
+                  <Suspense fallback={<div className="dim" role="status">{uiText.common.loadingPage}</div>}>
                   {tabs.length === 0 && (
                     <div className="main-empty-state" aria-label={uiText.common.emptyWorkspace}>
                       <img className="main-empty-brand-image" src={focusKubeBrand} alt="" aria-hidden="true" />
@@ -1377,7 +1456,14 @@ export default function App() {
                         return (
                       <div
                         key={`resource-panel:${tab.id}`}
-                        style={{ display: tab.id === activeTabId ? 'block' : 'none', height: '100%' }}
+                        style={{
+                          display: tab.id === activeTabId ? 'flex' : 'none',
+                          flexDirection: 'column',
+                          height: '100%',
+                          minWidth: 0,
+                          minHeight: 0,
+                          overflow: 'hidden',
+                        }}
                       >
                         <ResourceTable
                           watchKey={`tab:${tab.id}`}
@@ -1401,6 +1487,22 @@ export default function App() {
                       })()
                     ) : null
                   ))}
+                  {activeTab?.view.type === 'welcome' && (
+                    <WelcomePage
+                      version={APP_VERSION}
+                      onDontShowAgainChange={(checked) => {
+                        if (checked) dismissWelcomeForCurrentVersion();
+                        else clearWelcomeDismissal();
+                      }}
+                      onClose={(dontShowAgain) => {
+                        if (dontShowAgain) dismissWelcomeForCurrentVersion();
+                        closeTab(WELCOME_VIEW_ID);
+                      }}
+                      onOpenMinikube={() => openView({ type: 'minikube' })}
+                      onOpenAzure={() => openView({ type: 'azure' }, undefined, undefined, undefined, 'cloud')}
+                      onOpenAws={() => openView({ type: 'aws' })}
+                    />
+                  )}
                   {activeTab?.view.type === 'overview' && (
                     <ClusterOverviewPanel
                       scope={activeTabScope}
@@ -1532,21 +1634,37 @@ export default function App() {
                   {activeTab?.view.type === 'minikube' && (
                     <MinikubePanel onOpenExplorer={openMinikubeResourceExplorer} />
                   )}
+                  </Suspense>
                 </div>
               </div>
 
-              <TerminalDock
-                scope={scope}
-                heightPx={terminalHeightPx}
-                onHeightChange={setTerminalHeightPx}
-                minimized={terminalMinimized}
-                onMinimizedChange={setTerminalMinimized}
-                sessions={terminalSessions}
-                activeSessionId={activeTerminalSessionId}
-                onActivateSession={setActiveTerminalSessionId}
-                onNewSession={openGeneralTerminal}
-                onCloseSession={closeTerminalSession}
-              />
+              {terminalSessions.length > 0 ? (
+                <Suspense fallback={<div className="dim" role="status">{uiText.common.loadingPage}</div>}>
+                  <TerminalDock
+                    scope={scope}
+                    heightPx={terminalHeightPx}
+                    onHeightChange={setTerminalHeightPx}
+                    minimized={terminalMinimized}
+                    onMinimizedChange={setTerminalMinimized}
+                    sessions={terminalSessions}
+                    activeSessionId={activeTerminalSessionId}
+                    onActivateSession={setActiveTerminalSessionId}
+                    onNewSession={openGeneralTerminal}
+                    onCloseSession={closeTerminalSession}
+                  />
+                </Suspense>
+              ) : (
+                <section className="terminal-panel terminal-panel-collapsed" style={{ height: 28 }}>
+                  <div className="terminal-tabs-bar">
+                    <div className="terminal-tabs-list" />
+                    <div className="terminal-tabs-actions">
+                      <button className="terminal-new-tab-button" type="button" onClick={openGeneralTerminal} title={uiText.terminalDock.openNewTerminal}>
+                        <Plus size={15} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
         </div>
         {aiPanelOpen && (
@@ -1558,7 +1676,9 @@ export default function App() {
               label={uiText.common.resizeSidebar}
             />
             <div className="ai-panel-dock">
-              <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} onArtifactOpenChange={handleArtifactOpenChange} />
+              <Suspense fallback={<div className="dim" role="status">{uiText.common.loadingPage}</div>}>
+                <AiAssistantPanel scope={activeTabScope} onClose={() => setAiPanelOpen(false)} onArtifactOpenChange={handleArtifactOpenChange} />
+              </Suspense>
             </div>
           </>
         )}
@@ -1571,19 +1691,21 @@ export default function App() {
           rel="noreferrer"
           title={uiText.common.refresh}
         >
-          <span aria-hidden="true">🛟</span>
+          <LifeBuoy size={15} aria-hidden="true" />
           <span>{uiText.common.support}</span>
         </a>
       </footer>
       {createResourceOpen && (
-        <CreateResourceModal
-          scope={scope}
-          namespaces={namespaces}
-          selectedNamespace={namespace}
-          resourceType={activeTab?.view.type === 'resource' ? activeTab.view.plural : undefined}
-          onClose={() => setCreateResourceOpen(false)}
-          onToast={pushToast}
-        />
+        <Suspense fallback={<div className="dim" role="status">{uiText.common.loadingPage}</div>}>
+          <CreateResourceModal
+            scope={scope}
+            namespaces={namespaces}
+            selectedNamespace={namespace}
+            resourceType={activeTab?.view.type === 'resource' ? activeTab.view.plural : undefined}
+            onClose={() => setCreateResourceOpen(false)}
+            onToast={pushToast}
+          />
+        </Suspense>
       )}
       {desktopDialog && (
         <Modal title={desktopDialog.title} onClose={() => setDesktopDialog(null)}>

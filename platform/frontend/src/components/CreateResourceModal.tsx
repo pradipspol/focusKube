@@ -7,6 +7,7 @@ import type { ToastMessage } from './ToastViewport';
 import { uiText } from '../text';
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 import { SelectionDropdown } from './SelectionDropdown';
+import { Rocket } from 'lucide-react';
 
 /**
  * Sample manifests keyed by resource plural. When the Add-resource dialog is
@@ -347,7 +348,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
             }}
             disabled={apply.isPending || !draft.trim()}
           >
-            {apply.isPending ? 'Deploying…' : '🚀 Deploy'}
+            {apply.isPending ? 'Deploying…' : <><Rocket size={14} aria-hidden="true" /> Deploy</>}
           </button>
         </>
       }

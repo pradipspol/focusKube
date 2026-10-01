@@ -8,7 +8,7 @@ import { HelmAddRepoModal } from './HelmAddRepoModal';
 import { SegmentedControl } from './SegmentedControl';
 import { Notice } from './Notice';
 import { uiText } from '../text';
-import { Check } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
 import { SelectionDropdown } from './SelectionDropdown';
 
 interface Props {
@@ -217,7 +217,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                     className="primary"
                     style={{ marginTop: 'var(--space-sm)' }}
                   >
-                    + {uiText.common.add}
+                    <><Plus size={14} aria-hidden="true" /> {uiText.common.add}</>
                   </button>
                 </div>
               )}

@@ -161,7 +161,7 @@ export function CorrelationDashboard({ scope }: Props) {
       </div>
 
       {/* Events table */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div className="data-table-content">
         {events.length === 0 ? (
           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
             {uiText.observability.noEventsInRange}
