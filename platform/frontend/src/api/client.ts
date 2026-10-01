@@ -19,6 +19,11 @@ import type {
   PodMetricsBatchResponse,
   LogLevelSettingsResponse,
   LogLevel,
+  AppSettingsResponse,
+  NetworkSettings,
+  TelemetrySettings,
+  McpSettings,
+  UsageStats,
   PodMetricsSnapshot,
   ClusterOverviewResponse,
   ResourceKindMeta,
@@ -356,6 +361,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ level }),
     }),
+  getAppSettings: () => request<AppSettingsResponse>('/settings/app'),
+  updateAppSettings: (patch: { network?: NetworkSettings; telemetry?: TelemetrySettings; mcp?: McpSettings }) =>
+    request<AppSettingsResponse>('/settings/app', { method: 'PUT', body: JSON.stringify(patch) }),
+  regenerateMcpToken: () => request<AppSettingsResponse>('/settings/app/mcp/token', { method: 'POST' }),
+  getUsageStats: () => request<UsageStats>('/settings/usage'),
+  clearUsageStats: () => request<{ ok: boolean }>('/settings/usage', { method: 'DELETE' }),
 
   // AWS
   awsAccount: () => request<{ account: AwsIdentity | null }>('/aws/account'),

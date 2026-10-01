@@ -21,6 +21,7 @@ import type { OpenDeploymentLogsTerminalRequest, OpenPodLogsTerminalRequest, Ope
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 import { TreeDisclosure } from './TreeDisclosure';
 import { uiText } from '../text';
+import { monacoOptions, useEditorPreferences } from '../lib/editorPreferences';
 import { Spinner } from './Spinner';
 import { CloseButton } from './CloseButton';
 import { DrawerShell } from './DrawerShell';
@@ -1771,6 +1772,7 @@ function YamlTab({
   const [draft, setDraft] = useState<string>('');
   const { canWrite } = usePermissions();
   const pushToast = useToast();
+  const editorPrefs = useEditorPreferences();
 
   const yamlQuery = useQuery({
     queryKey: ['yaml', plural, name, scope.namespace],
@@ -1832,7 +1834,7 @@ function YamlTab({
           theme="vs-dark"
           value={value}
           onChange={(v) => { setDraft(v ?? ''); validate.reset(); }}
-          options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false, readOnly: !canWrite }}
+          options={{ ...monacoOptions(editorPrefs), readOnly: !canWrite }}
         />
       </div>
     </div>

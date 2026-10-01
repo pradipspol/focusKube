@@ -6,6 +6,7 @@ import { wsUrl, type Scope } from '../api/client';
 import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import { uiText } from '../text';
+import { getEditorPreferences, terminalOptions, useEditorPreferences } from '../lib/editorPreferences';
 import { PanelResizer } from './PanelResizer';
 import { FollowToggle } from './FollowToggle';
 import { CloseButton } from './CloseButton';
@@ -248,6 +249,18 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
   const historyIndexRef = useRef(-1);
   const runningRef = useRef(false);
   const [connected, setConnected] = useState(false);
+  const editorPrefs = useEditorPreferences();
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    Object.assign(term.options, terminalOptions(editorPrefs));
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // Hidden panes have no dimensions to fit yet.
+    }
+  }, [editorPrefs]);
   const [statusText, setStatusText] = useState<string>(session.kind === 'pod' ? uiText.terminalDock.shell : session.kind === 'logs' ? uiText.terminalDock.logs : uiText.terminalDock.ready);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHits, setSearchHits] = useState(0);
@@ -325,9 +338,7 @@ function TerminalSessionPane({ session, scope, active }: { session: DockSession;
     if (!hostRef.current) return;
 
     const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'SFMono-Regular, Consolas, monospace',
-      fontSize: 12,
+      ...terminalOptions(getEditorPreferences()),
       theme: { background: themeColor('--black'), foreground: '#fff' },
       scrollback: 4000,
     });

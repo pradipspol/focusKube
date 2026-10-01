@@ -5,6 +5,7 @@ import { Modal } from './Modal';
 import { api, type Scope } from '../api/client';
 import type { ToastMessage } from './ToastViewport';
 import { uiText } from '../text';
+import { monacoOptions, useEditorPreferences } from '../lib/editorPreferences';
 import { ValidateYamlButton, YamlValidationNotice } from './YamlValidation';
 import { SelectionDropdown } from './SelectionDropdown';
 import { Rocket } from 'lucide-react';
@@ -298,6 +299,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
   const queryClient = useQueryClient();
   const [selectedResourceType, setSelectedResourceType] = useState(() => initialResourceType(resourceType));
   const [draft, setDraft] = useState(() => sampleManifest(initialResourceType(resourceType)));
+  const editorPrefs = useEditorPreferences();
   const [namespace, setNamespace] = useState(() => selectedNamespace ?? namespaces[0] ?? 'default');
   const [error, setError] = useState('');
 
@@ -420,7 +422,7 @@ export function CreateResourceModal({ scope, namespaces, selectedNamespace, reso
             setDraft(value ?? '');
             validate.reset();
           }}
-          options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
+          options={monacoOptions(editorPrefs)}
         />
       </div>
     </Modal>

@@ -6,6 +6,7 @@ import type { K8sObject } from '../api/types';
 import { podContainers } from '../utils/format';
 import type { OpenPodTerminalRequest } from './TerminalDock';
 import { uiText } from '../text';
+import { getEditorPreferences, terminalOptions, useEditorPreferences } from '../lib/editorPreferences';
 
 function closeSocket(socket: WebSocket | null): void {
   if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
@@ -38,6 +39,18 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const editorPrefs = useEditorPreferences();
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    Object.assign(term.options, terminalOptions(editorPrefs));
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // Not laid out yet.
+    }
+  }, [editorPrefs]);
 
   const themeColor = (variable: string) => getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
 
@@ -45,9 +58,7 @@ export function ExecTerminal({ pod, context, onOpenInTerminal }: Props) {
     if (!container || !hostRef.current) return;
 
     const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'SFMono-Regular, Consolas, monospace',
-      fontSize: 13,
+      ...terminalOptions(getEditorPreferences()),
       theme: { background: themeColor('--black'), foreground: '#fff' },
     });
     const fit = new FitAddon();

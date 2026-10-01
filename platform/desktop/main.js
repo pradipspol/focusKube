@@ -65,6 +65,32 @@ ipcMain.handle('set-native-theme', (event, theme) => {
   }
 });
 
+function chromiumProxyUri(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const url = new URL(value.trim());
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Unsupported proxy protocol.');
+  return `${url.protocol}//${url.host}`;
+}
+
+// Mirrors the backend's proxy settings for requests made by Electron itself (release notes, license).
+ipcMain.handle('set-network-proxy', async (event, settings) => {
+  const ses = event.sender.session;
+  const mode = settings && settings.proxyMode;
+  if (mode === 'none') {
+    await ses.setProxy({ mode: 'direct' });
+    return;
+  }
+  if (mode !== 'manual') {
+    await ses.setProxy({ mode: 'system' });
+    return;
+  }
+  const httpProxy = chromiumProxyUri(settings.httpProxy);
+  const httpsProxy = chromiumProxyUri(settings.httpsProxy) || httpProxy;
+  const rules = [httpProxy && `http=${httpProxy}`, httpsProxy && `https=${httpsProxy}`].filter(Boolean).join(';');
+  const bypass = ['<local>', ...String(settings.noProxy || '').split(/[\s,;]+/).filter(Boolean)].join(',');
+  await ses.setProxy(rules ? { mode: 'fixed_servers', proxyRules: rules, proxyBypassRules: bypass } : { mode: 'system' });
+});
+
 let backendProc = null;
 let server = null;
 

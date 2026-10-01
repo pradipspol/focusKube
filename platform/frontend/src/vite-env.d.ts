@@ -8,6 +8,7 @@ interface Window {
 		fetchLatestRelease: () => Promise<{ name: string; body: string }>;
 		getAppInfo: () => Promise<{ name: string; version: string; description: string }>;
 		setTheme: (theme: 'dark' | 'light' | 'contrast') => Promise<void>;
+		setNetworkProxy?: (settings: { proxyMode: string; httpProxy: string; httpsProxy: string; noProxy: string }) => Promise<void>;
 	};
 }
 

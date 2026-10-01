@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
-import type { LogLevel } from '../api/types';
 import { ROLE_LABELS, describePermissions } from '../auth/permissions';
 import type { Theme } from '../App';
 import { uiText } from '../text';
-import { Notice } from './Notice';
-import { Modal } from './Modal';
+import { SettingsModal } from './SettingsModal';
 import { Check, Menu, X } from 'lucide-react';
 
 interface Props {
@@ -36,23 +34,17 @@ export function TopBar({
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedLevel, setSelectedLevel] = useState<LogLevel>('info');
-  const [selectedTheme, setSelectedTheme] = useState<Theme>(theme);
   const menuRef = useRef<HTMLDivElement | null>(null);
   // Captures the initial value so the effect below only fires on a later bump, not on mount.
   const lastOpenSettingsSignalRef = useRef(openSettingsSignal);
 
-  const logLevelQuery = useQuery({
-    queryKey: ['settings', 'log-level'],
-    queryFn: () => api.getLogLevel(),
-    enabled: settingsOpen,
-  });
-
+  // Mirror the saved proxy configuration into the desktop shell once per sign-in.
   useEffect(() => {
-    if (logLevelQuery.data?.level) {
-      setSelectedLevel(logLevelQuery.data.level);
-    }
-  }, [logLevelQuery.data?.level]);
+    if (!window.desktopMenu?.setNetworkProxy) return;
+    void api.getAppSettings()
+      .then((settings) => window.desktopMenu?.setNetworkProxy?.(settings.network))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -80,19 +72,10 @@ export function TopBar({
   //   onSuccess: () => onContextsRefetch(),
   // });
 
-  const updateLogLevel = useMutation({
-    mutationFn: (level: LogLevel) => api.setLogLevel(level),
-    onSuccess: async (result) => {
-      setSelectedLevel(result.level);
-      await queryClient.invalidateQueries({ queryKey: ['settings', 'log-level'] });
-    },
-  });
-
   const handleOpenSettings = async () => {
     setMenuOpen(false);
-    setSelectedTheme(theme);
     setSettingsOpen(true);
-    await queryClient.invalidateQueries({ queryKey: ['settings', 'log-level'] });
+    await queryClient.invalidateQueries({ queryKey: ['settings'] });
   };
 
   useEffect(() => {
@@ -107,24 +90,10 @@ export function TopBar({
       if (action === 'preferences') {
         setMenuOpen(false);
         setSettingsOpen(true);
-        setSelectedTheme(theme);
         onOpenSettings?.();
       }
     });
-  }, [onOpenSettings, theme]);
-
-  const handleSaveSettings = async () => {
-    await updateLogLevel.mutateAsync(selectedLevel);
-    onThemeChange(selectedTheme);
-    setSettingsOpen(false);
-  };
-
-  const levelOptions: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-  const themeOptions: Array<{ value: Theme; label: string }> = [
-    { value: 'dark', label: uiText.theme.dark },
-    { value: 'light', label: uiText.theme.light },
-    { value: 'contrast', label: uiText.theme.contrast },
-  ];
+  }, [onOpenSettings]);
 
   return (
     <>
@@ -196,82 +165,7 @@ export function TopBar({
     )}
 
       {settingsOpen && (
-        <Modal
-          title={uiText.modal.preferences}
-          onClose={() => setSettingsOpen(false)}
-          cardClassName="settings-modal"
-          bodyClassName="settings-modal-body"
-          closeLabel={uiText.topbar.closeSettings}
-          footer={(
-            <>
-              <button type="button" onClick={() => setSettingsOpen(false)} disabled={updateLogLevel.isPending}>{uiText.common.cancel}</button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  void handleSaveSettings();
-                }}
-                disabled={updateLogLevel.isPending || logLevelQuery.isLoading || !logLevelQuery.data?.editable}
-              >
-                {updateLogLevel.isPending ? uiText.topbar.saving : uiText.common.save}
-              </button>
-            </>
-          )}
-        >
-              {logLevelQuery.isLoading ? (
-                <div className="dim">{uiText.modal.loadingSettings}</div>
-              ) : (
-                <>
-                  <div className="settings-row">
-                    <label className="settings-field" htmlFor="desktop-theme">
-                      {uiText.topbar.theme}
-                    </label>
-                    <select
-                      id="desktop-theme"
-                      value={selectedTheme}
-                      onChange={(event) => setSelectedTheme(event.target.value as Theme)}
-                      disabled={updateLogLevel.isPending}
-                    >
-                      {themeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="settings-row">
-                    <label className="settings-field" htmlFor="desktop-log-level">
-                      {uiText.topbar.logLevel}
-                    </label>
-                    <select
-                      id="desktop-log-level"
-                      value={selectedLevel}
-                      onChange={(event) => setSelectedLevel(event.target.value as LogLevel)}
-                      disabled={!logLevelQuery.data?.editable || updateLogLevel.isPending}
-                    >
-                      {levelOptions.map((level) => (
-                        <option key={level} value={level}>
-                          {level.toUpperCase()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="dim settings-message">
-                    {uiText.topbar.effectivePrefix} {logLevelQuery.data?.level?.toUpperCase() ?? 'N/A'}
-                    {logLevelQuery.data?.envLevel ? ` | ${uiText.topbar.envPrefix} ${logLevelQuery.data.envLevel.toUpperCase()}` : ''}
-                    {logLevelQuery.data?.overriddenByUi ? ` | ${uiText.topbar.uiOverrideActive}` : ''}
-                  </div>
-                  {!logLevelQuery.data?.editable && (
-                    <div className="dim settings-message">{uiText.topbar.desktopOnly}</div>
-                  )}
-                  {updateLogLevel.error && (
-                    <Notice variant="error" className="settings-message">
-                      {updateLogLevel.error instanceof Error ? updateLogLevel.error.message : uiText.topbar.failedToUpdateLogLevel}
-                    </Notice>
-                  )}
-                </>
-              )}
-        </Modal>
+        <SettingsModal theme={theme} onThemeChange={onThemeChange} onClose={() => setSettingsOpen(false)} />
       )}
     </>
   );

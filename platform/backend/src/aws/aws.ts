@@ -9,6 +9,7 @@ import { EC2Client, DescribeRegionsCommand } from '@aws-sdk/client-ec2';
 import { EKSClient, ListClustersCommand, DescribeClusterCommand } from '@aws-sdk/client-eks';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { config } from '../config.js';
+import { awsClientNetworkConfig } from '../network/networkSettings.js';
 import { commandLine, commandReason, logCommandOutcome } from '../util/commandLog.js';
 import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { logError, logInfo, logWarn } from '../util/logger.js';
@@ -741,7 +742,7 @@ async function awsCliDescribeEksCluster(name: string, region: string, options: A
 export async function awsStsGetCallerIdentity(options: AwsExecOptions = {}): Promise<AwsIdentity | null> {
   try {
     const region = await resolveRegion(options);
-    const client = new STSClient({ region, credentials: sdkCredentials(options.env) });
+    const client = new STSClient({ region, credentials: sdkCredentials(options.env), ...awsClientNetworkConfig() });
     const result = await client.send(new GetCallerIdentityCommand({}));
     if (!result.Account || !result.Arn || !result.UserId) return null;
     return {
@@ -790,7 +791,7 @@ async function awsListRegions(options: AwsExecOptions = {}): Promise<{ regions: 
   const region = await resolveRegion(options);
 
   try {
-    const client = new EC2Client({ region, credentials: sdkCredentials(options.env) });
+    const client = new EC2Client({ region, credentials: sdkCredentials(options.env), ...awsClientNetworkConfig() });
     const result = await client.send(new DescribeRegionsCommand({ AllRegions: true }));
     const regions = (result.Regions ?? [])
       .map((r) => r.RegionName)
@@ -819,7 +820,7 @@ async function awsListRegions(options: AwsExecOptions = {}): Promise<{ regions: 
 
 async function awsListEksNames(region: string, options: AwsExecOptions = {}): Promise<{ names: string[]; error?: string }> {
   try {
-    const client = new EKSClient({ region, credentials: sdkCredentials(options.env) });
+    const client = new EKSClient({ region, credentials: sdkCredentials(options.env), ...awsClientNetworkConfig() });
     const result = await client.send(new ListClustersCommand({}));
     return { names: result.clusters ?? [] };
   } catch (err) {
@@ -842,7 +843,7 @@ async function awsDescribeEksCluster(
   options: AwsExecOptions = {},
 ): Promise<EksCluster | null> {
   try {
-    const client = new EKSClient({ region, credentials: sdkCredentials(options.env) });
+    const client = new EKSClient({ region, credentials: sdkCredentials(options.env), ...awsClientNetworkConfig() });
     const result = await client.send(new DescribeClusterCommand({ name }));
     const cluster = result.cluster;
     if (!cluster?.name) return null;

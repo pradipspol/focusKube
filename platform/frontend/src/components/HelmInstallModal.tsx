@@ -8,6 +8,7 @@ import { HelmAddRepoModal } from './HelmAddRepoModal';
 import { SegmentedControl } from './SegmentedControl';
 import { Notice } from './Notice';
 import { uiText } from '../text';
+import { useEditorPreferences } from '../lib/editorPreferences';
 import { Check, Plus } from 'lucide-react';
 import { SelectionDropdown } from './SelectionDropdown';
 
@@ -37,6 +38,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
   const [namespace, setNamespace] = useState(selectedNamespace ?? namespaces[0] ?? 'default');
   const [version, setVersion] = useState('');
   const [values, setValues] = useState('');
+  const editorPrefs = useEditorPreferences();
   const [dryRunManifest, setDryRunManifest] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -340,7 +342,7 @@ export function HelmInstallModal({ scope, namespaces, selectedNamespace, onClose
                   onChange={(e) => setValues(e.target.value)}
                   placeholder="# Override default chart values"
                   rows={8}
-                  style={{ fontFamily: 'monospace', fontSize: '12px' }}
+                  style={{ fontFamily: editorPrefs.fontFamily, fontSize: `${editorPrefs.fontSize}px`, tabSize: editorPrefs.tabSize }}
                 />
               </div>
 

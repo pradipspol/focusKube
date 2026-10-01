@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { wsUrl, type Scope } from '../api/client';
 import { uiText } from '../text';
+import { getEditorPreferences, terminalOptions, useEditorPreferences } from '../lib/editorPreferences';
 import { PanelResizer } from './PanelResizer';
 
 interface Props {
@@ -53,6 +54,18 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
   const runningRef = useRef(false);
   const [connected, setConnected] = useState(false);
   const [statusText, setStatusText] = useState('Ready');
+  const editorPrefs = useEditorPreferences();
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    Object.assign(term.options, terminalOptions(editorPrefs));
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // Not laid out yet.
+    }
+  }, [editorPrefs]);
 
   const sendResize = () => {
     const socket = wsRef.current;
@@ -68,9 +81,7 @@ export function CommandTerminal({ scope, heightPx, onHeightChange }: Props) {
     if (!hostRef.current) return;
 
     const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: 'SFMono-Regular, Consolas, monospace',
-      fontSize: 12,
+      ...terminalOptions(getEditorPreferences()),
       theme: { background: themeColor('--black'), foreground: '#fff' },
       scrollback: 10000,
     });

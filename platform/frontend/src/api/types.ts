@@ -253,6 +253,42 @@ export interface LogLevelSettingsResponse {
   mode: 'desktop';
 }
 
+export type ProxyMode = 'environment' | 'none' | 'manual';
+
+export interface NetworkSettings {
+  proxyMode: ProxyMode;
+  httpProxy: string;
+  httpsProxy: string;
+  noProxy: string;
+  caCertPath: string;
+  useSystemCa: boolean;
+}
+
+export interface TelemetrySettings {
+  usageTracking: boolean;
+}
+
+export interface McpSettings {
+  enabled: boolean;
+  port: number;
+  allowWrite: boolean;
+}
+
+export interface AppSettingsResponse {
+  network: NetworkSettings;
+  telemetry: TelemetrySettings;
+  mcp: McpSettings & {
+    token: string;
+    status: { running: boolean; url: string | null; error: string | null };
+  };
+}
+
+export interface UsageStats {
+  since: string | null;
+  totalEvents: number;
+  operations: Record<string, number>;
+}
+
 // Observability types
 export interface ChangeEventDoc {
   _id?: string;

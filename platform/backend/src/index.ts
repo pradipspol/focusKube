@@ -23,6 +23,10 @@ import { guardByMethod } from './auth/rbac.js';
 import { logError, logInfo, logWarn } from './util/logger.js';
 import { runWithLogContext, setLogContext } from './util/logger.js';
 import { getRequestOperation, setRequestOperation } from './util/requestOp.js';
+import { loadAppSettings } from './runtime/appSettingsStore.js';
+import { applyNetworkSettings } from './network/networkSettings.js';
+import { recordUsage, setUsageTrackingEnabled } from './runtime/usageStats.js';
+import { applyMcpSettings } from './mcp/mcpServer.js';
 
 
 const app = express();
@@ -96,6 +100,7 @@ app.use((req, res, next) => {
 
       res.once('finish', () => {
         clearTimeout(slowTimer);
+        recordUsage(getRequestOperation(req));
         const elapsedMs = Number(process.hrtime.bigint() - startedHr) / 1_000_000;
         logInfo('http.request.finish', {
           reqId,
@@ -224,6 +229,10 @@ async function start(): Promise<void> {
 
   logInfo('backend.startup.desktop_mode');
 
+  const appSettings = await loadAppSettings();
+  applyNetworkSettings(appSettings.network);
+  await setUsageTrackingEnabled(appSettings.telemetry.usageTracking);
+
   await new Promise<void>((resolve, reject) => {
     const listener = server.listen(config.port, config.host, () => {
       logInfo('backend.startup.listening', {
@@ -234,6 +243,8 @@ async function start(): Promise<void> {
 
     listener.on('error', reject);
   });
+
+  await applyMcpSettings(appSettings.mcp);
 }
 
 function installGlobalGuards(): void {

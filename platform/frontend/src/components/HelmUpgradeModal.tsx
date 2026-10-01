@@ -7,6 +7,7 @@ import { HelmDiffViewer } from './HelmDiffViewer';
 import { SegmentedControl } from './SegmentedControl';
 import { Notice } from './Notice';
 import { uiText } from '../text';
+import { useEditorPreferences } from '../lib/editorPreferences';
 
 interface Props {
   release: HelmRelease;
@@ -21,6 +22,7 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
   const [tab, setTab] = useState<'config' | 'diff'>('config');
   const [version, setVersion] = useState('');
   const [values, setValues] = useState('');
+  const editorPrefs = useEditorPreferences();
   const [isLoadingDefaults, setIsLoadingDefaults] = useState(false);
 
   const currentValues = useQuery({
@@ -106,7 +108,7 @@ export function HelmUpgradeModal({ release, scope, onClose, onToast, onUpgraded 
                   value={values}
                   onChange={(e) => setValues(e.target.value)}
                   rows={10}
-                  style={{ fontFamily: 'monospace', fontSize: '12px' }}
+                  style={{ fontFamily: editorPrefs.fontFamily, fontSize: `${editorPrefs.fontSize}px`, tabSize: editorPrefs.tabSize }}
                 />
               </div>
 

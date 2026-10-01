@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('desktopMenu', {
   fetchLatestRelease: () => ipcRenderer.invoke('fetch-latest-release'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   setTheme: (theme) => ipcRenderer.invoke('set-native-theme', theme),
+  setNetworkProxy: (settings) => ipcRenderer.invoke('set-network-proxy', settings),
 });
