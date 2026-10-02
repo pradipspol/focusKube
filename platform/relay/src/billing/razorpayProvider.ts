@@ -6,12 +6,12 @@
  * Instead of returning Razorpay's `short_url`, createCheckout returns a URL to our own
  * /pay/razorpay/:subscriptionId page (see web/pay.ts), which opens Razorpay Checkout and
  * then brings the customer back to /home or /team. That keeps the `{ url }` contract every
- * existing caller — including the desktop app's entitlement gate — already expects.
+ * existing caller â€” including the desktop app's entitlement gate â€” already expects.
  *
  * Entitlement itself is never granted by that page: webhooks remain the only source of truth.
  */
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import type { BillingProvider, CheckoutRequest, CheckoutResult } from './provider.js';
 import { proUnitAmountMinor } from './pricing.js';
 import {
@@ -30,7 +30,7 @@ export const razorpayProvider: BillingProvider = {
     return isRazorpayConfigured();
   },
 
-  /** Razorpay offers no hosted self-serve subscription portal at all — the UI hides the
+  /** Razorpay offers no hosted self-serve subscription portal at all â€” the UI hides the
    * "Manage billing" button and /v1/billing/portal returns 503 under this provider. */
   supportsPortal() {
     return false;
@@ -48,7 +48,7 @@ export const razorpayProvider: BillingProvider = {
       currency: 'INR',
     });
 
-    // Razorpay has no client_reference_id — `notes` is the only metadata channel, so the
+    // Razorpay has no client_reference_id â€” `notes` is the only metadata channel, so the
     // buying user's id has to ride along here for the webhook to resolve the account.
     const notes: Record<string, string> = {
       fk_user_id: request.user.id,
@@ -67,14 +67,14 @@ export const razorpayProvider: BillingProvider = {
     });
 
     // Lets /pay/razorpay/:id verify the visitor owns this subscription (see db.ts's
-    // razorpay_checkouts) — there is no local license row until activation.
-    db.prepare(`INSERT OR REPLACE INTO razorpay_checkouts (subscription_id, user_id, created_at) VALUES (?, ?, ?)`).run(
-      subscription.id,
-      request.user.id,
-      new Date().toISOString(),
+    // razorpay_checkouts) â€” there is no local license row until activation.
+    await mongoCollections.razorpay_checkouts.updateOne(
+      { subscription_id: subscription.id },
+      { $set: { user_id: request.user.id, created_at: new Date().toISOString() } },
+      { upsert: true },
     );
 
-    // returnTo decides where our payment page sends the buyer afterwards — a team
+    // returnTo decides where our payment page sends the buyer afterwards â€” a team
     // purchase belongs back on /team, not /home.
     const returnTo = request.purpose === 'org' ? '?returnTo=team' : '';
     logInfo('Razorpay checkout session created', { purpose: request.purpose, quantity: request.quantity });

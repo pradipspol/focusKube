@@ -2,11 +2,11 @@ import type { Request, Response } from 'express';
 import { Router } from 'express';
 import type Stripe from 'stripe';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { requireSession } from '../auth/sessions.js';
 import { createLicenseForUser } from '../licenseStore.js';
 import { getEffectiveLicenseForUser } from '../org/entitlement.js';
-import { findOrgByOwner, findActiveMembership } from '../org/store.js';
+import { organizationService } from '../org/organizationService.js';
 import { parseInterval } from './pricing.js';
 import { activeProvider, BillingConfigError } from './provider.js';
 import { RazorpayError } from './razorpay.js';
@@ -28,7 +28,7 @@ import {
 const router = Router();
 export const billingRouter = router;
 
-// Granted in place of a real subscription whenever no payment provider is configured yet —
+// Granted in place of a real subscription whenever no payment provider is configured yet Ã¢â‚¬â€
 // lets AI assistant access ship before billing is wired up, without a separate "is billing
 // enabled" flag anywhere else. Once a provider is configured, a real activation webhook
 // simply replaces this trial license the same way it replaces any other
@@ -50,15 +50,15 @@ function sendBillingError(res: Response, err: unknown): void {
 }
 
 router.post('/checkout', requireSession, async (req, res) => {
-  // Team members cannot buy individual Pro licenses — they're covered by their org.
+  // Team members cannot buy individual Pro licenses Ã¢â‚¬â€ they're covered by their org.
   // They must leave the org first if they want to switch to an individual license.
-  const teamMembership = findActiveMembership(req.user!.id);
+  const teamMembership = await organizationService.findActiveMembership(req.user!.id);
   if (teamMembership) {
     res.status(409).json({ error: "You're covered by your team's plan. Leave the organization first if you want to buy an individual license." });
     return;
   }
 
-  // A phone-only (mobile OTP) account has no email for receipts — require a verified email
+  // A phone-only (mobile OTP) account has no email for receipts Ã¢â‚¬â€ require a verified email
   // before subscribing, same rationale as the plan's "gate checkout on a verified email"
   // security note.
   if (!req.user!.email || !req.user!.emailVerified) {
@@ -70,16 +70,16 @@ router.post('/checkout', requireSession, async (req, res) => {
 
   if (!provider.isConfigured()) {
     // Only a stand-in for real billing when the account has no currently-active entitlement
-    // (personal OR Team) — otherwise this would silently reset quota and wipe a trial's
+    // (personal OR Team) Ã¢â‚¬â€ otherwise this would silently reset quota and wipe a trial's
     // expiry for someone who already has one, or mint a free personal license for someone a
-    // Team already covers. Once the active entitlement lapses the fallback applies again —
+    // Team already covers. Once the active entitlement lapses the fallback applies again Ã¢â‚¬â€
     // that's what keeps a self-hosted install without billing from being locked out forever.
-    const existing = getEffectiveLicenseForUser(req.user!.id);
+    const existing = await getEffectiveLicenseForUser(req.user!.id);
     if (existing?.status === 'active') {
       res.status(503).json({ error: 'Billing is not configured on this server' });
       return;
     }
-    createLicenseForUser(req.user!.id, { plan: TRIAL_PLAN, quotaRemaining: TRIAL_PLAN_QUOTA });
+    await createLicenseForUser(req.user!.id, { plan: TRIAL_PLAN, quotaRemaining: TRIAL_PLAN_QUOTA });
     res.json({ trialGranted: true });
     return;
   }
@@ -108,17 +108,13 @@ router.post('/portal', requireSession, async (req, res) => {
     return;
   }
 
-  let license = db.prepare(`SELECT stripe_customer_id FROM licenses WHERE user_id = ?`).get(req.user!.id) as
-    | { stripe_customer_id: string | null }
-    | undefined;
+  let license = await mongoCollections.licenses.findOne({ user_id: req.user!.id });
   // A Team owner's customer record lives on the org's pooled license row (user_id NULL,
-  // org_id set), not one keyed by their own user_id — fall back to it.
+  // org_id set), not one keyed by their own user_id Ã¢â‚¬â€ fall back to it.
   if (!license?.stripe_customer_id) {
-    const org = findOrgByOwner(req.user!.id);
+    const org = await organizationService.findOrgByOwner(req.user!.id);
     if (org) {
-      license = db.prepare(`SELECT stripe_customer_id FROM licenses WHERE org_id = ?`).get(org.id) as
-        | { stripe_customer_id: string | null }
-        | undefined;
+      license = await mongoCollections.licenses.findOne({ org_id: org.id });
     }
   }
   if (!license?.stripe_customer_id) {
@@ -141,9 +137,9 @@ router.post('/cancel', requireSession, async (req, res) => {
     return;
   }
 
-  const license = db
-    .prepare(`SELECT stripe_subscription_id FROM licenses WHERE user_id = ? AND plan = ?`)
-    .get(req.user!.id, 'pro') as { stripe_subscription_id: string | null } | undefined;
+  const license = await mongoCollections.licenses.findOne({
+    user_id: req.user!.id, plan: 'pro',
+  });
 
   if (!license?.stripe_subscription_id) {
     res.status(400).json({ error: 'No active Pro subscription found' });
@@ -168,7 +164,7 @@ function subscriptionItemId(sub: Stripe.Subscription): string | null {
 }
 
 // current_period_end moved from the subscription itself onto the subscription item in
-// recent Stripe API versions — read the item first, fall back to the subscription.
+// recent Stripe API versions Ã¢â‚¬â€ read the item first, fall back to the subscription.
 function subscriptionPeriodEnd(sub: Stripe.Subscription): string | null {
   const item = sub.items.data[0] as unknown as { current_period_end?: number } | undefined;
   const seconds = item?.current_period_end ?? (sub as unknown as { current_period_end?: number }).current_period_end;
@@ -177,7 +173,7 @@ function subscriptionPeriodEnd(sub: Stripe.Subscription): string | null {
 
 /**
  * Registered separately in index.ts with express.raw() BEFORE the global JSON body
- * parser — Stripe's signature verification needs the exact raw request bytes, so this
+ * parser Ã¢â‚¬â€ Stripe's signature verification needs the exact raw request bytes, so this
  * route can't share the app-wide express.json() middleware the rest of the API uses.
  *
  * Every branch below maps a Stripe event onto the provider-neutral operations in
@@ -217,8 +213,8 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   }
 
   logDebug('Stripe webhook parsed', { eventType: event.type });
-  // Stripe redelivers events on timeout/retry — process each event id at most once.
-  if (!claimBillingEvent('stripe', event.id)) {
+  // Stripe redelivers events on timeout/retry Ã¢â‚¬â€ process each event id at most once.
+  if (!(await claimBillingEvent('stripe', event.id))) {
     logInfo('Duplicate Stripe webhook acknowledged', { eventType: event.type });
     res.json({ received: true });
     return;
@@ -229,7 +225,7 @@ export async function handleStripeWebhook(req: Request, res: Response): Promise<
   } catch (err) {
     // Processing failed: release the de-duplication claim so Stripe's retry is not
     // swallowed (otherwise a transient failure here loses the activation permanently).
-    releaseBillingEvent('stripe', event.id);
+    await releaseBillingEvent('stripe', event.id);
     logError('Stripe webhook processing failed; event released for retry', err, { eventType: event.type });
     throw err;
   }
@@ -242,14 +238,14 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
-      // An individual checkout carries no metadata at all — that's what distinguishes it.
+      // An individual checkout carries no metadata at all Ã¢â‚¬â€ that's what distinguishes it.
       if (session.metadata?.fk_purchase === 'org' && session.metadata.fk_org_id) {
         const subscriptionId = stripeIdOf(session.subscription);
         if (!subscriptionId) break;
         // The webhook payload's session.subscription is a bare id, so the item id, quantity
         // and period end have to be retrieved before the org can be activated.
         const subscription = await stripeClient().subscriptions.retrieve(subscriptionId);
-        activateOrgSubscription({
+        await activateOrgSubscription({
           provider: 'stripe',
           orgId: session.metadata.fk_org_id,
           seats: subscription.items.data[0]?.quantity ?? Number(session.metadata.fk_seats ?? '0'),
@@ -262,7 +258,7 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
       }
       const userId = session.client_reference_id;
       if (userId) {
-        activateIndividualSubscription({
+        await activateIndividualSubscription({
           provider: 'stripe',
           userId,
           customerId: stripeIdOf(session.customer),
@@ -274,15 +270,15 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
     case 'customer.subscription.updated': {
       const subscription = event.data.object as Stripe.Subscription;
       const status = subscription.status === 'active' || subscription.status === 'trialing' ? 'active' : 'inactive';
-      setSubscriptionStatus(subscription.id, status);
-      // No-op when this subscription isn't a Team's — reconciles seats_purchased (and the
+      await setSubscriptionStatus(subscription.id, status);
+      // No-op when this subscription isn't a Team's Ã¢â‚¬â€ reconciles seats_purchased (and the
       // pool's grant) if it drifted, e.g. a change made directly in the Stripe dashboard.
-      syncSeatsForSubscription(subscription.id, subscription.items.data[0]?.quantity);
+      await syncSeatsForSubscription(subscription.id, subscription.items.data[0]?.quantity);
       break;
     }
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      endSubscription(subscription.id);
+      await endSubscription(subscription.id);
       break;
     }
     case 'invoice.paid': {
@@ -293,7 +289,7 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
       const subscriptionRef = invoice.parent?.subscription_details?.subscription;
       const subscriptionId = typeof subscriptionRef === 'string' ? subscriptionRef : subscriptionRef?.id;
       if (invoice.billing_reason === 'subscription_cycle' && subscriptionId) {
-        renewSubscriptionQuota(subscriptionId);
+        await renewSubscriptionQuota(subscriptionId);
       }
       break;
     }

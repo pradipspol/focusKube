@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requirePageSession } from '../auth/sessions.js';
 import { razorpayKeyId } from '../billing/razorpay.js';
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { page, renderTemplate } from './layout.js';
 
 const router = Router();
@@ -13,10 +13,10 @@ export const payPageRouter = router;
  * Razorpay Checkout against the subscription we already created, then returns the customer
  * to /home (or /team) afterwards.
  *
- * It grants nothing. Entitlement still comes only from the subscription.activated webhook —
+ * It grants nothing. Entitlement still comes only from the subscription.activated webhook Ã¢â‚¬â€
  * this page just carries the browser back, and the destination page reads the real state.
  */
-router.get('/pay/razorpay/:subscriptionId', requirePageSession, (req, res) => {
+router.get('/pay/razorpay/:subscriptionId', requirePageSession, async (req, res) => {
   const subscriptionId = req.params.subscriptionId;
   // Razorpay subscription ids are sub_<alphanumeric>; reject anything else rather than
   // reflecting arbitrary input into the page.
@@ -29,9 +29,7 @@ router.get('/pay/razorpay/:subscriptionId', requirePageSession, (req, res) => {
   // is checked against the buyer recorded at checkout (see db.ts's razorpay_checkouts).
   // Without this, any signed-in user who learned a subscription id could open a payment
   // modal prefilled with that customer's contact details.
-  const checkout = db
-    .prepare(`SELECT user_id FROM razorpay_checkouts WHERE subscription_id = ?`)
-    .get(subscriptionId) as { user_id: string } | undefined;
+  const checkout = await mongoCollections.razorpay_checkouts.findOne({ subscription_id: subscriptionId });
   if (checkout?.user_id !== req.user!.id) {
     res.status(404).send('Subscription not found');
     return;

@@ -9,7 +9,7 @@
  * Docs: https://razorpay.com/docs/api/payments/subscriptions/
  */
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { logDebug, logInfo, logWarning } from '../logger.js';
 
 const API_BASE = 'https://api.razorpay.com/v1';
@@ -20,7 +20,7 @@ export interface RazorpaySubscription {
   plan_id: string;
   customer_id?: string | null;
   quantity?: number;
-  /** How many cycles have been paid. 1 is the activation charge; >1 is a renewal — this is
+  /** How many cycles have been paid. 1 is the activation charge; >1 is a renewal Ã¢â‚¬â€ this is
    * the only reliable way to tell them apart, since subscription.charged fires for both. */
   paid_count?: number;
   current_end?: number | null;
@@ -30,7 +30,7 @@ export interface RazorpaySubscription {
 
 /** Razorpay reports failures as { error: { code, description, ... } } with a non-2xx status.
  * Surfacing `description` matters most for seat changes, which Razorpay rejects outright for
- * UPI/eMandate subscriptions — the team owner needs to see the real reason. */
+ * UPI/eMandate subscriptions Ã¢â‚¬â€ the team owner needs to see the real reason. */
 export class RazorpayError extends Error {
   constructor(
     message: string,
@@ -90,7 +90,7 @@ async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: un
 }
 
 /**
- * Razorpay subscriptions must point at a pre-created Plan — there is no Stripe-style inline
+ * Razorpay subscriptions must point at a pre-created Plan Ã¢â‚¬â€ there is no Stripe-style inline
  * price. Plans are immutable and reusable, so each (interval, currency, amount) combination
  * is created once and cached in razorpay_plans; without the cache every checkout would leave
  * another duplicate plan behind in the Razorpay dashboard.
@@ -102,9 +102,8 @@ export async function findOrCreatePlan(args: {
 }): Promise<string> {
   const planKey = `${args.interval}:${args.currency}:${args.amountMinor}`;
   logDebug('Resolving Razorpay billing plan', { interval: args.interval, currency: args.currency });
-  const cached = db.prepare(`SELECT plan_id FROM razorpay_plans WHERE plan_key = ?`).get(planKey) as
-    | { plan_id: string }
-    | undefined;
+  const plans = mongoCollections.razorpay_plans;
+  const cached = await plans.findOne({ plan_key: planKey });
   if (cached) {
     logInfo('Razorpay billing plan cache hit', { interval: args.interval, currency: args.currency });
     return cached.plan_id;
@@ -124,14 +123,12 @@ export async function findOrCreatePlan(args: {
   // Two concurrent first checkouts can both reach the create call above. INSERT OR IGNORE
   // keeps whichever landed first, and re-reading means both callers use that same plan
   // rather than diverging (the loser's plan is simply left unused at Razorpay).
-  db.prepare(`INSERT OR IGNORE INTO razorpay_plans (plan_key, plan_id, created_at) VALUES (?, ?, ?)`).run(
-    planKey,
-    plan.id,
-    new Date().toISOString(),
+  await plans.updateOne(
+    { plan_key: planKey },
+    { $setOnInsert: { plan_key: planKey, plan_id: plan.id, created_at: new Date().toISOString() } },
+    { upsert: true },
   );
-  const stored = db.prepare(`SELECT plan_id FROM razorpay_plans WHERE plan_key = ?`).get(planKey) as
-    | { plan_id: string }
-    | undefined;
+  const stored = await plans.findOne({ plan_key: planKey });
   logInfo('Razorpay billing plan created and cached', { interval: args.interval, currency: args.currency });
   return stored?.plan_id ?? plan.id;
 }
@@ -155,7 +152,7 @@ export async function createSubscription(args: {
 }
 
 /** Seat changes. Razorpay only allows this while the subscription is authenticated/active,
- * and rejects it outright for UPI and eMandate subscriptions — call sites must let the
+ * and rejects it outright for UPI and eMandate subscriptions Ã¢â‚¬â€ call sites must let the
  * resulting RazorpayError reach the user rather than reporting a success that didn't happen. */
 export async function updateSubscriptionQuantity(subscriptionId: string, quantity: number): Promise<void> {
   logDebug('Updating Razorpay subscription quantity', { quantity });

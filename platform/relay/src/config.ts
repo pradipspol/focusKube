@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import path from 'node:path';
 
 /** parseInt returns NaN for a malformed value, which would otherwise travel all the way to
  * the payment provider as a plan amount or billing-cycle count. Money-path env vars use
@@ -18,7 +17,8 @@ export const config = {
   nodeEnv,
   isProduction: nodeEnv === 'production',
 
-  dbPath: process.env.RELAY_DB_PATH ?? path.join(process.cwd(), 'data', 'relay.db'),
+  mongodbUri: process.env.MONGODB_URI ?? '',
+  mongodbDbName: process.env.MONGODB_DB_NAME ?? 'focuskube_relay',
 
   sessionCookieName: process.env.SESSION_COOKIE_NAME ?? 'fk_session',
   sessionTtlDays: parseInt(process.env.SESSION_TTL_DAYS ?? '30', 10),

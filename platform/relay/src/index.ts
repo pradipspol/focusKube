@@ -6,8 +6,9 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import 'express-async-errors';
 import { config } from './config.js';
+import { closeDb, connectDb } from './db.js';
 import { applySecurityMiddleware } from './security/security.js';
-import { licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota, userIdFromLicense } from './licenseStore.js';
+import { initializeLicenseStore, licenseFromAuthHeader, lookupLicense, refundQuota, reserveQuota, userIdFromLicense } from './licenseStore.js';
 import { streamChatTurn, type ChatTool, type ChatTurnMessage } from './llm/chatProvider.js';
 import { authRouter } from './auth/routes.js';
 import { accountRouter } from './account/routes.js';
@@ -185,17 +186,17 @@ app.use('/', webRouter);
 
 // POST /v1/license/validate — looked up per call rather than a self-verifying token, since
 // every AI call already has to reach this relay to enforce quota (see the plan's licensing
-// section). Now backed by the real SQLite `licenses` table (see db.ts/licenseStore.ts) instead
+// section). Now backed by the MongoDB `licenses` collection (see db.ts/licenseStore.ts) instead
 // of an in-memory Map, but the request/response contract here is unchanged from Phase 1.
-app.post('/v1/license/validate', (req, res) => {
+app.post('/v1/license/validate', async (req, res) => {
   const key = licenseFromAuthHeader(req.headers.authorization);
   if (!key) return res.status(401).json({ error: 'Missing license key' });
 
-  const record = lookupLicense(key);
+  const record = await lookupLicense(key);
   if (!record || record.status !== 'active') {
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
-  updateLogContext({ userId: userIdFromLicense(key) });
+  updateLogContext({ userId: await userIdFromLicense(key) });
   res.json(record);
 });
 
@@ -205,12 +206,12 @@ app.post('/v1/license/validate', (req, res) => {
 // only consumer, and this shape is all it needs.
 app.post('/v1/ai/chat', async (req, res) => {
   const key = licenseFromAuthHeader(req.headers.authorization);
-  const record = key ? lookupLicense(key) : undefined;
+  const record = key ? await lookupLicense(key) : undefined;
   if (!record || record.status !== 'active') {
     logWarning('AI chat request rejected because its license is invalid or inactive');
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
-  updateLogContext({ userId: userIdFromLicense(key!) });
+  updateLogContext({ userId: await userIdFromLicense(key!) });
 
   const { context, messages, model, maxTokens, tools } = req.body as ChatRequestBody;
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -221,7 +222,7 @@ app.post('/v1/ai/chat', async (req, res) => {
   // Reserved atomically before streaming, not read-then-decrement-after — the old order let
   // concurrent requests against the same pooled Team balance both pass the same check (see
   // licenseStore.ts's reserveQuota).
-  if (!reserveQuota(key!)) {
+  if (!(await reserveQuota(key!))) {
     logWarning('AI chat request rejected because the license quota is exhausted');
     return res.status(429).json({ error: 'Quota exhausted' });
   }
@@ -280,7 +281,7 @@ app.post('/v1/ai/chat', async (req, res) => {
       model: selectedModel,
       durationMs: Date.now() - startedAt,
     });
-    refundQuota(key!);
+    await refundQuota(key!);
     send({ type: 'error', message: 'AI request failed. Please try again.' });
   } finally {
     if (!res.writableEnded) res.end();
@@ -293,12 +294,12 @@ app.post('/v1/ai/chat', async (req, res) => {
 // lookup is a cheap embeddings call, not that.
 app.post('/v1/ai/docs/search', async (req, res) => {
   const key = licenseFromAuthHeader(req.headers.authorization);
-  const record = key ? lookupLicense(key) : undefined;
+  const record = key ? await lookupLicense(key) : undefined;
   if (!record || record.status !== 'active') {
     logWarning('Documentation search rejected because its license is invalid or inactive');
     return res.status(403).json({ error: 'License invalid or inactive' });
   }
-  updateLogContext({ userId: userIdFromLicense(key!) });
+  updateLogContext({ userId: await userIdFromLicense(key!) });
 
   const { query, k } = req.body as { query?: unknown; k?: unknown };
   if (typeof query !== 'string' || !query.trim()) {
@@ -335,21 +336,39 @@ app.use(requestErrorHandler);
 const server = http.createServer(app);
 server.on('error', (err) => {
   logError('Relay HTTP server encountered a fatal error', err);
-  process.exitCode = 1;
+  void closeDb().finally(() => { process.exitCode = 1; });
 });
-server.listen(config.port, () => {
-  logInfo('FocusKube AI relay is listening', { port: config.port });
-  logInfo('AI provider configuration loaded', { aiProvider: config.aiProvider });
-  if (config.aiProvider === 'azure-openai') {
-    if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.deployment) {
-      logWarning('Azure OpenAI chat is missing required configuration', { component: 'azure-openai-chat' });
+async function startRelay(): Promise<void> {
+  await connectDb();
+  await initializeLicenseStore();
+  server.listen(config.port, () => {
+    logInfo('FocusKube AI relay is listening', { port: config.port });
+    logInfo('AI provider configuration loaded', { aiProvider: config.aiProvider });
+    if (config.aiProvider === 'azure-openai') {
+      if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.deployment) {
+        logWarning('Azure OpenAI chat is missing required configuration', { component: 'azure-openai-chat' });
+      }
+    } else if (!process.env.ANTHROPIC_API_KEY) {
+      logWarning('Anthropic API key is not configured; AI chat requests will fail', { component: 'anthropic-chat' });
     }
-  } else if (!process.env.ANTHROPIC_API_KEY) {
-    logWarning('Anthropic API key is not configured; AI chat requests will fail', { component: 'anthropic-chat' });
-  }
-  if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.embeddingsDeployment) {
-    logWarning('Azure OpenAI embeddings are not configured; Kubernetes documentation search is unavailable', {
-      component: 'azure-openai-embeddings',
-    });
-  }
+    if (!config.azureOpenai.apiKey || !config.azureOpenai.endpoint || !config.azureOpenai.embeddingsDeployment) {
+      logWarning('Azure OpenAI embeddings are not configured; Kubernetes documentation search is unavailable', {
+        component: 'azure-openai-embeddings',
+      });
+    }
+  });
+}
+
+function shutdown(): void {
+  server.close((error) => {
+    if (error) logError('Relay HTTP server shutdown failed', error);
+    void closeDb().then(() => { process.exitCode = error ? 1 : 0; });
+  });
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
+void startRelay().catch((error: unknown) => {
+  logError('Relay startup failed', error);
+  void closeDb().finally(() => { process.exitCode = 1; });
 });

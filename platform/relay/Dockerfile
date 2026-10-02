@@ -2,6 +2,7 @@
 
 FROM node:24-alpine AS deps
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
@@ -20,13 +21,10 @@ COPY package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 
-# RELAY_DB_PATH defaults to ./data/relay.db (relative to cwd) — /app/data is the mount
-# point for a persistent volume so the SQLite file survives container recreation.
+# Database persistence is provided by MongoDB Atlas, outside the container.
 RUN addgroup -S relay && adduser -S relay -G relay \
-    && mkdir -p /app/data \
     && chown -R relay:relay /app
 USER relay
-VOLUME ["/app/data"]
 
 ENV PORT=4001
 EXPOSE 4001

@@ -1,12 +1,13 @@
-/**
- * DB access for Team (multi-seat) licensing: organizations, organization_members,
- * organization_invites (see db.ts for the schema and the reasoning behind it). Mirrors the
- * role licenseStore.ts plays for personal licenses — org/billing.ts and org/routes.ts build
- * on these, not on raw SQL of their own.
- */
 import crypto from 'node:crypto';
+import type { ClientSession } from 'mongodb';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import type {
+  LicensesMongoService,
+  OrganizationInvitesMongoService,
+  OrganizationMembersMongoService,
+  OrganizationsMongoService,
+  UsersMongoService,
+} from '../mongoCollections.js';
 import { logDebug, logInfo } from '../logger.js';
 import { randomToken, sha256 } from '../auth/crypto.js';
 
@@ -49,73 +50,12 @@ export interface OrganizationInviteRow {
   revoked_at: string | null;
 }
 
-export function createPendingOrg(ownerUserId: string, name: string): OrganizationRow {
-  logDebug('Creating pending organization', { ownerUserId, nameLength: name.length });
-  const now = new Date().toISOString();
-  const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO organizations (id, name, owner_user_id, status, seats_purchased, created_at, updated_at)
-     VALUES (?, ?, ?, 'pending', 0, ?, ?)`,
-  ).run(id, name, ownerUserId, now, now);
-  const org = findOrgById(id)!;
-  logInfo('Pending organization created', { orgId: id, ownerUserId });
-  return org;
-}
-
-export function findOrgById(id: string): OrganizationRow | undefined {
-  return db.prepare(`SELECT * FROM organizations WHERE id = ?`).get(id) as OrganizationRow | undefined;
-}
-
-export function findOrgByOwner(ownerUserId: string): OrganizationRow | undefined {
-  return db.prepare(`SELECT * FROM organizations WHERE owner_user_id = ?`).get(ownerUserId) as
-    | OrganizationRow
-    | undefined;
-}
-
-/** Looks up an org by its pooled license's Stripe subscription id — the webhook's only way
- * to find "which org does this subscription event belong to" (see billing/routes.ts). */
-export function findOrgBySubscriptionId(subscriptionId: string): OrganizationRow | undefined {
-  return db
-    .prepare(
-      `SELECT o.* FROM organizations o JOIN licenses l ON l.org_id = o.id WHERE l.stripe_subscription_id = ?`,
-    )
-    .get(subscriptionId) as OrganizationRow | undefined;
-}
-
-export function activateOrg(orgId: string, seats: number): void {
-  logDebug('Activating organization', { orgId, seats });
-  db.prepare(`UPDATE organizations SET status = 'active', seats_purchased = ?, updated_at = ? WHERE id = ?`).run(
-    seats,
-    new Date().toISOString(),
-    orgId,
-  );
-  logInfo('Organization activated', { orgId, seats });
-}
-
-export function setOrgSeatsPurchased(orgId: string, seats: number): void {
-  logDebug('Updating purchased organization seats', { orgId, seats });
-  db.prepare(`UPDATE organizations SET seats_purchased = ?, updated_at = ? WHERE id = ?`).run(
-    seats,
-    new Date().toISOString(),
-    orgId,
-  );
-  logInfo('Purchased organization seats updated', { orgId, seats });
-}
-
-export function setOrgStatus(orgId: string, status: OrganizationRow['status']): void {
-  logDebug('Updating organization status', { orgId, status });
-  db.prepare(`UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?`).run(
-    status,
-    new Date().toISOString(),
-    orgId,
-  );
-  logInfo('Organization status updated', { orgId, status });
-}
-
-export function renameOrg(orgId: string, name: string): void {
-  logDebug('Renaming organization', { orgId, nameLength: name.length });
-  db.prepare(`UPDATE organizations SET name = ?, updated_at = ? WHERE id = ?`).run(name, new Date().toISOString(), orgId);
-  logInfo('Organization renamed', { orgId });
+export interface OrganizationRepositories {
+  organizations: Pick<OrganizationsMongoService, 'insertOne' | 'findOne' | 'updateOne'>;
+  members: Pick<OrganizationMembersMongoService, 'insertOne' | 'findOne' | 'updateOne' | 'countDocuments' | 'aggregate'>;
+  invites: Pick<OrganizationInvitesMongoService, 'insertOne' | 'find' | 'findOne' | 'updateOne' | 'countDocuments'>;
+  licenses: Pick<LicensesMongoService, 'findOne'>;
+  users: Pick<UsersMongoService, 'updateOne'>;
 }
 
 export interface SeatCounts {
@@ -125,207 +65,268 @@ export interface SeatCounts {
   available: number;
 }
 
-export function seatCounts(orgId: string): SeatCounts {
-  const org = findOrgById(orgId);
-  const purchased = org?.seats_purchased ?? 0;
-  const { filled } = db
-    .prepare(`SELECT COUNT(*) AS filled FROM organization_members WHERE org_id = ? AND status = 'active'`)
-    .get(orgId) as { filled: number };
-  const { pending } = db
-    .prepare(
-      `SELECT COUNT(*) AS pending FROM organization_invites
-        WHERE org_id = ? AND status = 'pending' AND expires_at > ?`,
-    )
-    .get(orgId, new Date().toISOString()) as { pending: number };
-  return { purchased, filled, pending, available: Math.max(purchased - filled - pending, 0) };
-}
-
-/** A user's active seat, if any, joined with their org's name/status — the one query
- * org/entitlement.ts needs to know "is this user covered by a Team plan right now." */
-export function findActiveMembership(
-  userId: string,
-): (OrganizationMemberRow & { org_name: string; org_status: OrganizationRow['status'] }) | undefined {
-  return db
-    .prepare(
-      `SELECT m.*, o.name AS org_name, o.status AS org_status
-         FROM organization_members m
-         JOIN organizations o ON o.id = m.org_id
-        WHERE m.user_id = ? AND m.status = 'active'`,
-    )
-    .get(userId) as (OrganizationMemberRow & { org_name: string; org_status: OrganizationRow['status'] }) | undefined;
-}
-
-export function findMember(orgId: string, userId: string): OrganizationMemberRow | undefined {
-  return db.prepare(`SELECT * FROM organization_members WHERE org_id = ? AND user_id = ?`).get(orgId, userId) as
-    | OrganizationMemberRow
-    | undefined;
-}
-
 export interface MemberWithUser extends OrganizationMemberRow {
   email: string | null;
   first_name: string | null;
   last_name: string | null;
 }
 
-export function listActiveMembers(orgId: string): MemberWithUser[] {
-  return db
-    .prepare(
-      `SELECT m.*, u.email, u.first_name, u.last_name
-         FROM organization_members m
-         JOIN users u ON u.id = m.user_id
-        WHERE m.org_id = ? AND m.status = 'active'
-        ORDER BY m.joined_at ASC`,
-    )
-    .all(orgId) as MemberWithUser[];
-}
+export class OrganizationService {
+  constructor(private readonly repositories: OrganizationRepositories) {}
 
-export function listPendingInvites(orgId: string): OrganizationInviteRow[] {
-  return db
-    .prepare(
-      `SELECT * FROM organization_invites WHERE org_id = ? AND status = 'pending' AND expires_at > ? ORDER BY created_at ASC`,
-    )
-    .all(orgId, new Date().toISOString()) as OrganizationInviteRow[];
-}
-
-/** Inserts a fresh seat, or reactivates a previously-removed one for the same org+user
- * (rather than inserting a duplicate row, which the org_id+user_id unique index forbids).
- * Always issues a brand-new license_key — a rejoining member never gets their old key back. */
-export function seatUser(
-  orgId: string,
-  userId: string,
-  role: 'owner' | 'member',
-  invitedByUserId: string | null,
-): string {
-  logDebug('Assigning organization seat', { orgId, userId, role });
-  const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
-  const now = new Date().toISOString();
-  const existing = db.prepare(`SELECT id FROM organization_members WHERE org_id = ? AND user_id = ?`).get(orgId, userId) as
-    | { id: string }
-    | undefined;
-  if (existing) {
-    db.prepare(
-      `UPDATE organization_members
-          SET role = ?, status = 'active', license_key = ?, invited_by_user_id = ?,
-              joined_at = ?, removed_at = NULL, updated_at = ?
-        WHERE id = ?`,
-    ).run(role, key, invitedByUserId, now, now, existing.id);
-  } else {
-    db.prepare(
-      `INSERT INTO organization_members
-         (id, org_id, user_id, role, status, license_key, calls_used, invited_by_user_id, joined_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, 0, ?, ?, ?, ?)`,
-    ).run(crypto.randomUUID(), orgId, userId, role, key, invitedByUserId, now, now, now);
+  async createPendingOrg(ownerUserId: string, name: string): Promise<OrganizationRow> {
+    logDebug('Creating pending organization', { ownerUserId, nameLength: name.length });
+    const now = new Date().toISOString();
+    const org: OrganizationRow = {
+      id: crypto.randomUUID(), name, owner_user_id: ownerUserId, status: 'pending',
+      seats_purchased: 0, created_at: now, updated_at: now,
+    };
+    await this.repositories.organizations.insertOne(org);
+    logInfo('Pending organization created', { orgId: org.id, ownerUserId });
+    return org;
   }
-  logInfo('Organization seat assigned', { orgId, userId, role, reactivated: !!existing });
-  return key;
-}
 
-/** Marks a seat removed without clearing license_key — the dead key stays permanently
- * reserved (license_key is UNIQUE NOT NULL) so it can never be reissued, and
- * licenseStore.ts's lookupLicense already filters on status='active', so the key stops
- * working on its very next use with no rotation of anyone else's key. */
-export function removeMember(orgId: string, userId: string): void {
-  logDebug('Removing organization member', { orgId, userId });
-  db.prepare(
-    `UPDATE organization_members SET status = 'removed', removed_at = ?, updated_at = ? WHERE org_id = ? AND user_id = ?`,
-  ).run(new Date().toISOString(), new Date().toISOString(), orgId, userId);
-  logInfo('Organization member removed', { orgId, userId });
-}
+  async findOrgById(id: string): Promise<OrganizationRow | undefined> {
+    return (await this.repositories.organizations.findOne({ id })) ?? undefined;
+  }
 
-export function regenerateMemberKey(memberId: string): string {
-  logDebug('Regenerating organization member credential', { memberId });
-  const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
-  db.prepare(`UPDATE organization_members SET license_key = ?, updated_at = ? WHERE id = ?`).run(
-    key,
-    new Date().toISOString(),
-    memberId,
-  );
-  logInfo('Organization member credential regenerated', { memberId });
-  return key;
-}
+  async findOrgByOwner(ownerUserId: string): Promise<OrganizationRow | undefined> {
+    return (await this.repositories.organizations.findOne({ owner_user_id: ownerUserId })) ?? undefined;
+  }
 
-export function createInvite(
-  orgId: string,
-  email: string,
-  invitedByUserId: string,
-): { id: string; token: string; expiresAt: string } {
-  logDebug('Creating organization invite', { orgId, invitedByUserId });
-  const token = randomToken();
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000);
-  const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO organization_invites (id, org_id, email, token_hash, status, invited_by_user_id, created_at, expires_at)
-     VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-  ).run(id, orgId, email, sha256(token), invitedByUserId, now.toISOString(), expiresAt.toISOString());
-  logInfo('Organization invite created', { orgId, inviteId: id, invitedByUserId });
-  return { id, token, expiresAt: expiresAt.toISOString() };
-}
+  async findOrgBySubscriptionId(subscriptionId: string): Promise<OrganizationRow | undefined> {
+    const license = await this.repositories.licenses.findOne({ stripe_subscription_id: subscriptionId, org_id: { $type: 'string' } });
+    return typeof license?.org_id === 'string' ? this.findOrgById(license.org_id) : undefined;
+  }
 
-/** Lazily expires a pending invite past its deadline, same shape as licenseStore.ts's
- * expireIfPastDeadline — there's no job scheduler in this service. */
-function expireInviteIfPastDeadline(id: string): void {
-  db.prepare(
-    `UPDATE organization_invites SET status = 'expired' WHERE id = ? AND status = 'pending' AND expires_at < ?`,
-  ).run(id, new Date().toISOString());
-}
+  async activateOrg(orgId: string, seats: number): Promise<void> {
+    logDebug('Activating organization', { orgId, seats });
+    await this.repositories.organizations.updateOne(
+      { id: orgId }, { $set: { status: 'active', seats_purchased: seats, updated_at: new Date().toISOString() } },
+    );
+    logInfo('Organization activated', { orgId, seats });
+  }
 
-export function findInviteByToken(token: string): OrganizationInviteRow | undefined {
-  const row = db.prepare(`SELECT * FROM organization_invites WHERE token_hash = ?`).get(sha256(token)) as
-    | OrganizationInviteRow
-    | undefined;
-  if (!row) return undefined;
-  expireInviteIfPastDeadline(row.id);
-  return db.prepare(`SELECT * FROM organization_invites WHERE id = ?`).get(row.id) as OrganizationInviteRow;
-}
+  async setOrgSeatsPurchased(orgId: string, seats: number): Promise<void> {
+    logDebug('Updating purchased organization seats', { orgId, seats });
+    await this.repositories.organizations.updateOne(
+      { id: orgId }, { $set: { seats_purchased: seats, updated_at: new Date().toISOString() } },
+    );
+    logInfo('Purchased organization seats updated', { orgId, seats });
+  }
 
-export function findPendingInviteForEmail(orgId: string, email: string): OrganizationInviteRow | undefined {
-  return db
-    .prepare(`SELECT * FROM organization_invites WHERE org_id = ? AND email = ? AND status = 'pending'`)
-    .get(orgId, email) as OrganizationInviteRow | undefined;
-}
+  async setOrgStatus(orgId: string, status: OrganizationRow['status']): Promise<void> {
+    logDebug('Updating organization status', { orgId, status });
+    await this.repositories.organizations.updateOne(
+      { id: orgId }, { $set: { status, updated_at: new Date().toISOString() } },
+    );
+    logInfo('Organization status updated', { orgId, status });
+  }
 
-export function revokeInvite(id: string): void {
-  logDebug('Revoking organization invite', { inviteId: id });
-  db.prepare(`UPDATE organization_invites SET status = 'revoked', revoked_at = ? WHERE id = ? AND status = 'pending'`).run(
-    new Date().toISOString(),
-    id,
-  );
-  logInfo('Organization invite revocation completed', { inviteId: id });
-}
+  async renameOrg(orgId: string, name: string): Promise<void> {
+    logDebug('Renaming organization', { orgId, nameLength: name.length });
+    await this.repositories.organizations.updateOne(
+      { id: orgId }, { $set: { name, updated_at: new Date().toISOString() } },
+    );
+    logInfo('Organization renamed', { orgId });
+  }
 
-/** Rotates an existing pending invite's token in place (resend) rather than creating a
- * second row — the pending-per-(org,email) unique index would reject a second insert anyway. */
-export function resendInvite(id: string): { token: string; expiresAt: string } {
-  logDebug('Rotating organization invite credential', { inviteId: id });
-  const token = randomToken();
-  const expiresAt = new Date(Date.now() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000);
-  db.prepare(`UPDATE organization_invites SET token_hash = ?, expires_at = ? WHERE id = ?`).run(
-    sha256(token),
-    expiresAt.toISOString(),
-    id,
-  );
-  logInfo('Organization invite credential rotated', { inviteId: id });
-  return { token, expiresAt: expiresAt.toISOString() };
-}
+  async seatCounts(orgId: string, session?: ClientSession): Promise<SeatCounts> {
+    const [org, filled, pending] = await Promise.all([
+      this.repositories.organizations.findOne({ id: orgId }, { session }),
+      this.repositories.members.countDocuments(
+        { org_id: orgId, status: 'active' }, { session },
+      ),
+      this.repositories.invites.countDocuments({
+        org_id: orgId, status: 'pending', expires_at: { $gt: new Date().toISOString() },
+      }, { session }),
+    ]);
+    const purchased = org?.seats_purchased ?? 0;
+    return { purchased, filled, pending, available: Math.max(purchased - filled - pending, 0) };
+  }
 
-export function markInviteAccepted(id: string, userId: string): void {
-  logDebug('Accepting organization invite', { inviteId: id, userId });
-  db.prepare(
-    `UPDATE organization_invites SET status = 'accepted', accepted_user_id = ?, accepted_at = ? WHERE id = ?`,
-  ).run(userId, new Date().toISOString(), id);
-  logInfo('Organization invite accepted', { inviteId: id, userId });
-}
+  async findActiveMembership(
+    userId: string,
+  ): Promise<(OrganizationMemberRow & { org_name: string; org_status: OrganizationRow['status'] }) | undefined> {
+    const member = await this.repositories.members.findOne({ user_id: userId, status: 'active' });
+    if (!member) return undefined;
+    const org = await this.findOrgById(member.org_id);
+    if (!org) return undefined;
+    return { ...member, org_name: org.name, org_status: org.status };
+  }
 
-export function countInvitesSince(orgId: string, sinceIso: string): number {
-  const { c } = db
-    .prepare(`SELECT COUNT(*) AS c FROM organization_invites WHERE org_id = ? AND created_at > ?`)
-    .get(orgId, sinceIso) as { c: number };
-  return c;
-}
+  async findMember(orgId: string, userId: string): Promise<OrganizationMemberRow | undefined> {
+    return (await this.repositories.members.findOne({ org_id: orgId, user_id: userId })) ?? undefined;
+  }
 
-/** True if `userId` currently holds an active seat in some org OTHER than `excludeOrgId`. */
-export function hasActiveSeatElsewhere(userId: string, excludeOrgId: string): boolean {
-  const membership = findActiveMembership(userId);
-  return !!membership && membership.org_id !== excludeOrgId;
+  async listActiveMembers(orgId: string): Promise<MemberWithUser[]> {
+    return this.repositories.members.aggregate<MemberWithUser>([
+      { $match: { org_id: orgId, status: 'active' } },
+      { $lookup: { from: 'users', localField: 'user_id', foreignField: 'id', as: 'user' } },
+      { $unwind: '$user' },
+      { $sort: { joined_at: 1 } },
+      { $project: {
+        _id: 0, id: 1, org_id: 1, user_id: 1, role: 1, status: 1, license_key: 1,
+        calls_used: 1, invited_by_user_id: 1, joined_at: 1, removed_at: 1, created_at: 1, updated_at: 1,
+        email: '$user.email', first_name: '$user.first_name', last_name: '$user.last_name',
+      } },
+    ]).toArray();
+  }
+
+  async listPendingInvites(orgId: string): Promise<OrganizationInviteRow[]> {
+    return this.repositories.invites.find({
+      org_id: orgId, status: 'pending', expires_at: { $gt: new Date().toISOString() },
+    }).sort({ created_at: 1 }).toArray();
+  }
+
+  async seatUser(
+    orgId: string,
+    userId: string,
+    role: 'owner' | 'member',
+    invitedByUserId: string | null,
+    session?: ClientSession,
+  ): Promise<string> {
+    logDebug('Assigning organization seat', { orgId, userId, role });
+    const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
+    const now = new Date().toISOString();
+    const members = this.repositories.members;
+    const existing = await members.findOne({ org_id: orgId, user_id: userId }, { session });
+    if (existing) {
+      await members.updateOne({ id: existing.id }, { $set: {
+        role, status: 'active', license_key: key, invited_by_user_id: invitedByUserId,
+        joined_at: now, removed_at: null, updated_at: now,
+      } }, { session });
+    } else {
+      await members.insertOne({
+        id: crypto.randomUUID(), org_id: orgId, user_id: userId, role, status: 'active', license_key: key,
+        calls_used: 0, invited_by_user_id: invitedByUserId, joined_at: now, removed_at: null,
+        created_at: now, updated_at: now,
+      }, { session });
+    }
+    logInfo('Organization seat assigned', { orgId, userId, role, reactivated: !!existing });
+    return key;
+  }
+
+  async removeMember(orgId: string, userId: string): Promise<void> {
+    logDebug('Removing organization member', { orgId, userId });
+    const now = new Date().toISOString();
+    await this.repositories.members.updateOne(
+      { org_id: orgId, user_id: userId, status: 'active' }, { $set: { status: 'removed', removed_at: now, updated_at: now } },
+    );
+    logInfo('Organization member removed', { orgId, userId });
+  }
+
+  async regenerateMemberKey(memberId: string): Promise<string> {
+    logDebug('Regenerating organization member credential', { memberId });
+    const key = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
+    await this.repositories.members.updateOne(
+      { id: memberId }, { $set: { license_key: key, updated_at: new Date().toISOString() } },
+    );
+    logInfo('Organization member credential regenerated', { memberId });
+    return key;
+  }
+
+  async createInvite(
+    orgId: string,
+    email: string,
+    invitedByUserId: string,
+  ): Promise<{ id: string; token: string; expiresAt: string }> {
+    logDebug('Creating organization invite', { orgId, invitedByUserId });
+    const token = randomToken();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000);
+    const id = crypto.randomUUID();
+    await this.repositories.invites.insertOne({
+      id, org_id: orgId, email, token_hash: sha256(token), status: 'pending', invited_by_user_id: invitedByUserId,
+      accepted_user_id: null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(),
+      accepted_at: null, revoked_at: null,
+    });
+    logInfo('Organization invite created', { orgId, inviteId: id, invitedByUserId });
+    return { id, token, expiresAt: expiresAt.toISOString() };
+  }
+
+  async findInviteByToken(token: string): Promise<OrganizationInviteRow | undefined> {
+    const invites = this.repositories.invites;
+    const tokenHash = sha256(token);
+    const now = new Date().toISOString();
+    await invites.updateOne(
+      { token_hash: tokenHash, status: 'pending', expires_at: { $lte: now } }, { $set: { status: 'expired' } },
+    );
+    return (await invites.findOne({ token_hash: tokenHash })) ?? undefined;
+  }
+
+  async findPendingInviteForEmail(orgId: string, email: string): Promise<OrganizationInviteRow | undefined> {
+    return (await this.repositories.invites.findOne({ org_id: orgId, email, status: 'pending' })) ?? undefined;
+  }
+
+  async revokeInvite(id: string): Promise<void> {
+    logDebug('Revoking organization invite', { inviteId: id });
+    await this.repositories.invites.updateOne(
+      { id, status: 'pending' }, { $set: { status: 'revoked', revoked_at: new Date().toISOString() } },
+    );
+    logInfo('Organization invite revocation completed', { inviteId: id });
+  }
+
+  async resendInvite(id: string): Promise<{ token: string; expiresAt: string }> {
+    logDebug('Rotating organization invite credential', { inviteId: id });
+    const token = randomToken();
+    const expiresAt = new Date(Date.now() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000).toISOString();
+    await this.repositories.invites.updateOne(
+      { id, status: 'pending' }, { $set: { token_hash: sha256(token), expires_at: expiresAt } },
+    );
+    logInfo('Organization invite credential rotated', { inviteId: id });
+    return { token, expiresAt };
+  }
+
+  async markInviteAccepted(id: string, userId: string, session?: ClientSession): Promise<void> {
+    logDebug('Accepting organization invite', { inviteId: id, userId });
+    await this.repositories.invites.updateOne(
+      { id, status: 'pending' }, { $set: { status: 'accepted', accepted_user_id: userId, accepted_at: new Date().toISOString() } },
+      { session },
+    );
+    logInfo('Organization invite accepted', { inviteId: id, userId });
+  }
+
+  async claimInviteSeat(
+    invite: Pick<OrganizationInviteRow, 'id' | 'invited_by_user_id'>,
+    orgId: string,
+    userId: string,
+    emailVerified: boolean,
+    session: ClientSession,
+  ): Promise<string | undefined> {
+    await this.repositories.organizations.updateOne(
+      { id: orgId }, { $inc: { seat_claim_revision: 1 } }, { session },
+    );
+    const freshInvite = await this.repositories.invites.findOne(
+      { id: invite.id, status: 'pending', expires_at: { $gt: new Date().toISOString() } }, { session },
+    );
+    if (!freshInvite) return 'This invite is invalid or has expired';
+
+    const counts = await this.seatCounts(orgId, session);
+    if (counts.filled >= counts.purchased) return `All ${counts.purchased} seats are taken`;
+
+    await this.seatUser(orgId, userId, 'member', invite.invited_by_user_id, session);
+    const accepted = await this.repositories.invites.updateOne(
+      { id: invite.id, status: 'pending' },
+      { $set: { status: 'accepted', accepted_user_id: userId, accepted_at: new Date().toISOString() } },
+      { session },
+    );
+    if (!accepted.modifiedCount) throw new Error('Invite was already accepted');
+    if (!emailVerified) {
+      await this.repositories.users.updateOne(
+        { id: userId }, { $set: { email_verified: 1, updated_at: new Date().toISOString() } }, { session },
+      );
+    }
+    return undefined;
+  }
+
+  async countInvitesSince(orgId: string, sinceIso: string): Promise<number> {
+    return this.repositories.invites.countDocuments({ org_id: orgId, created_at: { $gt: sinceIso } });
+  }
+
+  async hasActiveSeatElsewhere(userId: string, excludeOrgId: string): Promise<boolean> {
+    return !!(await this.repositories.members.findOne({
+      user_id: userId, org_id: { $ne: excludeOrgId }, status: 'active',
+    }));
+  }
 }

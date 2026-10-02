@@ -83,7 +83,7 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
       ? headerEventId
       : `body:${crypto.createHash('sha256').update(rawBody).digest('hex')}`;
   logDebug('Razorpay webhook parsed', { eventType: body.event ?? 'unknown' });
-  if (!claimBillingEvent('razorpay', eventId)) {
+  if (!(await claimBillingEvent('razorpay', eventId))) {
     logInfo('Duplicate Razorpay webhook acknowledged', { eventType: body.event ?? 'unknown' });
     res.json({ received: true });
     return;
@@ -97,12 +97,12 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   }
 
   try {
-    dispatch(body.event, subscription);
+    await dispatch(body.event, subscription);
   } catch (err) {
     // Processing failed: give up the de-duplication claim so Razorpay's retry is not
     // swallowed, then let the error surface (express-async-errors turns it into a 500,
     // which is what tells Razorpay to retry).
-    releaseBillingEvent('razorpay', eventId);
+    await releaseBillingEvent('razorpay', eventId);
     logError('Razorpay webhook processing failed; event released for retry', err, {
       eventType: body.event ?? 'unknown',
     });
@@ -113,14 +113,14 @@ export async function handleRazorpayWebhook(req: Request, res: Response): Promis
   res.json({ received: true });
 }
 
-function dispatch(event: string | undefined, subscription: RazorpaySubscription): void {
+async function dispatch(event: string | undefined, subscription: RazorpaySubscription): Promise<void> {
   switch (event) {
     case 'subscription.activated': {
       // Stripe's checkout.session.completed equivalent. Which flow this is comes from the
       // notes we set at creation — Razorpay has no client_reference_id/metadata otherwise.
       const notes = subscription.notes ?? {};
       if (notes.fk_purchase === 'org' && notes.fk_org_id) {
-        activateOrgSubscription({
+        await activateOrgSubscription({
           provider: 'razorpay',
           orgId: notes.fk_org_id,
           seats: seatsOf(subscription),
@@ -131,7 +131,7 @@ function dispatch(event: string | undefined, subscription: RazorpaySubscription)
           currentPeriodEnd: periodEndOf(subscription),
         });
       } else if (notes.fk_user_id) {
-        activateIndividualSubscription({
+        await activateIndividualSubscription({
           provider: 'razorpay',
           userId: notes.fk_user_id,
           customerId: subscription.customer_id ?? null,
@@ -146,13 +146,13 @@ function dispatch(event: string | undefined, subscription: RazorpaySubscription)
       // them apart — paid_count does. The first charge's credits were already granted by
       // subscription.activated; only later cycles refill.
       if ((subscription.paid_count ?? 1) > 1) {
-        renewSubscriptionQuota(subscription.id);
+        await renewSubscriptionQuota(subscription.id);
       }
       break;
     }
 
     case 'subscription.updated': {
-      syncSeatsForSubscription(subscription.id, subscription.quantity);
+      await syncSeatsForSubscription(subscription.id, subscription.quantity);
       break;
     }
 
@@ -164,18 +164,18 @@ function dispatch(event: string | undefined, subscription: RazorpaySubscription)
     // (and for the Cancel button) to work.
     case 'subscription.halted': {
       // Retries running / paused / dunning exhausted: no credits until it recovers.
-      setSubscriptionStatus(subscription.id, 'inactive');
+      await setSubscriptionStatus(subscription.id, 'inactive');
       break;
     }
 
     case 'subscription.resumed': {
-      setSubscriptionStatus(subscription.id, 'active');
+      await setSubscriptionStatus(subscription.id, 'active');
       break;
     }
 
     case 'subscription.cancelled':
     case 'subscription.completed': {
-      endSubscription(subscription.id);
+      await endSubscription(subscription.id);
       break;
     }
 

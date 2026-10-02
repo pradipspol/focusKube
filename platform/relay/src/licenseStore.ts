@@ -1,16 +1,9 @@
-/**
- * DB-backed license store (SQLite via db.ts). Keeps the same external contract the
- * in-memory Phase 1 version had — `licenseFromAuthHeader`, `lookupLicense`,
- * `decrementQuota`, `devLicenseKey` — so index.ts's /v1/license/validate and
- * /v1/ai/chat handlers need no changes at all.
- *
- * License keys stay plaintext at rest (see db.ts) — the dashboard needs to re-display
- * a customer's key on demand, so this is a re-viewable credential, not a one-time secret.
- */
 import crypto from 'node:crypto';
-import { findUserById, markTrialStarted } from './auth/users.js';
+import type { ClientSession, Document } from 'mongodb';
+import { userService } from './auth/userService.js';
 import { config } from './config.js';
-import { db } from './db.js';
+import { withTransaction } from './db.js';
+import { mongoCollections } from './mongoCollections.js';
 import { logDebug, logInfo, logWarning } from './logger.js';
 
 export interface LicenseRecord {
@@ -25,27 +18,26 @@ export interface LicenseWithKey extends LicenseRecord {
   key: string;
 }
 
-interface LicenseRow {
+export interface LicenseRow extends Document {
+  id: string;
   key: string;
+  user_id?: string | null;
+  org_id?: string | null;
   plan: string;
   status: string;
   quota_remaining: number;
   quota_granted: number;
   trial_ends_at: string | null;
+  stripe_subscription_id?: string | null;
+  stripe_customer_id?: string | null;
+  billing_provider?: string | null;
 }
 
-// The deliberate, user-initiated free trial (see account/routes.ts POST /trial/start)
-// — distinct from billing/routes.ts's Stripe-not-configured checkout fallback, which
-// keeps its own unlimited/no-expiry behavior for self-host/dev use.
 export const FREE_TRIAL_PLAN = 'trial';
 export const FREE_TRIAL_QUOTA = 100;
 export const FREE_TRIAL_DURATION_DAYS = 14;
-
-// A Team's pooled license (see org/*.ts) — lives here rather than in org/billing.ts to
-// avoid a circular import (org/billing.ts already needs createOrgPoolLicense below).
 export const TEAM_PLAN = 'team';
 
-/** The Team pool's total credit grant for a given seat count. */
 export function orgPoolSize(seats: number): number {
   return config.org.poolQuotaPerSeat * seats;
 }
@@ -60,27 +52,20 @@ function toRecord(row: LicenseRow): LicenseRecord {
   };
 }
 
-/** Lazily flips a trial license to 'expired' once its time limit has passed — there's no
- * job scheduler in this service, so every read path (lookupLicense/getLicenseForUser)
- * checks this first instead. Quota running out is already enforced separately wherever
- * quotaRemaining is checked (e.g. index.ts's /v1/ai/chat). */
-function expireIfPastDeadline(key: string): void {
-  db.prepare(
-    `UPDATE licenses SET status = 'expired', updated_at = ?
-     WHERE key = ? AND status = 'active' AND trial_ends_at IS NOT NULL AND trial_ends_at < ?`,
-  ).run(new Date().toISOString(), key, new Date().toISOString());
-}
-
-function seedDevLicenseIfEmpty(): void {
-  const { c } = db.prepare(`SELECT COUNT(*) as c FROM licenses`).get() as { c: number };
-  if (c > 0) return;
+export async function initializeLicenseStore(): Promise<void> {
+  const licenses = mongoCollections.licenses;
+  if (await licenses.findOne({}, { projection: { _id: 1 } })) return;
   const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO licenses (id, key, user_id, plan, status, quota_remaining, created_at, updated_at)
-     VALUES (?, ?, NULL, 'dev', 'active', 1000, ?, ?)`,
-  ).run(crypto.randomUUID(), config.devLicenseKey, now, now);
+  try {
+    await licenses.insertOne({
+      id: crypto.randomUUID(), key: config.devLicenseKey, user_id: null,
+      plan: 'dev', status: 'active', quota_remaining: 1000, quota_granted: 1000,
+      trial_ends_at: null, created_at: now, updated_at: now,
+    });
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 11000)) throw error;
+  }
 }
-seedDevLicenseIfEmpty();
 
 export function devLicenseKey(): string {
   return config.devLicenseKey;
@@ -93,209 +78,181 @@ export function licenseFromAuthHeader(header: string | string[] | undefined): st
   return key || null;
 }
 
-/** A raw key is either a direct `licenses.key` (personal/dev/org-pool key) or a Team
- * member's own seat key, which resolves through organization_members to its org's pool
- * row. Returns the underlying `licenses.key` either way, or undefined if neither matches. */
-function resolveLicenseKey(key: string): string | undefined {
-  const direct = db.prepare(`SELECT key FROM licenses WHERE key = ?`).get(key) as { key: string } | undefined;
-  if (direct) return direct.key;
-  const viaSeat = db
-    .prepare(
-      `SELECT l.key AS key FROM organization_members m
-         JOIN licenses l ON l.org_id = m.org_id
-        WHERE m.license_key = ? AND m.status = 'active'
-        LIMIT 1`,
-    )
-    .get(key) as { key: string } | undefined;
-  return viaSeat?.key;
+async function findLicenseForKey(key: string): Promise<LicenseRow | undefined> {
+  const licenses = mongoCollections.licenses;
+  const direct = await licenses.findOne({ key });
+  if (direct) return direct;
+  const member = await mongoCollections.organization_members.findOne({ license_key: key, status: 'active' });
+  return member ? (await licenses.findOne({ org_id: member.org_id })) ?? undefined : undefined;
 }
 
-export function lookupLicense(key: string): LicenseRecord | undefined {
-  const resolvedKey = resolveLicenseKey(key);
-  if (!resolvedKey) return undefined;
-  expireIfPastDeadline(resolvedKey);
-  const row = db
-    .prepare(`SELECT plan, status, quota_remaining, quota_granted, trial_ends_at FROM licenses WHERE key = ?`)
-    .get(resolvedKey) as LicenseRow | undefined;
+async function expireIfPastDeadline(key: string): Promise<void> {
+  const now = new Date().toISOString();
+  await mongoCollections.licenses.updateOne(
+    { key, status: 'active', trial_ends_at: { $ne: null, $lt: now } },
+    { $set: { status: 'expired', updated_at: now } },
+  );
+}
+
+export async function lookupLicense(key: string): Promise<LicenseRecord | undefined> {
+  const row = await findLicenseForKey(key);
   if (!row) return undefined;
-  return toRecord(row);
+  await expireIfPastDeadline(row.key);
+  const refreshed = await mongoCollections.licenses.findOne({ id: row.id });
+  return refreshed ? toRecord(refreshed) : undefined;
 }
 
-export function userIdFromLicense(key: string): string | null {
-  const direct = db.prepare(`SELECT user_id FROM licenses WHERE key = ?`).get(key) as
-    | { user_id: string | null }
-    | undefined;
-  if (direct) return direct.user_id;
-  const seat = db
-    .prepare(`SELECT user_id FROM organization_members WHERE license_key = ? AND status = 'active'`)
-    .get(key) as { user_id: string } | undefined;
+export async function userIdFromLicense(key: string): Promise<string | null> {
+  const direct = await mongoCollections.licenses.findOne({ key });
+  if (direct) return direct.user_id ?? null;
+  const seat = await mongoCollections.organization_members.findOne({ license_key: key, status: 'active' });
   return seat?.user_id ?? null;
 }
 
-/** Same lazy-expiry path as lookupLicense, keyed by account instead of license key — used
- * by GET /v1/account (and anywhere else that should see a trial flip to 'expired' the
- * moment its time limit passes, not just the next time the key itself is used). */
-export function getLicenseForUser(userId: string): LicenseWithKey | undefined {
-  const keyRow = db.prepare(`SELECT key FROM licenses WHERE user_id = ?`).get(userId) as { key: string } | undefined;
-  if (!keyRow) return undefined;
-  expireIfPastDeadline(keyRow.key);
-  const row = db
-    .prepare(`SELECT key, plan, status, quota_remaining, quota_granted, trial_ends_at FROM licenses WHERE user_id = ?`)
-    .get(userId) as LicenseRow | undefined;
+export async function getLicenseForUser(userId: string): Promise<LicenseWithKey | undefined> {
+  const licenses = mongoCollections.licenses;
+  const row = await licenses.findOne({ user_id: userId });
   if (!row) return undefined;
-  return { ...toRecord(row), key: row.key };
+  await expireIfPastDeadline(row.key);
+  const refreshed = await licenses.findOne({ id: row.id });
+  return refreshed ? { ...toRecord(refreshed), key: refreshed.key } : undefined;
 }
 
-export function hasHadTrial(userId: string): boolean {
-  return !!findUserById(userId)?.trial_started_at;
+export async function hasHadTrial(userId: string): Promise<boolean> {
+  return !!(await userService.findUserById(userId))?.trial_started_at;
 }
 
-/** Grants the one-time, deliberate free trial: capped by both quota and a time limit,
- * whichever is hit first (see expireIfPastDeadline for the time side, and the existing
- * quotaRemaining checks in index.ts for the quota side). Once per account, ever — tracked
- * on users.trial_started_at rather than the licenses row, since that row gets overwritten
- * by any later plan change (see createLicenseForUser). */
-export function grantFreeTrial(userId: string): { key: string; trialEndsAt: string } | { alreadyUsed: true } {
+export async function grantFreeTrial(userId: string): Promise<{ key: string; trialEndsAt: string } | { alreadyUsed: true }> {
   logDebug('Granting free trial license', { userId });
-  if (hasHadTrial(userId)) {
+  const trialEndsAt = new Date(Date.now() + FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const key = `fk_live_${crypto.randomBytes(24).toString('hex')}`;
+  const now = new Date().toISOString();
+  const outcome = await withTransaction(async (session) => {
+    const users = mongoCollections.users;
+    const result = await users.updateOne(
+      { id: userId, trial_started_at: null },
+      { $set: { trial_started_at: now, updated_at: now } },
+      { session },
+    );
+    if (!result.modifiedCount) return false;
+    await upsertUserLicense(userId, {
+      key, plan: FREE_TRIAL_PLAN, quotaRemaining: FREE_TRIAL_QUOTA, trialEndsAt,
+    }, session);
+    return true;
+  });
+  if (!outcome) {
     logInfo('Free trial license not granted because the user already used a trial', { userId });
     return { alreadyUsed: true };
   }
-  const trialEndsAt = new Date(Date.now() + FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const key = createLicenseForUser(userId, { plan: FREE_TRIAL_PLAN, quotaRemaining: FREE_TRIAL_QUOTA, trialEndsAt });
-  markTrialStarted(userId);
   logInfo('Free trial license granted', { userId, plan: FREE_TRIAL_PLAN });
   return { key, trialEndsAt };
 }
 
-/** Atomically takes one credit off whichever balance `key` resolves to — a personal
- * license row, or the pooled Team balance behind a seat key — in a single UPDATE, so two
- * seat keys hitting the same pool concurrently can't both pass the same check. Returns
- * false if the license isn't active or the balance was already 0; callers must reject the
- * request in that case rather than proceeding. Reserve *before* streaming a response
- * (index.ts's /v1/ai/chat), not after — decrementing only once the whole response has
- * already been sent is what let concurrent Team members over-spend one pool. */
-export function reserveQuota(key: string): boolean {
+export async function reserveQuota(key: string): Promise<boolean> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE licenses
-          SET quota_remaining = quota_remaining - 1, updated_at = @now
-        WHERE quota_remaining > 0
-          AND status = 'active'
-          AND id = (
-            SELECT id FROM licenses WHERE key = @key AND status = 'active'
-            UNION ALL
-            SELECT l.id FROM organization_members m
-              JOIN licenses l ON l.org_id = m.org_id
-             WHERE m.license_key = @key AND m.status = 'active'
-             LIMIT 1
-          )`,
-    )
-    .run({ key, now });
-  if (result.changes === 0) {
+  const licenses = mongoCollections.licenses;
+  const direct = await licenses.findOne({ key, status: 'active' });
+  if (direct) {
+    const result = await licenses.updateOne(
+      { id: direct.id, status: 'active', quota_remaining: { $gt: 0 } },
+      { $inc: { quota_remaining: -1 }, $set: { updated_at: now } },
+    );
+    if (result.modifiedCount) {
+      logDebug('AI request quota reserved');
+      return true;
+    }
     logWarning('AI request quota reservation rejected because no active quota was available');
     return false;
   }
-  // Best-effort per-member usage attribution — a no-op update when `key` is a personal key.
-  db.prepare(
-    `UPDATE organization_members SET calls_used = calls_used + 1, updated_at = ? WHERE license_key = ? AND status = 'active'`,
-  ).run(now, key);
-  logDebug('AI request quota reserved');
-  return true;
+  const reserved = await withTransaction(async (session) => {
+    const members = mongoCollections.organization_members;
+    const member = await members.findOne({ license_key: key, status: 'active' }, { session });
+    if (!member) return false;
+    const result = await licenses.updateOne(
+      { org_id: member.org_id, status: 'active', quota_remaining: { $gt: 0 } },
+      { $inc: { quota_remaining: -1 }, $set: { updated_at: now } },
+      { session },
+    );
+    if (!result.modifiedCount) return false;
+    const attribution = await members.updateOne(
+      { id: member.id, status: 'active' },
+      { $inc: { calls_used: 1 }, $set: { updated_at: now } },
+      { session },
+    );
+    if (!attribution.modifiedCount) throw new Error('Organization seat changed during quota reservation');
+    return true;
+  });
+  if (!reserved) logWarning('AI request quota reservation rejected because no active quota was available');
+  else logDebug('AI request quota reserved');
+  return reserved;
 }
 
-/** Gives back a credit reserved via reserveQuota when the call failed before producing a
- * response (e.g. the LLM call itself errored) — see index.ts's /v1/ai/chat catch block. */
-export function refundQuota(key: string): void {
+export async function refundQuota(key: string): Promise<void> {
   const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE licenses
-        SET quota_remaining = quota_remaining + 1, updated_at = @now
-      WHERE id = (
-          SELECT id FROM licenses WHERE key = @key
-          UNION ALL
-          SELECT l.id FROM organization_members m
-            JOIN licenses l ON l.org_id = m.org_id
-           WHERE m.license_key = @key AND m.status = 'active'
-           LIMIT 1
-        )`,
-  ).run({ key, now });
-  db.prepare(
-    `UPDATE organization_members SET calls_used = MAX(calls_used - 1, 0), updated_at = ? WHERE license_key = ? AND status = 'active'`,
-  ).run(now, key);
+  const row = await findLicenseForKey(key);
+  if (!row) return;
+  await mongoCollections.licenses.updateOne(
+    { id: row.id },
+    { $inc: { quota_remaining: 1 }, $set: { updated_at: now } },
+  );
+  await mongoCollections.organization_members.updateOne(
+    { license_key: key, status: 'active', calls_used: { $gt: 0 } },
+    { $inc: { calls_used: -1 }, $set: { updated_at: now } },
+  );
   logInfo('AI request quota reservation refunded');
 }
 
-/** Resets a license's quota_remaining back to its quota_granted at the start of each
- * billing cycle (driven by billing/effects.ts's renewSubscriptionQuota, which both providers'
- * webhooks call — Stripe's 'invoice.paid' and Razorpay's renewal 'subscription.charged') — for a Team
- * pool, quota_granted is also recomputed from the org's *current* seat count first, so a
- * seat-count change since the last cycle is picked up correctly. Trial licenses have no
- * subscription id, so this is never called for them — the one-time trial grant is
- * unaffected. */
-export function resetQuotaForSubscription(subscriptionId: string): void {
+export async function resetQuotaForSubscription(subscriptionId: string): Promise<void> {
   logDebug('Resetting license quota for billing cycle');
   const now = new Date().toISOString();
-  const row = db
-    .prepare(`SELECT id, org_id, quota_granted FROM licenses WHERE stripe_subscription_id = ?`)
-    .get(subscriptionId) as { id: string; org_id: string | null; quota_granted: number } | undefined;
+  const licenses = mongoCollections.licenses;
+  const row = await licenses.findOne({ stripe_subscription_id: subscriptionId });
   if (!row) {
     logInfo('Billing-cycle quota reset skipped because no license matched');
     return;
   }
   if (row.org_id) {
-    const org = db.prepare(`SELECT seats_purchased FROM organizations WHERE id = ?`).get(row.org_id) as
-      | { seats_purchased: number }
-      | undefined;
+    const org = await mongoCollections.organizations.findOne({ id: row.org_id });
     const granted = orgPoolSize(org?.seats_purchased ?? 0);
-    db.prepare(`UPDATE licenses SET quota_granted = ?, quota_remaining = ?, updated_at = ? WHERE id = ?`).run(
-      granted,
-      granted,
-      now,
-      row.id,
-    );
+    await licenses.updateOne({ id: row.id }, { $set: { quota_granted: granted, quota_remaining: granted, updated_at: now } });
     logInfo('Organization license quota reset', { orgId: row.org_id, quotaGranted: granted });
   } else {
-    db.prepare(`UPDATE licenses SET quota_remaining = quota_granted, updated_at = ? WHERE id = ?`).run(now, row.id);
+    await licenses.updateOne({ id: row.id }, [{ $set: { quota_remaining: '$quota_granted', updated_at: now } }]);
     logInfo('Individual license quota reset');
   }
 }
 
-/** Issues (or replaces) the one license a user account can hold. Used by Stripe webhook
- * handling, the manual "regenerate key" action, and grantFreeTrial above. `trialEndsAt`
- * defaults to null so a paid upgrade naturally clears any prior trial deadline. */
-export function createLicenseForUser(
+async function upsertUserLicense(
+  userId: string,
+  opts: { key: string; plan: string; quotaRemaining: number; trialEndsAt?: string | null },
+  session?: ClientSession,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await mongoCollections.licenses.updateOne(
+    { user_id: userId },
+    {
+      $set: {
+        key: opts.key, plan: opts.plan, status: 'active', quota_remaining: opts.quotaRemaining,
+        quota_granted: opts.quotaRemaining, trial_ends_at: opts.trialEndsAt ?? null, updated_at: now,
+      },
+      $setOnInsert: { id: crypto.randomUUID(), user_id: userId, created_at: now },
+    },
+    { upsert: true, session },
+  );
+}
+
+export async function createLicenseForUser(
   userId: string,
   opts: { plan: string; quotaRemaining: number; trialEndsAt?: string | null },
-): string {
+): Promise<string> {
   logDebug('Creating or replacing user license', { userId, plan: opts.plan });
   const key = `fk_live_${crypto.randomBytes(24).toString('hex')}`;
-  const now = new Date().toISOString();
-  const trialEndsAt = opts.trialEndsAt ?? null;
-  const existing = db.prepare(`SELECT id FROM licenses WHERE user_id = ?`).get(userId) as { id: string } | undefined;
-  if (existing) {
-    db.prepare(
-      `UPDATE licenses SET key = ?, plan = ?, status = 'active', quota_remaining = ?, quota_granted = ?, trial_ends_at = ?, updated_at = ? WHERE user_id = ?`,
-    ).run(key, opts.plan, opts.quotaRemaining, opts.quotaRemaining, trialEndsAt, now, userId);
-  } else {
-    db.prepare(
-      `INSERT INTO licenses (id, key, user_id, plan, status, quota_remaining, quota_granted, trial_ends_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
-    ).run(crypto.randomUUID(), key, userId, opts.plan, opts.quotaRemaining, opts.quotaRemaining, trialEndsAt, now, now);
-  }
+  await upsertUserLicense(userId, { ...opts, key });
   logInfo('User license created or replaced', { userId, plan: opts.plan, quotaGranted: opts.quotaRemaining });
   return key;
 }
 
-/** The Team counterpart to createLicenseForUser above: issues (or replaces) the one pooled
- * license row an org can hold — org_id set, user_id NULL (see db.ts's schema comment on
- * this being already-legal). Used by billing/effects.ts's activateOrgSubscription.
- *
- * The id options are provider-neutral (Stripe or Razorpay); they land in the stripe_*-named
- * columns, which db.ts documents as "the active provider's ids". subscriptionItemId is
- * Stripe-only — Razorpay carries quantity on the subscription itself and passes null. */
-export function createOrgPoolLicense(
+export async function createOrgPoolLicense(
   orgId: string,
   opts: {
     seats: number;
@@ -304,66 +261,40 @@ export function createOrgPoolLicense(
     subscriptionItemId: string | null;
     currentPeriodEnd: string | null;
   },
-): string {
+): Promise<string> {
   logDebug('Creating or replacing organization pool license', { orgId, seats: opts.seats });
   const key = `fk_org_${crypto.randomBytes(24).toString('hex')}`;
   const now = new Date().toISOString();
   const granted = orgPoolSize(opts.seats);
-  const existing = db.prepare(`SELECT id FROM licenses WHERE org_id = ?`).get(orgId) as { id: string } | undefined;
-  if (existing) {
-    db.prepare(
-      `UPDATE licenses SET key = ?, plan = ?, status = 'active', quota_granted = ?, quota_remaining = ?,
-              stripe_customer_id = ?, stripe_subscription_id = ?, stripe_subscription_item_id = ?,
-              current_period_end = ?, updated_at = ? WHERE org_id = ?`,
-    ).run(
-      key,
-      TEAM_PLAN,
-      granted,
-      granted,
-      opts.customerId,
-      opts.subscriptionId,
-      opts.subscriptionItemId,
-      opts.currentPeriodEnd,
-      now,
-      orgId,
-    );
-  } else {
-    db.prepare(
-      `INSERT INTO licenses (id, key, org_id, plan, status, quota_remaining, quota_granted,
-              stripe_customer_id, stripe_subscription_id, stripe_subscription_item_id, current_period_end,
-              created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      crypto.randomUUID(),
-      key,
-      orgId,
-      TEAM_PLAN,
-      granted,
-      granted,
-      opts.customerId,
-      opts.subscriptionId,
-      opts.subscriptionItemId,
-      opts.currentPeriodEnd,
-      now,
-      now,
-    );
-  }
+  await mongoCollections.licenses.updateOne(
+    { org_id: orgId },
+    {
+      $set: {
+        key, plan: TEAM_PLAN, status: 'active', quota_granted: granted, quota_remaining: granted,
+        stripe_customer_id: opts.customerId, stripe_subscription_id: opts.subscriptionId,
+        stripe_subscription_item_id: opts.subscriptionItemId, current_period_end: opts.currentPeriodEnd,
+        updated_at: now,
+      },
+      $setOnInsert: { id: crypto.randomUUID(), org_id: orgId, user_id: null, created_at: now },
+    },
+    { upsert: true },
+  );
   logInfo('Organization pool license created or replaced', { orgId, seats: opts.seats, quotaGranted: granted });
   return key;
 }
 
-/** Adjusts a Team pool's grant by a seat *delta* rather than resetting it — so buying more
- * seats mid-cycle tops up proportionally without handing back credits already spent, and
- * dropping seats doesn't wipe credits already paid for. Used by org/billing.ts's
- * updateOrgSeats immediately after the Stripe quantity change (the webhook reconciles the
- * same value moments later via resetQuotaForSubscription's seat recompute, harmlessly). */
-export function adjustOrgPoolForSeatChange(orgId: string, previousSeats: number, newSeats: number): void {
+export async function adjustOrgPoolForSeatChange(orgId: string, previousSeats: number, newSeats: number): Promise<void> {
   const delta = orgPoolSize(newSeats) - orgPoolSize(previousSeats);
   if (delta === 0) return;
   logDebug('Adjusting organization pool quota for seat change', { orgId, previousSeats, newSeats, quotaDelta: delta });
   const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE licenses SET quota_granted = quota_granted + ?, quota_remaining = MAX(quota_remaining + ?, 0), updated_at = ? WHERE org_id = ?`,
-  ).run(delta, delta, now, orgId);
+  await mongoCollections.licenses.updateOne(
+    { org_id: orgId },
+    [{ $set: {
+      quota_granted: { $add: ['$quota_granted', delta] },
+      quota_remaining: { $max: [{ $add: ['$quota_remaining', delta] }, 0] },
+      updated_at: now,
+    } }],
+  );
   logInfo('Organization pool quota adjusted for seat change', { orgId, quotaDelta: delta });
 }

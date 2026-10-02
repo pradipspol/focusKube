@@ -10,15 +10,17 @@ customer signs up here, subscribes via Stripe, and gets a license key to paste i
 
 ```bash
 cd platform/relay
-npm install
-cp .env.example .env   # fill in ANTHROPIC_API_KEY at minimum
+npm ci
+cp .env.example .env   # set MONGODB_URI and the credentials you need
 npm run dev
 ```
 
-A SQLite DB is created automatically at `./data/relay.db` (gitignored). If the `licenses`
-table is empty, a dev license key is auto-seeded (default `fk_dev_local_testing`, override via
-`AI_RELAY_DEV_LICENSE_KEY`) so `platform/backend` can be pointed at this relay without going
-through signup/billing first.
+The relay connects to MongoDB Atlas using `MONGODB_URI` and `MONGODB_DB_NAME` (default
+`focuskube_relay`). It creates the required collections/indexes on startup. Configure the
+Atlas network access list and a database user with read/write access to this database. Never
+commit the URI or its password. If the `licenses` collection is empty, a dev license key is
+seeded (default `fk_dev_local_testing`, override via `AI_RELAY_DEV_LICENSE_KEY`) so
+`platform/backend` can be pointed at this relay without signup/billing first.
 
 Point the backend at it (already the default):
 
@@ -32,23 +34,21 @@ AI_RELAY_BASE_URL=http://localhost:4001 npm run dev
 ```bash
 cd platform/relay
 docker build -t focuskube-relay .
-docker run -p 4001:4001 --env-file .env -v relay-data:/app/data focuskube-relay
+docker run -p 4001:4001 --env-file .env focuskube-relay
 ```
 
 The image is a multi-stage build (compile with devDependencies, then a slim
-`node:22-alpine` runtime with only production dependencies) and runs as a non-root user.
-`/app/data` is where the SQLite file lives by default (`RELAY_DB_PATH`) — mount a volume
-there so it survives container recreation. `ANTHROPIC_API_KEY` (or the Azure OpenAI
-equivalent) still has to be supplied via the environment; nothing is baked into the image.
+`node:24-alpine` runtime with only production dependencies) and runs as a non-root user.
+Database persistence is handled by Atlas, not a container volume. Supply `MONGODB_URI` and
+`MONGODB_DB_NAME` plus `ANTHROPIC_API_KEY` (or the Azure OpenAI equivalent) through the
+environment; secrets are not baked into the image.
 
 ### What needs real credentials vs. what works out of the box
 
-Email/password sign-up, sessions, the account dashboard, and email-OTP sign-in all work with
-**zero external credentials** in dev — SQLite is local, sessions are self-contained, and
-password-reset/OTP emails log to the console instead of sending when `SMTP_URL` isn't set (same
-for SMS OTP when Twilio credentials aren't set). Google sign-in and Stripe billing genuinely
-need real accounts to exercise end-to-end — see `.env.example` for the full list of environment
-variables and where to obtain each credential.
+Email/password sign-up, sessions, the account dashboard, and email-OTP sign-in use Atlas;
+password-reset/OTP emails log to the console instead of sending when `SMTP_URL` isn't set
+(same for SMS OTP when Twilio credentials aren't set). Google sign-in and Stripe billing need
+real accounts to exercise end-to-end. See `.env.example` for the environment variables.
 
 ## Web pages (customer-facing)
 
@@ -83,11 +83,30 @@ proportionate to this service's current scope, and deliberately not the React ap
 
 ## Data
 
-Everything lives in one SQLite file (`db.ts`), created with plain `CREATE TABLE IF NOT EXISTS`
-statements at startup — no migration framework at this scale. Session tokens, OTP codes, and
-password-reset tokens are hashed at rest; license keys are stored plaintext, since a customer
-needs to re-view their key in the dashboard indefinitely (it's a re-viewable credential like a
-product key, not a one-time-reveal secret).
+Application state is stored in MongoDB Atlas collections; startup creates the indexes used for
+identity uniqueness, sessions, licenses, billing-event idempotency, team seats/invites, and
+documentation chunks. Multi-document billing activation and invite acceptance use Atlas
+transactions. Session tokens, OTP codes, and password-reset tokens are hashed at rest; license
+keys are stored plaintext because a customer needs to re-view their key in the dashboard.
+Existing records in an old `relay.db` SQLite file are not imported automatically; export/import
+those records before switching a deployment that contains customer data.
+
+### MongoDB services
+
+Relay collection services extend `MongoDBService<T>` from `src/mongoService.ts`. The base
+class owns collection access and common insert, query, update, delete, count, aggregate, and
+bulk-write operations. Collection subclasses declare their document type, collection name,
+and indexes in `src/mongoCollections.ts`; add new services to the registry there so indexes
+are created before the server starts. Put domain rules in the relevant service/store, and use
+the inherited methods for database operations rather than accessing the MongoDB driver
+directly.
+
+For domain workflows, prefer injectable service classes when operations share behavior or
+dependencies. `UserService` in `src/auth/users.ts` and `OrganizationService` in
+`src/org/store.ts` receive narrow repository interfaces; `src/auth/userService.ts` and
+`src/org/organizationService.ts` compose their production instances. Tests can provide fake
+repositories without importing MongoDB. Keep simple stateless helpers as functions; do not
+create a class solely to wrap a single function.
 
 ## Security notes
 
@@ -100,5 +119,5 @@ product key, not a one-time-reveal secret).
   else's account.
 - OTP codes are peppered+hashed, rate-limited per destination (not just per-IP), and requesting a
   new code invalidates any still-pending one for that destination.
-- Stripe webhook handling is idempotent per event id (`stripe_events` table) since Stripe
+- Stripe webhook handling is idempotent per event id (`billing_events` collection) since Stripe
   redelivers on timeout/retry.

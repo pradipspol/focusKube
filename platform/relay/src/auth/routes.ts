@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { isValidEmail } from '../security/validation.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../notify/email.js';
 import { sendOtpSms } from '../notify/sms.js';
@@ -11,17 +11,7 @@ import { createOtp, recentOtpCount, verifyOtp } from './otp.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { clearSessionCookie, createSession, requireSession, revokeSession, setSessionCookie } from './sessions.js';
 import { logError } from '../logger.js';
-import {
-  createUser,
-  findUserByEmail,
-  findUserById,
-  findUserByGoogleSub,
-  findUserByPhone,
-  linkGoogleSub,
-  markEmailVerified,
-  markPhoneVerified,
-  setPassword,
-} from './users.js';
+import { userService } from './userService.js';
 
 const router = Router();
 export const authRouter = router;
@@ -53,18 +43,18 @@ router.post('/signup', authLimiter, async (req, res) => {
     return;
   }
   const normalizedEmail = normalizeEmail(email);
-  if (findUserByEmail(normalizedEmail)) {
+  if (await userService.findUserByEmail(normalizedEmail)) {
     res.status(409).json({ error: 'An account with this email already exists' });
     return;
   }
   const passwordHash = await hashPassword(password);
-  const user = createUser({
+  const user = await userService.createUser({
     email: normalizedEmail,
     password_hash: passwordHash,
     first_name: firstName?.trim() || null,
     last_name: lastName?.trim() || null,
   });
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   setSessionCookie(res, token);
   // sessionToken lets a server-to-server caller (a self-hosted focusKube backend proxying
   // this call on a user's behalf) capture the token directly instead of parsing Set-Cookie
@@ -78,8 +68,8 @@ router.post('/login', authLimiter, async (req, res) => {
     res.status(400).json({ error: 'Email and password are required' });
     return;
   }
-  const user = findUserByEmail(normalizeEmail(email));
-  // A deleted account fails the same way as a wrong password — this must not be usable
+  const user = await userService.findUserByEmail(normalizeEmail(email));
+  // A deleted account fails the same way as a wrong password ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â this must not be usable
   // to tell a deleted account apart from one that never existed.
   if (!user?.password_hash || user.deleted_at || !(await verifyPassword(password, user.password_hash))) {
     res.status(401).json({ error: 'Invalid email or password' });
@@ -90,42 +80,42 @@ router.post('/login', authLimiter, async (req, res) => {
     // Second factor: a one-time code emailed after the password already checked out (see
     // POST /2fa/verify below, and account/routes.ts's POST /2fa for the enable/disable
     // toggle). No session is created until that code is verified too.
-    const code = createOtp(user.email!, 'email', TWO_FACTOR_OTP_PURPOSE);
+    const code = await createOtp(user.email!, 'email', TWO_FACTOR_OTP_PURPOSE);
     await sendOtpEmail(user.email!, code);
     res.json({ twoFactorRequired: true, email: user.email });
     return;
   }
 
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   setSessionCookie(res, token);
   res.json({ ok: true, sessionToken: token });
 });
 
-router.post('/2fa/verify', authLimiter, (req, res) => {
+router.post('/2fa/verify', authLimiter, async (req, res) => {
   const { email, code } = req.body as { email?: string; code?: string };
   if (!email || !code) {
     res.status(400).json({ error: 'email and code are required' });
     return;
   }
   const normalized = normalizeEmail(email);
-  const result = verifyOtp(normalized, TWO_FACTOR_OTP_PURPOSE, code);
+  const result = await verifyOtp(normalized, TWO_FACTOR_OTP_PURPOSE, code);
   if (!result.ok) {
     res.status(400).json({ error: result.error });
     return;
   }
-  const user = findUserByEmail(normalized);
+  const user = await userService.findUserByEmail(normalized);
   if (!user || user.deleted_at) {
     res.status(400).json({ error: 'This account is no longer available' });
     return;
   }
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   setSessionCookie(res, token);
   res.json({ ok: true, sessionToken: token });
 });
 
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
   const token = req.cookies?.[config.sessionCookieName];
-  if (token) revokeSession(token);
+  if (token) await revokeSession(token);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -136,17 +126,18 @@ router.get('/me', requireSession, (req, res) => {
 
 router.post('/password/reset-request', authLimiter, async (req, res) => {
   const { email } = req.body as { email?: string };
-  // Always 200, regardless of whether the account exists — this endpoint must not
+  // Always 200, regardless of whether the account exists ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â this endpoint must not
   // be usable to enumerate registered emails.
   if (email) {
-    const user = findUserByEmail(normalizeEmail(email));
+    const user = await userService.findUserByEmail(normalizeEmail(email));
     if (user?.email) {
       const token = randomToken();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + config.passwordResetTtlMinutes * 60 * 1000);
-      db.prepare(
-        `INSERT INTO password_reset_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-      ).run(sha256(token), user.id, now.toISOString(), expiresAt.toISOString());
+      await mongoCollections.password_reset_tokens.insertOne({
+        token_hash: sha256(token), user_id: user.id, created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(), consumed_at: null,
+      });
       await sendPasswordResetEmail(user.email, token);
     }
   }
@@ -160,19 +151,22 @@ router.post('/password/reset-confirm', authLimiter, async (req, res) => {
     return;
   }
   const tokenHash = sha256(token);
-  const row = db
-    .prepare(`SELECT user_id, expires_at, consumed_at FROM password_reset_tokens WHERE token_hash = ?`)
-    .get(tokenHash) as { user_id: string; expires_at: string; consumed_at: string | null } | undefined;
+  const tokenCollection = mongoCollections.password_reset_tokens;
+  const row = await tokenCollection.findOne({ token_hash: tokenHash });
   if (!row || row.consumed_at || new Date(row.expires_at).getTime() < Date.now()) {
     res.status(400).json({ error: 'This reset link is invalid or has expired' });
     return;
   }
   const passwordHash = await hashPassword(password);
-  setPassword(row.user_id, passwordHash);
-  db.prepare(`UPDATE password_reset_tokens SET consumed_at = ? WHERE token_hash = ?`).run(
-    new Date().toISOString(),
-    tokenHash,
+  const consumed = await tokenCollection.updateOne(
+    { token_hash: tokenHash, consumed_at: null, expires_at: { $gt: new Date().toISOString() } },
+    { $set: { consumed_at: new Date().toISOString() } },
   );
+  if (!consumed.modifiedCount) {
+    res.status(400).json({ error: 'This reset link is invalid or has expired' });
+    return;
+  }
+  await userService.setPassword(row.user_id, passwordHash);
   res.json({ ok: true });
 });
 
@@ -187,14 +181,14 @@ router.post('/otp/request', authLimiter, async (req, res) => {
   }
   const normalized = channel === 'email' ? normalizeEmail(destination) : destination.trim();
 
-  // Per-destination throttle on top of the per-IP rate limiter above — otherwise someone
+  // Per-destination throttle on top of the per-IP rate limiter above ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â otherwise someone
   // could SMS-bomb a phone number they don't own from many different IPs.
-  if (recentOtpCount(normalized, OTP_PURPOSE, 10 * 60 * 1000) >= 3) {
-    res.status(429).json({ error: 'Too many codes requested for this destination — try again later' });
+  if (await recentOtpCount(normalized, OTP_PURPOSE, 10 * 60 * 1000) >= 3) {
+    res.status(429).json({ error: 'Too many codes requested for this destination ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â try again later' });
     return;
   }
 
-  const code = createOtp(normalized, channel, OTP_PURPOSE);
+  const code = await createOtp(normalized, channel, OTP_PURPOSE);
   if (channel === 'email') {
     await sendOtpEmail(normalized, code);
   } else {
@@ -203,7 +197,7 @@ router.post('/otp/request', authLimiter, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/otp/verify', authLimiter, (req, res) => {
+router.post('/otp/verify', authLimiter, async (req, res) => {
   const { destination, channel, code } = req.body as {
     destination?: string;
     channel?: 'email' | 'sms';
@@ -215,30 +209,30 @@ router.post('/otp/verify', authLimiter, (req, res) => {
   }
   const normalized = channel === 'email' ? normalizeEmail(destination) : destination.trim();
 
-  const result = verifyOtp(normalized, OTP_PURPOSE, code);
+  const result = await verifyOtp(normalized, OTP_PURPOSE, code);
   if (!result.ok) {
     res.status(400).json({ error: result.error });
     return;
   }
 
-  // Verifying a code IS proof of ownership of that email/phone — safe to trust it enough
+  // Verifying a code IS proof of ownership of that email/phone ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â safe to trust it enough
   // to both create the account (if new) and mark that channel verified (if existing).
-  let user = channel === 'email' ? findUserByEmail(normalized) : findUserByPhone(normalized);
+  let user = channel === 'email' ? await userService.findUserByEmail(normalized) : await userService.findUserByPhone(normalized);
   if (user?.deleted_at) {
     res.status(403).json({ error: 'This account is no longer available' });
     return;
   }
   if (!user) {
-    user = createUser(
+    user = await userService.createUser(
       channel === 'email' ? { email: normalized, email_verified: 1 } : { phone: normalized, phone_verified: 1 },
     );
   } else if (channel === 'email' && !user.email_verified) {
-    markEmailVerified(user.id);
+    await userService.markEmailVerified(user.id);
   } else if (channel === 'sms' && !user.phone_verified) {
-    markPhoneVerified(user.id);
+    await userService.markPhoneVerified(user.id);
   }
 
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   setSessionCookie(res, token);
   res.json({ ok: true, sessionToken: token });
 });
@@ -246,13 +240,13 @@ router.post('/otp/verify', authLimiter, (req, res) => {
 const OAUTH_STATE_COOKIE = 'fk_oauth_state';
 const OAUTH_REDIRECT_COOKIE = 'fk_oauth_app_redirect';
 // Carries a same-origin "return to this page after signing in" path (e.g. the org invite
-// accept flow's /invite?token=... — see org/routes.ts) across the Google redirect chain.
+// accept flow's /invite?token=... ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â see org/routes.ts) across the Google redirect chain.
 // Deliberately separate from OAUTH_REDIRECT_COOKIE/validatedAppRedirect above: that one
 // carries a full external app URL for a self-hosted backend's OAuth flow; this one only
 // ever carries a relative path on this relay's own web pages.
 const POST_AUTH_NEXT_COOKIE = 'fk_post_auth_next';
 
-/** Same-origin-relative paths only — rejects an absolute URL, a protocol-relative "//host"
+/** Same-origin-relative paths only ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â rejects an absolute URL, a protocol-relative "//host"
  * path, or anything with a scheme, closing off the open-redirect this could otherwise be. */
 function validatedNextPath(raw: string | undefined): string | null {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
@@ -267,8 +261,8 @@ function validatedNextPath(raw: string | undefined): string | null {
 }
 
 /**
- * Exact-origin match against the configured allowlist — never a prefix/substring check, to
- * close off open-redirect abuse — OR any loopback origin (any port). The loopback carve-out
+ * Exact-origin match against the configured allowlist ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never a prefix/substring check, to
+ * close off open-redirect abuse ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â OR any loopback origin (any port). The loopback carve-out
  * matters because a desktop install's local static server picks its port dynamically
  * (falling back across a wide range if its preferred port is taken), so it can't always be
  * enumerated in advance; only locally-running software can ever bind a loopback port on the
@@ -310,7 +304,7 @@ router.get('/google/start', (req, res) => {
   });
 
   // Present when a self-hosted focusKube backend (not this relay's own web pages) kicked off
-  // the flow — carries the browser back to that backend's own callback route once we're done,
+  // the flow ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â carries the browser back to that backend's own callback route once we're done,
   // instead of to this relay's /account.
   const appRedirect = validatedAppRedirect(
     typeof req.query.app_redirect === 'string' ? req.query.app_redirect : undefined,
@@ -360,28 +354,28 @@ router.get('/google/callback', async (req, res) => {
   try {
     const profile = await verifyGoogleCode(code);
 
-    let user = findUserByGoogleSub(profile.sub);
+    let user = await userService.findUserByGoogleSub(profile.sub);
     if (user?.deleted_at) {
       res.status(403).send('This account is no longer available.');
       return;
     }
     if (!user && profile.email) {
       // Only link onto an existing account when Google itself vouches the email is
-      // verified — otherwise a Google account created with an unverified address could
+      // verified ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â otherwise a Google account created with an unverified address could
       // hijack someone else's existing focusKube account.
-      const existing = findUserByEmail(normalizeEmail(profile.email));
+      const existing = await userService.findUserByEmail(normalizeEmail(profile.email));
       if (existing?.deleted_at) {
         res.status(403).send('This account is no longer available.');
         return;
       }
       if (existing && profile.emailVerified) {
-        linkGoogleSub(existing.id, profile.sub);
-        if (!existing.email_verified) markEmailVerified(existing.id);
+        await userService.linkGoogleSub(existing.id, profile.sub);
+        if (!existing.email_verified) await userService.markEmailVerified(existing.id);
         user = existing;
       }
     }
     if (!user) {
-      user = createUser({
+      user = await userService.createUser({
         email: profile.email ? normalizeEmail(profile.email) : null,
         google_sub: profile.sub,
         email_verified: profile.emailVerified ? 1 : 0,
@@ -390,21 +384,22 @@ router.get('/google/callback', async (req, res) => {
 
     if (appRedirect) {
       // App-initiated flow: hand back a short-lived, single-use code instead of putting the
-      // real session token in the browser's address bar/history — the backend exchanges it
+      // real session token in the browser's address bar/history ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the backend exchanges it
       // server-to-server via POST /session/exchange.
       const handoff = randomToken();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 5 * 60 * 1000);
-      db.prepare(
-        `INSERT INTO oauth_handoffs (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-      ).run(sha256(handoff), user.id, now.toISOString(), expiresAt.toISOString());
+      await mongoCollections.oauth_handoffs.insertOne({
+        token_hash: sha256(handoff), user_id: user.id, created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(), consumed_at: null,
+      });
       const redirectUrl = new URL(appRedirect);
       redirectUrl.searchParams.set('handoff', handoff);
       res.redirect(redirectUrl.toString());
       return;
     }
 
-    setSessionCookie(res, createSession(user.id));
+    setSessionCookie(res, await createSession(user.id));
     res.redirect(next && validatedNextPath(next) ? next : '/home');
   } catch (err) {
     logError('Google sign-in callback failed', err);
@@ -412,31 +407,34 @@ router.get('/google/callback', async (req, res) => {
   }
 });
 
-router.post('/session/exchange', (req, res) => {
+router.post('/session/exchange', async (req, res) => {
   const { handoff } = req.body as { handoff?: string };
   if (!handoff) {
     res.status(400).json({ error: 'handoff is required' });
     return;
   }
   const tokenHash = sha256(handoff);
-  const row = db
-    .prepare(`SELECT user_id, expires_at, consumed_at FROM oauth_handoffs WHERE token_hash = ?`)
-    .get(tokenHash) as { user_id: string; expires_at: string; consumed_at: string | null } | undefined;
+  const handoffs = mongoCollections.oauth_handoffs;
+  const row = await handoffs.findOne({ token_hash: tokenHash });
   if (!row || row.consumed_at || new Date(row.expires_at).getTime() < Date.now()) {
     res.status(400).json({ error: 'This sign-in attempt is invalid or has expired' });
     return;
   }
-  db.prepare(`UPDATE oauth_handoffs SET consumed_at = ? WHERE token_hash = ?`).run(
-    new Date().toISOString(),
-    tokenHash,
+  const consumed = await handoffs.updateOne(
+    { token_hash: tokenHash, consumed_at: null, expires_at: { $gt: new Date().toISOString() } },
+    { $set: { consumed_at: new Date().toISOString() } },
   );
+  if (!consumed.modifiedCount) {
+    res.status(400).json({ error: 'This sign-in attempt is invalid or has expired' });
+    return;
+  }
 
-  const user = findUserById(row.user_id);
+  const user = await userService.findUserById(row.user_id);
   if (!user) {
     res.status(400).json({ error: 'Account no longer exists' });
     return;
   }
-  const sessionToken = createSession(user.id);
+  const sessionToken = await createSession(user.id);
   res.json({
     sessionToken,
     user: {

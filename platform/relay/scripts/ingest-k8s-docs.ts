@@ -8,6 +8,7 @@
 import { ingestSources } from '../src/docs/ingest.js';
 import { K8S_DOC_SOURCES } from '../src/docs/k8sSources.js';
 import { embeddingsConfigured } from '../src/llm/embeddings.js';
+import { closeDb, connectDb } from '../src/db.js';
 
 async function main() {
   if (!embeddingsConfigured()) {
@@ -18,6 +19,7 @@ async function main() {
     process.exit(1);
   }
 
+  await connectDb();
   console.log(`Ingesting ${K8S_DOC_SOURCES.length} source page(s)...`);
   const results = await ingestSources(K8S_DOC_SOURCES);
 
@@ -36,10 +38,11 @@ async function main() {
   }
 
   console.log(`\nDone. ${totalEmbedded} chunk(s) newly embedded, ${totalFailed} source(s) failed.`);
-  if (totalFailed > 0) process.exit(1);
+  await closeDb();
+  if (totalFailed > 0) process.exitCode = 1;
 }
 
 main().catch((err) => {
   console.error('Ingestion failed:', err instanceof Error ? err.message : err);
-  process.exit(1);
+  void closeDb().finally(() => { process.exitCode = 1; });
 });

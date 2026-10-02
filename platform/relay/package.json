@@ -17,7 +17,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
     "bcrypt": "^6.0.0",
-    "better-sqlite3": "^13.0.3",
     "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -27,6 +26,7 @@
     "express-rate-limit": "^8.7.0",
     "google-auth-library": "^11.0.2",
     "helmet": "^8.1.0",
+    "mongodb": "^7.7.0",
     "nodemailer": "^10.0.1",
     "openai": "^7.15.0",
     "pino": "^10.3.1",
@@ -35,7 +35,6 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",

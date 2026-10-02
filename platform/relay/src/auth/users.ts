@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
-import { db } from '../db.js';
+import type { Document, Filter, UpdateFilter } from 'mongodb';
 import { logDebug, logInfo } from '../logger.js';
 
-export interface UserRow {
+export interface UserRow extends Document {
   id: string;
   email: string | null;
   phone: string | null;
@@ -21,100 +21,6 @@ export interface UserRow {
   deleted_at: string | null;
 }
 
-export function findUserByEmail(email: string): UserRow | undefined {
-  return db.prepare(`SELECT * FROM users WHERE email = ?`).get(email.toLowerCase()) as UserRow | undefined;
-}
-
-export function findUserByPhone(phone: string): UserRow | undefined {
-  return db.prepare(`SELECT * FROM users WHERE phone = ?`).get(phone) as UserRow | undefined;
-}
-
-export function findUserByGoogleSub(sub: string): UserRow | undefined {
-  return db.prepare(`SELECT * FROM users WHERE google_sub = ?`).get(sub) as UserRow | undefined;
-}
-
-export function findUserById(id: string): UserRow | undefined {
-  return db.prepare(`SELECT * FROM users WHERE id = ?`).get(id) as UserRow | undefined;
-}
-
-export function createUser(fields: Partial<UserRow>): UserRow {
-  logDebug('Creating user account', { hasEmail: !!fields.email, hasPhone: !!fields.phone });
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO users (id, email, phone, password_hash, google_sub, email_verified, phone_verified, first_name, last_name, created_at, updated_at)
-     VALUES (@id, @email, @phone, @password_hash, @google_sub, @email_verified, @phone_verified, @first_name, @last_name, @created_at, @updated_at)`,
-  ).run({
-    id,
-    email: fields.email?.toLowerCase() ?? null,
-    phone: fields.phone ?? null,
-    password_hash: fields.password_hash ?? null,
-    google_sub: fields.google_sub ?? null,
-    email_verified: fields.email_verified ?? 0,
-    phone_verified: fields.phone_verified ?? 0,
-    first_name: fields.first_name ?? null,
-    last_name: fields.last_name ?? null,
-    created_at: now,
-    updated_at: now,
-  });
-  const user = findUserById(id)!;
-  logInfo('User account created', { userId: id });
-  return user;
-}
-
-export function markEmailVerified(userId: string): void {
-  logDebug('Marking user email as verified', { userId });
-  db.prepare(`UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), userId);
-  logInfo('User email marked as verified', { userId });
-}
-
-export function markPhoneVerified(userId: string): void {
-  logDebug('Marking user phone as verified', { userId });
-  db.prepare(`UPDATE users SET phone_verified = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), userId);
-  logInfo('User phone marked as verified', { userId });
-}
-
-export function setEmail(userId: string, email: string, verified: boolean): void {
-  logDebug('Updating user email address', { userId, verified });
-  db.prepare(`UPDATE users SET email = ?, email_verified = ?, updated_at = ? WHERE id = ?`).run(
-    email.toLowerCase(),
-    verified ? 1 : 0,
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User email address updated', { userId, verified });
-}
-
-export function setPassword(userId: string, passwordHash: string): void {
-  logDebug('Updating user password credential', { userId });
-  db.prepare(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`).run(
-    passwordHash,
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User password credential updated', { userId });
-}
-
-export function linkGoogleSub(userId: string, googleSub: string): void {
-  logDebug('Linking Google identity to user account', { userId });
-  db.prepare(`UPDATE users SET google_sub = ?, updated_at = ? WHERE id = ?`).run(
-    googleSub,
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('Google identity linked to user account', { userId });
-}
-
-export function markTrialStarted(userId: string): void {
-  logDebug('Recording user trial start', { userId });
-  db.prepare(`UPDATE users SET trial_started_at = ?, updated_at = ? WHERE id = ?`).run(
-    new Date().toISOString(),
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User trial start recorded', { userId });
-}
-
 export interface ProfileUpdate {
   firstName?: string | null;
   lastName?: string | null;
@@ -123,48 +29,130 @@ export interface ProfileUpdate {
   productUpdatesOptIn?: boolean;
 }
 
-/** Partial update — a field left out of `fields` keeps its current value. Used by the
- * profile page (name/company/avatar/comm-preferences), which saves all of these at once. */
-export function updateProfile(userId: string, fields: ProfileUpdate): void {
-  logDebug('Updating user profile', { userId, fields: Object.keys(fields) });
-  const current = findUserById(userId);
-  if (!current) {
-    logInfo('User profile update skipped because the account does not exist', { userId });
-    return;
+export interface UserRepository {
+  findOne(filter: Filter<UserRow>): Promise<UserRow | null>;
+  insertOne(user: UserRow): Promise<unknown>;
+  updateOne(filter: Filter<UserRow>, update: UpdateFilter<UserRow>): Promise<unknown>;
+}
+
+export class UserService {
+  constructor(private readonly users: UserRepository) {}
+
+  async findUserByEmail(email: string): Promise<UserRow | undefined> {
+    return (await this.users.findOne({ email: email.toLowerCase() })) ?? undefined;
   }
-  db.prepare(
-    `UPDATE users SET first_name = ?, last_name = ?, company = ?, avatar_data_url = ?, product_updates_opt_in = ?, updated_at = ? WHERE id = ?`,
-  ).run(
-    fields.firstName !== undefined ? fields.firstName : current.first_name,
-    fields.lastName !== undefined ? fields.lastName : current.last_name,
-    fields.company !== undefined ? fields.company : current.company,
-    fields.avatarDataUrl !== undefined ? fields.avatarDataUrl : current.avatar_data_url,
-    fields.productUpdatesOptIn !== undefined ? (fields.productUpdatesOptIn ? 1 : 0) : current.product_updates_opt_in,
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User profile updated', { userId, fields: Object.keys(fields) });
-}
 
-export function setTwoFactorEnabled(userId: string, enabled: boolean): void {
-  logDebug('Updating user two-factor authentication setting', { userId, enabled });
-  db.prepare(`UPDATE users SET two_factor_enabled = ?, updated_at = ? WHERE id = ?`).run(
-    enabled ? 1 : 0,
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User two-factor authentication setting updated', { userId, enabled });
-}
+  async findUserByPhone(phone: string): Promise<UserRow | undefined> {
+    return (await this.users.findOne({ phone })) ?? undefined;
+  }
 
-/** Soft delete: marks the row deleted (kept for a possible recovery window) rather than
- * erasing it. Login paths and userFromSessionToken all reject a deleted_at account, and
- * account/routes.ts's /delete handler revokes the license and every session up front. */
-export function softDeleteUser(userId: string): void {
-  logDebug('Soft-deleting user account', { userId });
-  db.prepare(`UPDATE users SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(
-    new Date().toISOString(),
-    new Date().toISOString(),
-    userId,
-  );
-  logInfo('User account soft-deleted', { userId });
+  async findUserByGoogleSub(sub: string): Promise<UserRow | undefined> {
+    return (await this.users.findOne({ google_sub: sub })) ?? undefined;
+  }
+
+  async findUserById(id: string): Promise<UserRow | undefined> {
+    return (await this.users.findOne({ id })) ?? undefined;
+  }
+
+  async createUser(fields: Partial<UserRow>): Promise<UserRow> {
+    logDebug('Creating user account', { hasEmail: !!fields.email, hasPhone: !!fields.phone });
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const user: UserRow = {
+      id,
+      email: fields.email?.toLowerCase() ?? null,
+      phone: fields.phone ?? null,
+      password_hash: fields.password_hash ?? null,
+      google_sub: fields.google_sub ?? null,
+      email_verified: fields.email_verified ?? 0,
+      phone_verified: fields.phone_verified ?? 0,
+      first_name: fields.first_name ?? null,
+      last_name: fields.last_name ?? null,
+      created_at: now,
+      updated_at: now,
+      display_name: null,
+      trial_started_at: null,
+      company: null,
+      avatar_data_url: null,
+      product_updates_opt_in: 1,
+      two_factor_enabled: 0,
+      deleted_at: null,
+    };
+    await this.users.insertOne(user);
+    logInfo('User account created', { userId: id });
+    return user;
+  }
+
+  async markEmailVerified(userId: string): Promise<void> {
+    logDebug('Marking user email as verified', { userId });
+    await this.users.updateOne({ id: userId }, { $set: { email_verified: 1, updated_at: new Date().toISOString() } });
+    logInfo('User email marked as verified', { userId });
+  }
+
+  async markPhoneVerified(userId: string): Promise<void> {
+    logDebug('Marking user phone as verified', { userId });
+    await this.users.updateOne({ id: userId }, { $set: { phone_verified: 1, updated_at: new Date().toISOString() } });
+    logInfo('User phone marked as verified', { userId });
+  }
+
+  async setEmail(userId: string, email: string, verified: boolean): Promise<void> {
+    logDebug('Updating user email address', { userId, verified });
+    await this.users.updateOne({ id: userId }, { $set: {
+      email: email.toLowerCase(),
+      email_verified: verified ? 1 : 0,
+      updated_at: new Date().toISOString(),
+    } });
+    logInfo('User email address updated', { userId, verified });
+  }
+
+  async setPassword(userId: string, passwordHash: string): Promise<void> {
+    logDebug('Updating user password credential', { userId });
+    await this.users.updateOne({ id: userId }, { $set: { password_hash: passwordHash, updated_at: new Date().toISOString() } });
+    logInfo('User password credential updated', { userId });
+  }
+
+  async linkGoogleSub(userId: string, googleSub: string): Promise<void> {
+    logDebug('Linking Google identity to user account', { userId });
+    await this.users.updateOne({ id: userId }, { $set: { google_sub: googleSub, updated_at: new Date().toISOString() } });
+    logInfo('Google identity linked to user account', { userId });
+  }
+
+  async markTrialStarted(userId: string): Promise<void> {
+    logDebug('Recording user trial start', { userId });
+    const now = new Date().toISOString();
+    await this.users.updateOne({ id: userId }, { $set: { trial_started_at: now, updated_at: now } });
+    logInfo('User trial start recorded', { userId });
+  }
+
+  /** Fields omitted from `fields` retain their current values. */
+  async updateProfile(userId: string, fields: ProfileUpdate): Promise<void> {
+    logDebug('Updating user profile', { userId, fields: Object.keys(fields) });
+    const current = await this.findUserById(userId);
+    if (!current) {
+      logInfo('User profile update skipped because the account does not exist', { userId });
+      return;
+    }
+    const update: Partial<UserRow> = { updated_at: new Date().toISOString() };
+    if (fields.firstName !== undefined) update.first_name = fields.firstName;
+    if (fields.lastName !== undefined) update.last_name = fields.lastName;
+    if (fields.company !== undefined) update.company = fields.company;
+    if (fields.avatarDataUrl !== undefined) update.avatar_data_url = fields.avatarDataUrl;
+    if (fields.productUpdatesOptIn !== undefined) update.product_updates_opt_in = fields.productUpdatesOptIn ? 1 : 0;
+    await this.users.updateOne({ id: userId }, { $set: update });
+    logInfo('User profile updated', { userId, fields: Object.keys(fields) });
+  }
+
+  async setTwoFactorEnabled(userId: string, enabled: boolean): Promise<void> {
+    logDebug('Updating user two-factor authentication setting', { userId, enabled });
+    await this.users.updateOne({ id: userId }, { $set: { two_factor_enabled: enabled ? 1 : 0, updated_at: new Date().toISOString() } });
+    logInfo('User two-factor authentication setting updated', { userId, enabled });
+  }
+
+  /** Soft delete retains the user row for a possible recovery window. */
+  async softDeleteUser(userId: string): Promise<void> {
+    logDebug('Soft-deleting user account', { userId });
+    const now = new Date().toISOString();
+    await this.users.updateOne({ id: userId }, { $set: { deleted_at: now, updated_at: now } });
+    logInfo('User account soft-deleted', { userId });
+  }
 }

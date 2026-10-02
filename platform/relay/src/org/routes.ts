@@ -2,40 +2,21 @@ import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireSession } from '../auth/sessions.js';
-import { findUserByEmail, markEmailVerified } from '../auth/users.js';
+import { userService } from '../auth/userService.js';
 import { isValidEmail, validateOrgName } from '../security/validation.js';
 import { parseInterval } from '../billing/pricing.js';
 import { BillingConfigError, isBillingConfigured } from '../billing/provider.js';
 import { RazorpayError } from '../billing/razorpay.js';
 import { config } from '../config.js';
-import { db } from '../db.js';
+import { withTransaction } from '../db.js';
 import { getLicenseForUser } from '../licenseStore.js';
 import { logError, logWarning } from '../logger.js';
 import { sendOrgInviteEmail } from '../notify/email.js';
 import { createOrgCheckoutSession, updateOrgSeats, cancelOrgSubscription } from './billing.js';
 import { getOrgLicenseForUser } from './entitlement.js';
 import { OrgActionError } from './errors.js';
-import {
-  countInvitesSince,
-  createInvite,
-  findActiveMembership,
-  findInviteByToken,
-  findOrgById,
-  findOrgByOwner,
-  findPendingInviteForEmail,
-  hasActiveSeatElsewhere,
-  listActiveMembers,
-  listPendingInvites,
-  markInviteAccepted,
-  regenerateMemberKey,
-  removeMember,
-  renameOrg,
-  resendInvite,
-  revokeInvite,
-  seatCounts,
-  seatUser,
-  type OrganizationRow,
-} from './store.js';
+import { organizationService } from './organizationService.js';
+import type { OrganizationRow } from './store.js';
 
 const router = Router();
 export const orgRouter = router;
@@ -57,9 +38,9 @@ declare global {
 }
 
 /** 403s unless req.user owns a team, and attaches it as req.org. The entire v1
- * authorization model for the org surface — no secondary admin role. */
-function requireOrgOwner(req: Request, res: Response, next: NextFunction): void {
-  const org = findOrgByOwner(req.user!.id);
+ * authorization model for the org surface Ã¢â‚¬â€ no secondary admin role. */
+async function requireOrgOwner(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const org = await organizationService.findOrgByOwner(req.user!.id);
   if (!org) {
     res.status(403).json({ error: 'You do not own a team' });
     return;
@@ -68,11 +49,11 @@ function requireOrgOwner(req: Request, res: Response, next: NextFunction): void 
   next();
 }
 
-router.get('/', requireSession, (req, res) => {
+router.get('/', requireSession, async (req, res) => {
   const userId = req.user!.id;
-  const ownedOrg = findOrgByOwner(userId);
-  const membership = ownedOrg ? undefined : findActiveMembership(userId);
-  const org = ownedOrg ?? (membership ? findOrgById(membership.org_id) : undefined);
+  const ownedOrg = await organizationService.findOrgByOwner(userId);
+  const membership = ownedOrg ? undefined : await organizationService.findActiveMembership(userId);
+  const org = ownedOrg ?? (membership ? await organizationService.findOrgById(membership.org_id) : undefined);
 
   if (!org) {
     res.json({ org: null, role: null, seats: null, license: null });
@@ -83,8 +64,8 @@ router.get('/', requireSession, (req, res) => {
   const base = {
     org: { id: org.id, name: org.name, status: org.status, createdAt: org.created_at },
     role,
-    seats: seatCounts(org.id),
-    license: getOrgLicenseForUser(userId) ?? null,
+    seats: await organizationService.seatCounts(org.id),
+    license: (await getOrgLicenseForUser(userId)) ?? null,
   };
 
   if (role !== 'owner') {
@@ -94,7 +75,7 @@ router.get('/', requireSession, (req, res) => {
 
   res.json({
     ...base,
-    members: listActiveMembers(org.id).map((m) => ({
+    members: (await organizationService.listActiveMembers(org.id)).map((m) => ({
       userId: m.user_id,
       email: m.email,
       firstName: m.first_name,
@@ -103,7 +84,7 @@ router.get('/', requireSession, (req, res) => {
       joinedAt: m.joined_at,
       callsUsed: m.calls_used,
     })),
-    invites: listPendingInvites(org.id).map((i) => ({
+    invites: (await organizationService.listPendingInvites(org.id)).map((i) => ({
       id: i.id,
       email: i.email,
       expiresAt: i.expires_at,
@@ -153,14 +134,14 @@ router.post('/checkout', requireSession, async (req, res) => {
   }
 });
 
-router.patch('/', requireSession, requireOrgOwner, (req, res) => {
+router.patch('/', requireSession, requireOrgOwner, async (req, res) => {
   const { name } = req.body as { name?: string };
   const validatedName = validateOrgName(name);
   if (typeof validatedName !== 'string') {
     res.status(400).json(validatedName);
     return;
   }
-  renameOrg(req.org!.id, validatedName);
+  await organizationService.renameOrg(req.org!.id, validatedName);
   res.json({ ok: true });
 });
 
@@ -216,20 +197,20 @@ router.post('/invites', requireSession, requireOrgOwner, async (req, res) => {
   }
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  if (countInvitesSince(org.id, oneHourAgo) >= config.org.maxInvitesPerHour) {
-    res.status(429).json({ error: 'Too many invites sent — try again later' });
+  if (await organizationService.countInvitesSince(org.id, oneHourAgo) >= config.org.maxInvitesPerHour) {
+    res.status(429).json({ error: 'Too many invites sent Ã¢â‚¬â€ try again later' });
     return;
   }
 
-  const counts = seatCounts(org.id);
+  const counts = await organizationService.seatCounts(org.id);
   if (counts.filled + counts.pending >= counts.purchased) {
-    res.status(409).json({ error: `All ${counts.purchased} seats are taken — add seats or revoke a pending invite first` });
+    res.status(409).json({ error: `All ${counts.purchased} seats are taken Ã¢â‚¬â€ add seats or revoke a pending invite first` });
     return;
   }
 
-  const existingUser = findUserByEmail(normalized);
+  const existingUser = await userService.findUserByEmail(normalized);
   if (existingUser) {
-    const membership = findActiveMembership(existingUser.id);
+    const membership = await organizationService.findActiveMembership(existingUser.id);
     if (membership?.org_id === org.id) {
       res.status(409).json({ error: 'Already on your team' });
       return;
@@ -239,132 +220,124 @@ router.post('/invites', requireSession, requireOrgOwner, async (req, res) => {
       return;
     }
   }
-  if (findPendingInviteForEmail(org.id, normalized)) {
-    res.status(409).json({ error: 'Already invited — use Resend instead' });
+  if (await organizationService.findPendingInviteForEmail(org.id, normalized)) {
+    res.status(409).json({ error: 'Already invited Ã¢â‚¬â€ use Resend instead' });
     return;
   }
 
-  const invite = createInvite(org.id, normalized, req.user!.id);
+  const invite = await organizationService.createInvite(org.id, normalized, req.user!.id);
   const inviterLabel = [req.user!.firstName, req.user!.lastName].filter(Boolean).join(' ') || req.user!.email || 'Someone';
   await sendOrgInviteEmail(normalized, invite.token, org.name, inviterLabel);
   res.json({ ok: true, id: invite.id, expiresAt: invite.expiresAt });
 });
 
 router.post('/invites/:id/resend', requireSession, requireOrgOwner, async (req, res) => {
-  const invite = listPendingInvites(req.org!.id).find((i) => i.id === req.params.id);
+  const invite = (await organizationService.listPendingInvites(req.org!.id)).find((i) => i.id === req.params.id);
   if (!invite) {
     res.status(404).json({ error: 'Invite not found' });
     return;
   }
-  const rotated = resendInvite(invite.id);
+  const rotated = await organizationService.resendInvite(invite.id);
   const inviterLabel = [req.user!.firstName, req.user!.lastName].filter(Boolean).join(' ') || req.user!.email || 'Someone';
   await sendOrgInviteEmail(invite.email, rotated.token, req.org!.name, inviterLabel);
   res.json({ ok: true, expiresAt: rotated.expiresAt });
 });
 
-router.delete('/invites/:id', requireSession, requireOrgOwner, (req, res) => {
-  revokeInvite(req.params.id);
+router.delete('/invites/:id', requireSession, requireOrgOwner, async (req, res) => {
+  await organizationService.revokeInvite(req.params.id);
   res.json({ ok: true });
 });
 
-router.get('/invites/by-token/:token', publicInviteLimiter, (req, res) => {
-  const invite = findInviteByToken(req.params.token);
+router.get('/invites/by-token/:token', publicInviteLimiter, async (req, res) => {
+  const invite = await organizationService.findInviteByToken(req.params.token);
   if (!invite || invite.status !== 'pending') {
     res.status(404).json({ error: 'This invite is invalid or has expired' });
     return;
   }
-  const org = findOrgById(invite.org_id);
+  const [org, inviteUser] = await Promise.all([organizationService.findOrgById(invite.org_id), userService.findUserByEmail(invite.email)]);
   res.json({
     orgName: org?.name ?? 'a team',
     email: invite.email,
     expiresAt: invite.expires_at,
-    accountExists: !!findUserByEmail(invite.email),
+    accountExists: !!inviteUser,
   });
 });
 
-router.post('/invites/by-token/:token/accept', requireSession, publicInviteLimiter, (req, res) => {
-  const invite = findInviteByToken(req.params.token);
+router.post('/invites/by-token/:token/accept', requireSession, publicInviteLimiter, async (req, res) => {
+  const invite = await organizationService.findInviteByToken(req.params.token);
   if (!invite || invite.status !== 'pending') {
     res.status(400).json({ error: 'This invite is invalid or has expired' });
     return;
   }
 
   const user = req.user!;
-  // The token was mailed to this exact address — requiring a match keeps seat accounting
+  // The token was mailed to this exact address Ã¢â‚¬â€ requiring a match keeps seat accounting
   // predictable and stops invite forwarding. Possession of the token is later trusted as
   // proof of ownership the same way auth/routes.ts already trusts a verified OTP.
   if (!user.email || user.email.toLowerCase() !== invite.email) {
-    res.status(403).json({ error: `This invite was sent to ${invite.email} — sign in with that address to accept it` });
+    res.status(403).json({ error: `This invite was sent to ${invite.email} Ã¢â‚¬â€ sign in with that address to accept it` });
     return;
   }
-  const org = findOrgById(invite.org_id);
+  const org = await organizationService.findOrgById(invite.org_id);
   if (!org || org.status !== 'active') {
     res.status(409).json({ error: 'This team is not currently active' });
     return;
   }
-  if (hasActiveSeatElsewhere(user.id, org.id)) {
+  if (await organizationService.hasActiveSeatElsewhere(user.id, org.id)) {
     res.status(409).json({ error: "You're already on another team" });
     return;
   }
 
   // Re-check seat availability inside the same transaction as the insert, so two people
   // can't both claim the last seat.
-  let rejected: string | undefined;
-  db.transaction(() => {
-    const counts = seatCounts(org.id);
-    if (counts.filled >= counts.purchased) {
-      rejected = `All ${counts.purchased} seats are taken`;
-      return;
-    }
-    seatUser(org.id, user.id, 'member', invite.invited_by_user_id);
-    markInviteAccepted(invite.id, user.id);
-    if (!user.emailVerified) markEmailVerified(user.id);
-  })();
+  const rejected = await withTransaction((session) =>
+    organizationService.claimInviteSeat(invite, org.id, user.id, user.emailVerified, session),
+  );
 
   if (rejected) {
     res.status(409).json({ error: rejected });
     return;
   }
 
-  const personal = getLicenseForUser(user.id);
+  const personal = await getLicenseForUser(user.id);
   const warning =
     personal?.status === 'active' && personal.plan !== 'trial'
-      ? 'You still have a personal Pro subscription — cancel it from Account if you no longer need it'
+      ? 'You still have a personal Pro subscription Ã¢â‚¬â€ cancel it from Account if you no longer need it'
       : undefined;
   res.json({ ok: true, orgId: org.id, warning });
 });
 
-router.delete('/members/:userId', requireSession, requireOrgOwner, (req, res) => {
+router.delete('/members/:userId', requireSession, requireOrgOwner, async (req, res) => {
   if (req.params.userId === req.user!.id) {
     res.status(403).json({ error: 'Cancel the subscription from billing instead' });
     return;
   }
-  removeMember(req.org!.id, req.params.userId);
+  await organizationService.removeMember(req.org!.id, req.params.userId);
   res.json({ ok: true });
 });
 
-router.post('/leave', requireSession, (req, res) => {
-  const membership = findActiveMembership(req.user!.id);
+router.post('/leave', requireSession, async (req, res) => {
+  const membership = await organizationService.findActiveMembership(req.user!.id);
   if (!membership) {
     res.status(400).json({ error: "You're not on a team" });
     return;
   }
   if (membership.role === 'owner') {
-    res.status(403).json({ error: 'The owner cannot leave — cancel the subscription instead' });
+    res.status(403).json({ error: 'The owner cannot leave Ã¢â‚¬â€ cancel the subscription instead' });
     return;
   }
-  removeMember(membership.org_id, req.user!.id);
+  await organizationService.removeMember(membership.org_id, req.user!.id);
   res.json({ ok: true });
 });
 
-// A member's own seat key rotation — the Team counterpart to account/routes.ts's
+// A member's own seat key rotation Ã¢â‚¬â€ the Team counterpart to account/routes.ts's
 // POST /license/regenerate, which is scope-aware and delegates here for a Team member.
-router.post('/seat/key/regenerate', requireSession, (req, res) => {
-  const membership = findActiveMembership(req.user!.id);
+router.post('/seat/key/regenerate', requireSession, async (req, res) => {
+  const membership = await organizationService.findActiveMembership(req.user!.id);
   if (!membership) {
     res.status(400).json({ error: "You're not on a team" });
     return;
   }
-  const key = regenerateMemberKey(membership.id);
+  const key = await organizationService.regenerateMemberKey(membership.id);
   res.json({ key });
 });

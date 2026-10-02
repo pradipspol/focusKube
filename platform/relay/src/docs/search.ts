@@ -1,4 +1,4 @@
-import { db } from '../db.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { embedText } from '../llm/embeddings.js';
 
 interface DocChunkRow {
@@ -6,7 +6,7 @@ interface DocChunkRow {
   title: string;
   heading: string | null;
   content: string;
-  embedding: string;
+  embedding: number[] | string;
 }
 
 export interface DocSearchResult {
@@ -33,18 +33,20 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 const MAX_RESULTS = 8;
 
-/** Brute-force cosine scan over every stored chunk — fine at the scale a curated doc set sits
+/** Brute-force cosine scan over every stored chunk Ã¢â‚¬â€ fine at the scale a curated doc set sits
  * at (low thousands of rows at most); revisit with a real vector index only if that changes. */
 export async function searchDocs(query: string, k: number): Promise<DocSearchResult[]> {
   const queryEmbedding = await embedText(query);
-  const rows = db.prepare('SELECT url, title, heading, content, embedding FROM doc_chunks').all() as DocChunkRow[];
+  const rows = await mongoCollections.doc_chunks.find({}, {
+    projection: { url: 1, title: 1, heading: 1, content: 1, embedding: 1 },
+  }).toArray();
 
   const scored = rows.map((row) => ({
     url: row.url,
     title: row.title,
     heading: row.heading,
     content: row.content,
-    score: cosineSimilarity(queryEmbedding, JSON.parse(row.embedding) as number[]),
+    score: cosineSimilarity(queryEmbedding, typeof row.embedding === 'string' ? JSON.parse(row.embedding) as number[] : row.embedding),
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, Math.min(Math.max(k, 1), MAX_RESULTS));
