@@ -8,4 +8,3 @@ node_modules
 **/desktop/installer
 platform/relay/logs/
 package-lock.json
-!platform/relay/package-lock.json
