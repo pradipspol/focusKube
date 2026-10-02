@@ -249,32 +249,32 @@ export function ClusterOverviewPanel ({ scope, namespaces, selectedNamespaces, o
 }
 
 function OverviewTileGraphic ({ kind, resources, helmReleases }: { kind: OverviewKind; resources: K8sObject[]; helmReleases: HelmRelease[] }) {
-  if (false && kind === "pods") {
-    const summary = summarizePods(resources);
-    const ratio = summary.total > 0 ? summary.healthy / summary.total : 0;
-    const circumference = 2 * Math.PI * 20;
-    const healthyLength = circumference * (summary.healthy / Math.max(summary.total, 1));
-    const startingLength = circumference * (summary.starting / Math.max(summary.total, 1));
-    const terminatingLength = circumference * (summary.terminating / Math.max(summary.total, 1));
-    return (
-      <>
-        <span className="overview-tile-graphic overview-pod-graphic" aria-label={`${summary.healthy} healthy, ${summary.starting} starting, ${summary.terminating} terminating`}>
-          <svg viewBox="0 0 48 48">
-            <circle className="overview-tile-ring-track" cx="24" cy="24" r="20" />
-            {healthyLength > 0 && <circle className="overview-pod-segment healthy" cx="24" cy="24" r="20" strokeDasharray={`${healthyLength} ${circumference - healthyLength}`} />}
-            {startingLength > 0 && <circle className="overview-pod-segment starting" cx="24" cy="24" r="20" strokeDasharray={`${startingLength} ${circumference - startingLength}`} strokeDashoffset={-healthyLength} />}
-            {terminatingLength > 0 && <circle className="overview-pod-segment terminating" cx="24" cy="24" r="20" strokeDasharray={`${terminatingLength} ${circumference - terminatingLength}`} strokeDashoffset={-(healthyLength + startingLength)} />}
-          </svg>
-          <span>{Math.round(ratio * 100)}%</span>
-        </span>
-        <span className="overview-pod-breakdown">
-          <span className="healthy"><i />Healthy {summary.healthy}</span>
-          <span className="starting"><i />Starting {summary.starting}</span>
-          <span className="terminating"><i />Terminating {summary.terminating}</span>
-        </span>
-      </>
-    );
-  }
+  // if (false && kind === "pods") {
+  //   const summary = summarizePods(resources);
+  //   const ratio = summary.total > 0 ? summary.healthy / summary.total : 0;
+  //   const circumference = 2 * Math.PI * 20;
+  //   const healthyLength = circumference * (summary.healthy / Math.max(summary.total, 1));
+  //   const startingLength = circumference * (summary.starting / Math.max(summary.total, 1));
+  //   const terminatingLength = circumference * (summary.terminating / Math.max(summary.total, 1));
+  //   return (
+  //     <>
+  //       <span className="overview-tile-graphic overview-pod-graphic" aria-label={`${summary.healthy} healthy, ${summary.starting} starting, ${summary.terminating} terminating`}>
+  //         <svg viewBox="0 0 48 48">
+  //           <circle className="overview-tile-ring-track" cx="24" cy="24" r="20" />
+  //           {healthyLength > 0 && <circle className="overview-pod-segment healthy" cx="24" cy="24" r="20" strokeDasharray={`${healthyLength} ${circumference - healthyLength}`} />}
+  //           {startingLength > 0 && <circle className="overview-pod-segment starting" cx="24" cy="24" r="20" strokeDasharray={`${startingLength} ${circumference - startingLength}`} strokeDashoffset={-healthyLength} />}
+  //           {terminatingLength > 0 && <circle className="overview-pod-segment terminating" cx="24" cy="24" r="20" strokeDasharray={`${terminatingLength} ${circumference - terminatingLength}`} strokeDashoffset={-(healthyLength + startingLength)} />}
+  //         </svg>
+  //         <span>{Math.round(ratio * 100)}%</span>
+  //       </span>
+  //       <span className="overview-pod-breakdown">
+  //         <span className="healthy"><i />Healthy {summary.healthy}</span>
+  //         <span className="starting"><i />Starting {summary.starting}</span>
+  //         <span className="terminating"><i />Terminating {summary.terminating}</span>
+  //       </span>
+  //     </>
+  //   );
+  // }
   const { complete, total } = tileCompletion(kind, resources, helmReleases);
   const ratio = total > 0 ? Math.max(0, Math.min(1, complete / total)) : 0;
   const circumference = 2 * Math.PI * 22;
@@ -299,15 +299,15 @@ function OverviewTileGraphic ({ kind, resources, helmReleases }: { kind: Overvie
   );
 }
 
-function summarizePods (resources: K8sObject[]): { healthy: number; starting: number; terminating: number; total: number } {
-  return resources.reduce<{ healthy: number; starting: number; terminating: number; total: number }>((summary, pod) => {
-    if (pod.metadata?.deletionTimestamp) summary.terminating += 1;
-    else if (isHealthyPod(pod)) summary.healthy += 1;
-    else summary.starting += 1;
-    summary.total += 1;
-    return summary;
-  }, { healthy: 0, starting: 0, terminating: 0, total: 0 });
-}
+// function summarizePods (resources: K8sObject[]): { healthy: number; starting: number; terminating: number; total: number } {
+//   return resources.reduce<{ healthy: number; starting: number; terminating: number; total: number }>((summary, pod) => {
+//     if (pod.metadata?.deletionTimestamp) summary.terminating += 1;
+//     else if (isHealthyPod(pod)) summary.healthy += 1;
+//     else summary.starting += 1;
+//     summary.total += 1;
+//     return summary;
+//   }, { healthy: 0, starting: 0, terminating: 0, total: 0 });
+// }
 
 function tileCompletion (kind: OverviewKind, resources: K8sObject[], helmReleases: HelmRelease[]): { complete: number; total: number } {
   if (kind === 'helmreleases') {

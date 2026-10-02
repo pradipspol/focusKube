@@ -7,4 +7,3 @@ node_modules
 *.logs
 **/desktop/installer
 platform/relay/logs/
-package-lock.json

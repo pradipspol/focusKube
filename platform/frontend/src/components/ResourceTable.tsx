@@ -721,7 +721,9 @@ export function ResourceTable({
   const selectedResources = loadedItems.filter((resource) => selectedResourceKeys.has(resourceSelectionKey(resource)));
 
   useEffect(() => {
-    selectAllRef.current && (selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected);
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected;
+    }
   }, [allVisibleSelected, someVisibleSelected]);
 
   useEffect(() => {
