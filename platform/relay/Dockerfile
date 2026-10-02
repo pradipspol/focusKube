@@ -17,7 +17,7 @@ FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json ./
 RUN npm i --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
