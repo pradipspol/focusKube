@@ -29,9 +29,9 @@
       // account, prefilling the invited email either way.
       const action = document.getElementById('action');
       if (invite.accountExists) {
-        action.innerHTML = '<a href="/login?' + nextParam + '"><button type="button">Sign in to accept</button></a>';
+        action.innerHTML = '<a class="button-link" href="/login?' + nextParam + '">Sign in to accept</a>';
       } else {
-        action.innerHTML = '<a href="/signup?' + nextParam + '&email=' + encodeURIComponent(invite.email) + '"><button type="button">Create your account to accept</button></a>';
+        action.innerHTML = '<a class="button-link" href="/signup?' + nextParam + '&email=' + encodeURIComponent(invite.email) + '">Create your account to accept</a>';
       }
       return;
     }
@@ -40,7 +40,7 @@
     if (me.email && me.email.toLowerCase() !== invite.email.toLowerCase()) {
       document.getElementById('action').innerHTML =
         '<p class="sub">You\'re signed in as ' + esc(me.email) + ', but this invite was sent to ' + esc(invite.email) + '. Sign in with that address to accept it.</p>' +
-        '<a href="/login?' + nextParam + '"><button type="button" class="secondary">Switch account</button></a>';
+        '<a class="button-link secondary" href="/login?' + nextParam + '">Switch account</a>';
       return;
     }
 

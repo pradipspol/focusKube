@@ -107,9 +107,8 @@ export const styles = `
   @keyframes page-fade-in { from { opacity: 0; } to { opacity: 1; } }
   a { color: var(--accent); }
 
-  /* min(65%, 1100px): fluid on ordinary screens, capped so it doesn't stretch into an
-     unreadably wide line on ultra-wide/4K monitors — a flat 65% has no such ceiling. */
-  .site-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: min(65%, 1100px); margin: 0 auto; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; position: sticky; top: 0; z-index: 20; background: var(--bg); }
+  /* Keep the nav and page content on one responsive column, with a readable max width. */
+  .site-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: min(94%, 1320px); margin: 0 auto; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; position: sticky; top: 0; z-index: 20; background: var(--bg); }
   @media (max-width: 700px) { .site-nav { width: 100%; } }
   .site-nav-brand { font-weight: 700; text-decoration: none; color: var(--text-heading); font-size: 16px; }
   .site-nav-links { display: flex; align-items: center; gap: 18px; font-size: 14px; flex-wrap: wrap; }
@@ -119,7 +118,7 @@ export const styles = `
 
   /* Sidebar + page content share the same centered column width the navbar uses above
      (see the min() comment there), so the sidebar's left edge lines up with the navbar's. */
-  .layout-shell { display: flex; align-items: flex-start; width: min(65%, 1100px); margin: 0 auto; gap: 32px; }
+  .layout-shell { display: flex; align-items: flex-start; width: min(94%, 1320px); margin: 0 auto; gap: 32px; }
   .sidebar { width: 180px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 24px; position: sticky; top: 76px; }
   .sidebar-link { padding: 8px 12px; border-radius: var(--radius-md); color: var(--text); text-decoration: none; font-size: 14px; }
   .sidebar-link:hover { background: var(--surface-hover); }
@@ -131,10 +130,13 @@ export const styles = `
   }
 
   .page-container { flex: 1; min-width: 0; padding: 24px 0 80px; }
+  .page-container > h1:first-child { margin: 0 0 8px; line-height: 1.25; }
+  .page-container > h1 + .sub { max-width: 72ch; line-height: 1.55; margin-bottom: 22px; }
+  .page-container > h2 { margin: 32px 0 12px; font-size: 18px; color: var(--text-heading); }
 
   /* Standalone landing page (see landingPage() below) — no sidebar, so it centers itself
      the same way .site-nav does rather than relying on .layout-shell for that. */
-  .landing-container { width: min(65%, 1100px); margin: 0 auto; padding: 24px 0 80px; }
+  .landing-container { width: min(94%, 1320px); margin: 0 auto; padding: 32px 0 80px; }
   @media (max-width: 700px) { .landing-container { width: 100%; padding: 24px 20px 80px; } }
 
   /* Login/signup (see authPage() below) — a single card centered in the remaining
@@ -158,7 +160,7 @@ export const styles = `
   label { display: grid; gap: 6px; font-size: 13px; color: var(--auth-label); }
   input, select { padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); font-size: 14px; }
   input::placeholder { color: var(--text-muted); }
-  button { padding: 9px 14px; border-radius: var(--radius-md); border: 1px solid var(--accent); background: var(--accent-dim); color: var(--text-on-accent); font-size: 14px; font-family: inherit; cursor: pointer; }
+  button { min-height: 38px; padding: 9px 14px; border-radius: var(--radius-md); border: 1px solid var(--accent); background: var(--accent-dim); color: var(--text-on-accent); font-size: 14px; font-family: inherit; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--accent-bright); }
   button.secondary { background: transparent; border: 1px solid var(--border-auth); color: var(--text-heading); }
   button.secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-auth); }
@@ -169,18 +171,59 @@ export const styles = `
   .notice { background: var(--notice-bg); border: 1px solid var(--notice-border); color: var(--notice-text); padding: 10px; border-radius: var(--radius-lg); font-size: 13px; }
   .links { margin-top: 16px; font-size: 13px; color: var(--auth-copy); }
   .link-button { background: none; border: none; color: var(--accent-bright); cursor: pointer; font-size: inherit; padding: 0; text-decoration: underline; }
+  .button-link { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 8px 14px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--accent-dim); color: var(--text-on-accent); font-size: 14px; line-height: 1.25; text-align: center; text-decoration: none; }
+  .button-link:hover { border-color: var(--accent-bright); color: var(--text-on-accent); }
+  .button-link:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+  .button-link.secondary { border-color: var(--border-auth); background: transparent; color: var(--text-heading); }
+  .button-link.secondary:hover { background: var(--surface-hover); border-color: var(--border-auth); color: var(--text-heading); }
   .license-box { font-family: ui-monospace, monospace; background: var(--bg-elev2); color: var(--text); border-radius: var(--radius-md); padding: 10px; word-break: break-all; font-size: 13px; }
 
   .card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; margin-top: 16px; background: var(--bg-elev); }
   .card h2 { margin-top: 0; font-size: 16px; color: var(--text-heading); }
+  .plan-grid > .card { display: flex; flex-direction: column; min-width: 0; margin-top: 0; }
+  .plan-grid > .card > a { align-self: flex-start; margin-top: auto; padding-top: 16px; }
   .card-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   /* A row of several action buttons (not a "label ... single action" pair like .card-row
      above) — plain flex-start so buttons sit next to each other instead of spread apart,
      and forms inside it stay inline instead of picking up the global form's block
      display/margin-top/max-width (meant for actual multi-field forms, not a single button). */
-  .button-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .button-row form { display: block; margin: 0; }
-  .plan-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 24px; }
+  .button-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .button-row form { display: block; width: auto; max-width: none; margin: 0; }
+  .button-row button { justify-self: start; }
+  .page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 20px 0 28px; }
+  .license-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .license-field { position: relative; flex: 1 1 240px; min-width: 0; }
+  .license-input { display: block; width: 100%; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px 44px 10px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); }
+  .license-toggle { position: absolute; z-index: 1; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; padding: 0; display: grid; place-items: center; background: transparent; border: 0; color: var(--text-muted); }
+  .license-toggle:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--text-heading); }
+  .license-toggle:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; }
+  .license-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .license-row form { display: block; width: auto; max-width: none; margin: 0; }
+  .plan-grid { display: grid; align-items: stretch; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); margin-top: 24px; }
+  .card-row { flex-wrap: wrap; }
+  .card > h2 { margin-bottom: 10px; }
+  .card > p:last-child { margin-bottom: 0; }
+  .card form { max-width: 520px; }
+  .profile-avatar-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .profile-avatar-row > label { flex: 1 1 220px; min-width: 0; }
+  .profile-opt-in { display: flex; align-items: flex-start; gap: 8px; flex-direction: row; line-height: 1.5; }
+  .profile-opt-in input { flex: 0 0 16px; margin-top: 2px; }
+  .profile-avatar { flex: 0 0 64px; width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: rgba(127,127,127,0.15); }
+  input[type="checkbox"] { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+  @media (max-width: 700px) {
+    .page-container { padding-top: 20px; }
+    .plan-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }
+    .card { padding: 16px; }
+    .button-row { align-items: stretch; }
+    .button-row form, .button-row form button { width: 100%; }
+    table.members { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  }
+  .pw-field { position: relative; min-width: 0; }
+  .pw-field input { display: block; width: 100%; min-width: 0; padding-right: 44px; }
+  .pw-toggle { position: absolute; z-index: 1; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; padding: 0; display: grid; place-items: center; background: transparent; border: 0; color: var(--text-muted); }
+  .pw-toggle:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--text-heading); }
+  .pw-toggle:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; }
+  .pw-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 `;
 
 /** Fetches /v1/auth/me once and toggles the two nav-link groups every page ships with —

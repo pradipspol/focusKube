@@ -17,15 +17,15 @@
       '<h2>Personal info</h2>' +
       '<div id="profile-err"></div>' +
       '<form id="profile-form">' +
-      '<div style="display:flex; align-items:center; gap:16px;">' +
-      '<img id="avatar-preview" alt="Profile image" src="' + avatarSrc + '" style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:rgba(127,127,127,0.15);display:' + (avatarSrc ? 'block' : 'none') + '">' +
-      '<div id="avatar-placeholder" style="width:64px;height:64px;border-radius:50%;background:rgba(127,127,127,0.15);display:' + (avatarSrc ? 'none' : 'block') + '"></div>' +
-      '<label style="flex:1;">Profile image <input type="file" id="avatar-input" accept="image/*"></label>' +
+      '<div class="profile-avatar-row">' +
+      '<img id="avatar-preview" class="profile-avatar" alt="Profile image" src="' + avatarSrc + '" style="display:' + (avatarSrc ? 'block' : 'none') + '">' +
+      '<div id="avatar-placeholder" class="profile-avatar" style="display:' + (avatarSrc ? 'none' : 'block') + '"></div>' +
+      '<label>Profile image <input type="file" id="avatar-input" accept="image/*"></label>' +
       '</div>' +
       '<label>First name <input type="text" name="firstName" value="' + esc(user.firstName) + '"></label>' +
       '<label>Last name <input type="text" name="lastName" value="' + esc(user.lastName) + '"></label>' +
       '<label>Company <input type="text" name="company" value="' + esc(user.company) + '"></label>' +
-      '<label style="display:flex; align-items:center; gap:8px; flex-direction:row;"><input type="checkbox" name="productUpdatesOptIn" ' + (user.productUpdatesOptIn ? 'checked' : '') + ' style="width:auto;"> Send me product updates and tips by email</label>' +
+      '<label class="profile-opt-in"><input type="checkbox" name="productUpdatesOptIn" ' + (user.productUpdatesOptIn ? 'checked' : '') + '> <span>Send me product updates and tips by email</span></label>' +
       '<button type="submit">Save</button>' +
       '</form>' +
       '</div>' +

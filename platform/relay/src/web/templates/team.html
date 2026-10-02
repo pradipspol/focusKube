@@ -1,13 +1,6 @@
 <h1>Team</h1>
 <div id="content">Loading&hellip;</div>
 <style>
-  .license-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .license-field { position: relative; flex: 1; min-width: 220px; }
-  .license-input { display: block; width: 100%; font-family: ui-monospace, monospace; font-size: 13px; padding: 10px 40px 10px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text); }
-  .license-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0; display: grid; place-items: center; background: transparent; border: none; color: var(--text-muted); }
-  .license-toggle:hover { color: var(--text-heading); }
-  .license-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .license-row form { display: block; margin: 0; }
   table.members { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
   table.members th, table.members td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   table.members th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -120,7 +113,7 @@
     const content = document.getElementById('content');
     if (!data.org) {
       if (hasActiveProLicense) {
-        content.innerHTML = '<div class="card"><h2>You already have a ' + acct.license.plan + ' plan</h2><p class="sub">To create a team, you must first cancel your current ' + acct.license.plan + ' plan. Once cancelled, you can create and purchase team licenses.</p><a href="/account"><button type="button">Go to Account settings</button></a></div>';
+        content.innerHTML = '<div class="card"><h2>You already have a ' + acct.license.plan + ' plan</h2><p class="sub">To create a team, you must first cancel your current ' + acct.license.plan + ' plan. Once cancelled, you can create and purchase team licenses.</p><a class="button-link" href="/account">Go to Account settings</a></div>';
       } else {
         content.innerHTML = noTeamCard();
       }

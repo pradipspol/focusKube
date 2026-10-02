@@ -3,7 +3,14 @@
 <div id="err"></div>
 <form id="f">
   <label>Email <input type="email" name="email" required autocomplete="email" placeholder="you@example.com"></label>
-  <label>Password <input type="password" name="password" required autocomplete="current-password" placeholder="At least 8 characters"></label>
+  <label>Password
+    <div class="pw-field">
+      <input type="password" name="password" required autocomplete="current-password" placeholder="At least 8 characters">
+      <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </label>
   <button type="submit">Sign in</button>
 </form>
 <form id="tfa-form" style="display:none">
@@ -17,7 +24,18 @@
   <div class="links" id="signup-link"><a href="/signup">Need an account? Sign up</a> &middot; <a href="/forgot-password">Forgot password?</a> &middot; <a href="/otp">Sign in with a code</a></div>
 </div>
 <script>
+  const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.6 20.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a20.6 20.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
   let tfaEmail = '';
+  document.querySelectorAll('.pw-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = btn.previousElementSibling;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.innerHTML = showing ? EYE_ICON : EYE_OFF_ICON;
+      btn.title = btn.ariaLabel = showing ? 'Show password' : 'Hide password';
+    });
+  });
 
   // Same-origin-relative only (mirrors the server-side check in auth/routes.ts's
   // validatedNextPath) — carries a page like the team-invite accept flow through login.
