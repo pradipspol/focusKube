@@ -563,17 +563,17 @@ export function Sidebar ({
     originKubeconfigId?: string,
   ) => {
     const resolvedSource = originSource ?? ctx.source?.provider;
-    // When the active tab tracks a specific origin (source + kubeconfig), match on
-    // all three — otherwise contexts sharing a name across sources (e.g. a starred
-    // Azure context and a locally-uploaded one) would all show as "connected" at
-    // once. With no tab open, only trust an explicitly-recorded connect origin —
-    // never highlight from a passive default-context initialization (e.g. on page
-    // load, before the user has opened a resource tab or connected anything).
     const isSelectedContext = activeTabOriginContext
       ? activeTabOriginContext === ctx.name &&
-      activeTabOriginSource === resolvedSource &&
-      activeTabOriginKubeconfigId === originKubeconfigId
+        activeTabOriginSource === resolvedSource &&
+        activeTabOriginKubeconfigId === originKubeconfigId
       : !!activeContextOriginSource &&
+        scope.context === ctx.name &&
+        activeContextOriginSource === resolvedSource &&
+        activeContextOriginKubeconfigId === originKubeconfigId;
+    // Probe health belongs to each context; active selection is tracked separately.
+    const isConnectedContext = ctx.connected === true;
+    const isActiveContext = !!activeContextOriginSource &&
       scope.context === ctx.name &&
       activeContextOriginSource === resolvedSource &&
       activeContextOriginKubeconfigId === originKubeconfigId;
@@ -648,8 +648,8 @@ export function Sidebar ({
               <Spinner label={uiText.sidebar.connecting} />
             ) : (
               <span
-                className={`context-status-dot ${isSelectedContext ? 'connected' : 'disconnected'}`}
-                title={isSelectedContext ? 'Connected' : 'Disconnected'}
+                className={`context-status-dot ${ctx.connected === undefined ? 'checking' : isConnectedContext ? 'connected' : 'disconnected'}`}
+                title={ctx.connected === undefined ? 'Checking connection' : isConnectedContext ? 'Connected' : 'Disconnected'}
               />
             )}
             {!collapsed && (
@@ -665,10 +665,10 @@ export function Sidebar ({
                   <SidebarContextMenu
                     actions={[
                       {
-                        label: isSelectedContext ? uiText.sidebar.disconnect : uiText.sidebar.connect,
+                        label: isActiveContext ? uiText.sidebar.disconnect : uiText.sidebar.connect,
                         onSelect: async () => {
                         setMenuContextName(undefined);
-                        if (isSelectedContext) {
+                        if (isActiveContext) {
                           setConnectingContextKey(nodeIdentityKey);
                           try {
                             await Promise.resolve(onContextChange(undefined));

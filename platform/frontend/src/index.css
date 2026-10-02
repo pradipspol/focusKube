@@ -2995,6 +2995,9 @@ a {
 .context-status-dot.connected {
   background: var(--ok-strong);
 }
+.context-status-dot.checking {
+  background: var(--text-muted);
+}
 .context-status-dot.disconnected {
   background: var(--danger-bright);
 }

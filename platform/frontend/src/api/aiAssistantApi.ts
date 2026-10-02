@@ -193,7 +193,7 @@ export const useAiEntitlement = (enabled = true) => {
   return useQuery({
     queryKey: ['ai', 'entitlement'],
     queryFn: () => aiAssistantApi.getEntitlement(),
-    refetchInterval: 15000,
+    refetchInterval: false, //15000,
     retry: false,
     enabled,
   });

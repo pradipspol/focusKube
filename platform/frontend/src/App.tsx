@@ -55,6 +55,7 @@ export type View =
   | { type: 'aws' };
 
 type UiRoute = 'login' | 'focusKube';
+const EMPTY_NAMESPACE_SELECTION: string[] = [];
 
 const ROUTE_PATHS: Record<UiRoute, string> = {
   login: '/login',
@@ -599,7 +600,7 @@ export default function App() {
   const [awsTreeRefresh, setAwsTreeRefresh] = useState(0);
   // Bumped after successful Azure sign-in so already-open resource tabs refetch.
   const [azureAuthRecoveryRefresh, setAzureAuthRecoveryRefresh] = useState(0);
-  const contextReady = !!context && !!activeContextSource && contextInitialized && !contextsQuery.isFetching;
+  const contextReady = !!context && !!activeContextSource && contextInitialized && !contextsQuery.isLoading;
 
   const namespacesQuery = useQuery({
     queryKey: ['namespaces', context, activeContextSource],
@@ -818,7 +819,7 @@ export default function App() {
     () => namespaceSelectionKeyForContext(activeTab, activeContextEntry, context),
     [activeTab, activeContextEntry, context],
   );
-  const selectedNamespaces = namespaceSelections[namespaceSelectionKey] ?? [];
+  const selectedNamespaces = namespaceSelections[namespaceSelectionKey] ?? EMPTY_NAMESPACE_SELECTION;
   const namespace = selectedNamespaces.length === 1 ? selectedNamespaces[0] : undefined;
   const namespacesForTab = (tab?: ViewTab) => {
     const tabContext = tab?.originContext ?? context;
@@ -831,7 +832,7 @@ export default function App() {
       ? contextsQuery.data?.contexts.find((entry) => entry.name === tabContext)
       : undefined;
     const tabSelectionKey = namespaceSelectionKeyForContext(tab, tabContextEntry, tabContext);
-    const tabReady = !!tabContext && !!tabSource && contextInitialized && !contextsQuery.isFetching;
+    const tabReady = !!tabContext && !!tabSource && contextInitialized && !contextsQuery.isLoading;
     return {
       context: tabReady ? tabContext : undefined,
       namespace: namespaceSelections[tabSelectionKey]?.length === 1 ? namespaceSelections[tabSelectionKey][0] : undefined,

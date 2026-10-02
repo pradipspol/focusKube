@@ -2,7 +2,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
 import 'express-async-errors';
-import { contextsService } from '../services/contextsService.js';
+import { contextsService, type ContextsPayload } from '../services/contextsService.js';
 import { kube } from '../kube/client.js';
 import { buildTestApp, makeTestAuthUser } from '../testUtils/testApp.js';
 
@@ -45,6 +45,31 @@ test('GET /api/contexts returns the cached payload', async (t) => {
   const res = await request(app()).get('/api/contexts');
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { contexts: [], localKubeconfigs: [] });
+});
+
+test('GET /api/contexts probes each context with its source kubeconfig', async (t) => {
+  t.mock.method(contextsService, 'getCachedPayload', async (_userId: string, loader: () => Promise<ContextsPayload>) => loader());
+  t.mock.method(kube, 'getContexts', async (path: string) => [{
+    name: 'same-name',
+    cluster: path,
+    user: 'test-user',
+    active: false,
+  }]);
+  const probedPaths: string[] = [];
+  t.mock.method(kube, 'isContextConnected', async (_contextName: string, path: string) => {
+    probedPaths.push(path);
+    return path === '/tmp/aws-kubeconfig';
+  });
+
+  const res = await request(app()).get('/api/contexts');
+  assert.equal(res.status, 200);
+  assert.deepEqual(new Set(probedPaths), new Set([
+    '/tmp/local-kubeconfig',
+    '/tmp/minikube-kubeconfig',
+    '/tmp/cloud-kubeconfig',
+    '/tmp/aws-kubeconfig',
+  ]));
+  assert.deepEqual(res.body.contexts.map((ctx: { connected: boolean }) => ctx.connected), [false, false, false, true]);
 });
 
 test('POST /api/contexts/active requires a name', async () => {

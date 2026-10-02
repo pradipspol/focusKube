@@ -105,6 +105,32 @@ test('contextsService buildPayload keeps source keyed by scope+name', () => {
   assert.equal((awsSource?.source as any).clusterName, 'eks-cluster');
 });
 
+test('contextsService buildPayload keeps connectivity keyed by scope+name', () => {
+  const service = new ContextsService();
+  const payload = service.buildPayload({
+    activeContext: null,
+    entries: [sampleEntry('same-name', 'local'), sampleEntry('same-name', 'aws')],
+    sourceDocs: [],
+    localKubeconfigs: [],
+    connectivity: { 'local::same-name': false, 'aws::same-name': true },
+  });
+
+  assert.equal(payload.contexts.find((ctx) => ctx.source?.provider === 'local')?.connected, false);
+  assert.equal(payload.contexts.find((ctx) => ctx.source?.provider === 'eks')?.connected, true);
+});
+
+test('contextsService leaves connectivity unknown when probes are skipped', () => {
+  const service = new ContextsService();
+  const payload = service.buildPayload({
+    activeContext: null,
+    entries: [sampleEntry('ctx-local', 'local')],
+    sourceDocs: [],
+    localKubeconfigs: [],
+  });
+
+  assert.equal(payload.contexts[0]?.connected, undefined);
+});
+
 test('contextsService cache returns cached value until invalidated', async () => {
   const service = new ContextsService();
   const userId = 'user-cache';

@@ -161,7 +161,7 @@ export class ContextsService {
     entries: ContextEntry[];
     sourceDocs: DesktopContextSourceDoc[];
     localKubeconfigs: ContextsPayload['localKubeconfigs'];
-    skipConnectivity?: boolean;
+    connectivity?: Record<string, boolean>;
   }): ContextsPayload {
     const sourceByContext = this.mapContextSources(args.entries, args.sourceDocs);
 
@@ -171,7 +171,7 @@ export class ContextsService {
         const sourceDoc = sourceByContext.get(sourceKey(scope, ctx.name));
         return {
           ...ctx,
-          connected: false,
+          connected: args.connectivity?.[sourceKey(scope, ctx.name)],
           source: this.sourceForEntry(scope, ctx.name, sourceDoc),
         };
       }),

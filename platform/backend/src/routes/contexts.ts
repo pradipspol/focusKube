@@ -12,7 +12,6 @@ import { withFileLock, writeFileAtomic } from '../util/fileLock.js';
 import { setRequestOperation } from '../util/requestOp.js';
 import { config } from '../config.js';
 import {
-  activeSessionKubeconfigPath,
   setSessionContextSourceHint,
   resolveSessionScopeForContext,
   kubeconfigPathForSource,
@@ -146,13 +145,16 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
 
   const connectivityStartedHr = process.hrtime.bigint();
   const connectivity = skipConnectivity
-    ? contexts.map((ctx) => ({ name: ctx.name, connected: false }))
-    : contexts.map((ctx) => ({ name: ctx.name, connected: false }));
+    ? undefined
+    : Object.fromEntries(await Promise.all(entries.map(async ({ ctx, scope }) => [
+      `${scope}::${ctx.name}`,
+      await probeConnectivity(ctx.name, kubeconfigPathForSource(req.userSession, scope), scope, req),
+    ] as const)));
   logInfo('contexts.payload.step', {
     reqId: req.logRequestId ?? null,
     step: 'connectivity_checked',
-    contextCount: connectivity.length,
-    skipped: true,
+    contextCount: entries.length,
+    skipped: skipConnectivity,
     elapsedMs: Number((Number(process.hrtime.bigint() - connectivityStartedHr) / 1_000_000).toFixed(1)),
   });
 
@@ -176,7 +178,7 @@ async function contextsPayload(req: any, options: { skipConnectivity?: boolean }
     entries,
     sourceDocs,
     localKubeconfigs,
-    skipConnectivity,
+    connectivity,
   });
 }
 
@@ -184,12 +186,12 @@ export function invalidateContextsCache(req: any): void {
   contextsService.invalidateCache(req.userSession.userId);
 }
 
-async function probeConnectivity(contextName: string, req: any): Promise<boolean> {
+async function probeConnectivity(contextName: string, kubeconfigPath: string, scope: SessionScope, req: any): Promise<boolean> {
   const startedHr = process.hrtime.bigint();
   let timedOut = false;
 
   const connected = await withTimeoutFallback(
-    kube.isContextConnected(contextName, activeSessionKubeconfigPath(req.userSession)),
+    kube.isContextConnected(contextName, kubeconfigPath),
     config.k8sContextProbeTimeoutMs + 250,
     false,
     () => {
@@ -202,6 +204,7 @@ async function probeConnectivity(contextName: string, req: any): Promise<boolean
     logError('contexts.payload.connectivity.timeout', {
       reqId: req.logRequestId ?? null,
       contextName,
+      scope,
       timeoutMs: config.k8sContextProbeTimeoutMs + 250,
       elapsedMs: Number(elapsedMs.toFixed(1)),
     });
@@ -209,6 +212,7 @@ async function probeConnectivity(contextName: string, req: any): Promise<boolean
     logInfo('contexts.payload.connectivity.result', {
       reqId: req.logRequestId ?? null,
       contextName,
+      scope,
       connected,
       elapsedMs: Number(elapsedMs.toFixed(1)),
     });
