@@ -16,8 +16,10 @@ import { billingRouter, handleStripeWebhook } from './billing/routes.js';
 import { handleRazorpayWebhook } from './billing/razorpayWebhook.js';
 import { orgRouter } from './org/routes.js';
 import { devRouter } from './dev/routes.js';
+import { renderDemoCheckoutPage } from './dev/demoCheckoutPage.js';
 import { webRouter } from './web/pages.js';
 import { isStripeDemoMode, simulateCheckoutCompleted, getSimulatedSession } from './billing/stripe-sim.js';
+import { currentNonce } from './security/csp.js';
 import { searchDocs } from './docs/search.js';
 import {
   logError,
@@ -125,61 +127,7 @@ app.get('/demo/checkout/:sessionId', (req, res) => {
   if (!session) {
     return res.status(404).send('Checkout session not found');
   }
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Demo Checkout - FocusKube</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; max-width: 500px; }
-        .card { border: 1px solid #ddd; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .price { font-size: 32px; font-weight: bold; margin: 16px 0; }
-        .details { color: #666; margin: 16px 0; }
-        button { background: #007AFF; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
-        button:hover { background: #0051D5; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 16px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h1>Confirm Purchase</h1>
-        <p class="details"><strong>Email:</strong> ${session.customer_email}</p>
-        <p class="details"><strong>Plan:</strong> FocusKube Pro</p>
-        <p class="details"><strong>Billing:</strong> Monthly</p>
-        <div class="price">$19.99/month</div>
-        <button onclick="completePurchase()">Complete Purchase</button>
-        <div class="footer">
-          This is a demo checkout — no real charge will be made.
-        </div>
-      </div>
-      <script>
-        async function completePurchase() {
-          const btn = document.querySelector('button');
-          btn.disabled = true;
-          btn.textContent = 'Processing...';
-          try {
-            const res = await fetch('/v1/dev/stripe/webhook/checkout-completed', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: '${session.id}' })
-            });
-            if (res.ok) {
-              window.location.href = '${session.success_url}';
-            } else {
-              alert('Error completing purchase');
-              btn.disabled = false;
-              btn.textContent = 'Complete Purchase';
-            }
-          } catch (err) {
-            alert('Error: ' + err.message);
-            btn.disabled = false;
-            btn.textContent = 'Complete Purchase';
-          }
-        }
-      </script>
-    </body>
-    </html>
-  `);
+  res.type('html').send(renderDemoCheckoutPage(session, currentNonce()));
 });
 
 app.use('/', webRouter);

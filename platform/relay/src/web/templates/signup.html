@@ -35,10 +35,7 @@
   <button type="submit">Sign up</button>
 </form>
 <div class="auth-divider">or</div>
-<form action="/v1/auth/google/start" method="get">
-  <input type="hidden" name="next" id="google-next">
-  <button type="submit" class="secondary">Continue with Google</button>
-</form>
+<button type="button" id="google-start" class="secondary">Continue with Google</button>
 <div class="links" id="login-link"><a href="/login">Already have an account? Sign in</a></div>
 <script>
   const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -50,8 +47,12 @@
   const params = new URLSearchParams(location.search);
   const next = params.get('next');
   const validNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  document.getElementById('google-start').addEventListener('click', () => {
+    const url = new URL('/v1/auth/google/start', location.origin);
+    if (validNext) url.searchParams.set('next', validNext);
+    location.assign(url);
+  });
   if (validNext) {
-    document.getElementById('google-next').value = validNext;
     document.getElementById('login-link').innerHTML = '<a href="/login?next=' + encodeURIComponent(validNext) + '">Already have an account? Sign in</a>';
   }
   const prefillEmail = params.get('email');

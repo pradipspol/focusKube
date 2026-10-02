@@ -8,11 +8,12 @@ function intEnv(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const publicUrl = process.env.RELAY_PUBLIC_URL ?? 'http://localhost:4001';
+const port = parseInt(process.env.PORT ?? '4001', 10);
+const publicUrl = process.env.RELAY_PUBLIC_URL ?? `http://localhost:${port}`;
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 
 export const config = {
-  port: parseInt(process.env.PORT ?? '4001', 10),
+  port,
   publicUrl,
   nodeEnv,
   isProduction: nodeEnv === 'production',

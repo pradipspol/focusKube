@@ -13,10 +13,7 @@
 </form>
 <div id="google-signin">
   <div class="auth-divider">or</div>
-  <form action="/v1/auth/google/start" method="get">
-    <input type="hidden" name="next" id="google-next">
-    <button type="submit" class="secondary">Continue with Google</button>
-  </form>
+  <button type="button" id="google-start" class="secondary">Continue with Google</button>
   <div class="links" id="signup-link"><a href="/signup">Need an account? Sign up</a> &middot; <a href="/forgot-password">Forgot password?</a> &middot; <a href="/otp">Sign in with a code</a></div>
 </div>
 <script>
@@ -27,8 +24,12 @@
   const params = new URLSearchParams(location.search);
   const next = params.get('next');
   const validNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  document.getElementById('google-start').addEventListener('click', () => {
+    const url = new URL('/v1/auth/google/start', location.origin);
+    if (validNext) url.searchParams.set('next', validNext);
+    location.assign(url);
+  });
   if (validNext) {
-    document.getElementById('google-next').value = validNext;
     document.getElementById('signup-link').innerHTML =
       '<a href="/signup?next=' + encodeURIComponent(validNext) + '">Need an account? Sign up</a> &middot; <a href="/forgot-password">Forgot password?</a> &middot; <a href="/otp?next=' + encodeURIComponent(validNext) + '">Sign in with a code</a>';
   }

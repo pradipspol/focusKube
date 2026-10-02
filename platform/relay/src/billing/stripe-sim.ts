@@ -36,6 +36,10 @@ export function isStripeDemoMode(): boolean {
   return config.stripe.demoMode;
 }
 
+export function buildDemoCheckoutUrl(publicUrl: string, sessionId: string): string {
+  return `${publicUrl.replace(/\/+$/, '')}/demo/checkout/${encodeURIComponent(sessionId)}`;
+}
+
 export function createDemoCheckoutSession(opts: {
   line_items: Array<{ price_data: any; quantity: number }>;
   customer_email: string;
@@ -50,7 +54,7 @@ export function createDemoCheckoutSession(opts: {
 
   const session: SimulatedCheckoutSession = {
     id: sessionId,
-    url: `http://localhost:4001/demo/checkout/${sessionId}`, // Fake checkout URL for testing
+    url: buildDemoCheckoutUrl(config.publicUrl, sessionId),
     mode: 'subscription',
     client_reference_id: opts.client_reference_id,
     customer_email: opts.customer_email,
