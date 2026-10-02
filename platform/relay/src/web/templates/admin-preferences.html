@@ -1,0 +1,73 @@
+<main class="admin-view">
+  <header class="admin-view-header">
+    <div class="admin-eyebrow">Administration / Personal setup</div>
+    <h1>Preferences</h1>
+    <p class="sub">Choose how the Admin console opens and how its directory is displayed.</p>
+  </header>
+  <section class="admin-panel admin-preferences-panel" aria-labelledby="admin-preferences-title">
+    <h2 id="admin-preferences-title">Console defaults</h2>
+    <form id="admin-preferences-form">
+      <label>Start page
+        <select name="startPage">
+          <option value="/admin">Overview</option>
+          <option value="/admin/users">Users</option>
+          <option value="/admin/telemetry">Telemetry</option>
+          <option value="/admin/preferences">Preferences</option>
+          <option value="/admin/team-onboarding">Team onboarding</option>
+        </select>
+      </label>
+      <label>Users per page
+        <select name="userPageSize">
+          <option value="10">10 rows</option>
+          <option value="25">25 rows</option>
+          <option value="50">50 rows</option>
+          <option value="100">100 rows</option>
+        </select>
+      </label>
+      <label>Directory density
+        <select name="tableDensity">
+          <option value="comfortable">Comfortable</option>
+          <option value="compact">Compact</option>
+        </select>
+      </label>
+      <div class="admin-preferences-actions">
+        <button type="submit">Save preferences</button>
+        <span id="admin-preferences-status" class="sub" role="status"></span>
+      </div>
+    </form>
+    <p class="sub admin-local-note">These preferences are saved in this browser only. They do not change relay-wide settings.</p>
+  </section>
+</main>
+<style>
+  .admin-preferences-panel form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 760px; margin-top: 20px; }
+  .admin-preferences-panel select { display: block; width: 100%; margin-top: 7px; }
+  .admin-preferences-actions { display: flex; align-items: center; gap: 14px; grid-column: 1 / -1; }
+  .admin-preferences-actions .sub { margin: 0; }
+  .admin-local-note { margin-top: 24px; }
+  @media (max-width: 700px) {
+    .admin-preferences-panel form { grid-template-columns: minmax(0, 1fr); }
+    .admin-preferences-actions { align-items: flex-start; flex-direction: column; grid-column: 1; }
+    .admin-preferences-actions button { width: 100%; }
+  }
+</style>
+<script>
+  const key = 'focuskube-admin-preferences';
+  const defaults = { startPage: '/admin', userPageSize: 25, tableDensity: 'comfortable' };
+  const form = document.getElementById('admin-preferences-form');
+  const saved = { ...defaults, ...JSON.parse(localStorage.getItem(key) || '{}') };
+  form.elements.startPage.value = saved.startPage;
+  form.elements.userPageSize.value = String(saved.userPageSize);
+  form.elements.tableDensity.value = saved.tableDensity;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const preferences = {
+      startPage: form.elements.startPage.value,
+      userPageSize: Number(form.elements.userPageSize.value),
+      tableDensity: form.elements.tableDensity.value,
+    };
+    localStorage.setItem(key, JSON.stringify(preferences));
+    document.documentElement.dataset.adminDensity = preferences.tableDensity;
+    const status = document.getElementById('admin-preferences-status');
+    status.textContent = 'Preferences saved in this browser.';
+  });
+</script>

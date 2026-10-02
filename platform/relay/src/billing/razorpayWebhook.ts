@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { config } from '../config.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { logDebug, logError, logInfo, logWarning } from '../logger.js';
 import {
   activateIndividualSubscription,
@@ -129,6 +130,7 @@ async function dispatch(event: string | undefined, subscription: RazorpaySubscri
           // Razorpay has no subscription-item concept; quantity lives on the subscription.
           subscriptionItemId: null,
           currentPeriodEnd: periodEndOf(subscription),
+          billingInterval: (await mongoCollections.razorpay_plans.findOne({ plan_id: subscription.plan_id }))?.plan_key.startsWith('year:') ? 'year' : 'month',
         });
       } else if (notes.fk_user_id) {
         await activateIndividualSubscription({

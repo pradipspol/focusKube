@@ -14,6 +14,7 @@ interface EntitlementResponse {
   plan?: string;
   status?: string;
   quotaRemaining?: number;
+  team?: { name: string; role: 'owner' | 'member' };
   error?: string;
 }
 
@@ -60,6 +61,7 @@ router.get('/entitlement', async (_req: Request, res: Response<EntitlementRespon
       plan: state.plan,
       status: state.status,
       quotaRemaining: state.quotaRemaining,
+      team: state.team,
       error: state.error,
     });
   } catch (err) {

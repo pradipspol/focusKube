@@ -5,17 +5,18 @@ import { requireSession } from '../auth/sessions.js';
 import { userService } from '../auth/userService.js';
 import { isValidEmail, validateOrgName } from '../security/validation.js';
 import { parseInterval } from '../billing/pricing.js';
-import { BillingConfigError, isBillingConfigured } from '../billing/provider.js';
+import { activeProvider, BillingConfigError, isBillingConfigured } from '../billing/provider.js';
 import { RazorpayError } from '../billing/razorpay.js';
 import { config } from '../config.js';
-import { withTransaction } from '../db.js';
 import { getLicenseForUser } from '../licenseStore.js';
+import { mongoCollections } from '../mongoCollections.js';
 import { logError, logWarning } from '../logger.js';
 import { sendOrgInviteEmail } from '../notify/email.js';
-import { createOrgCheckoutSession, updateOrgSeats, cancelOrgSubscription } from './billing.js';
+import { createOrgCheckoutSession, updateOrgSeats, cancelOrgSubscription, upgradeOrgToAnnual } from './billing.js';
 import { getOrgLicenseForUser } from './entitlement.js';
 import { OrgActionError } from './errors.js';
 import { organizationService } from './organizationService.js';
+import { isStripeDemoMode } from '../billing/stripe-sim.js';
 import type { OrganizationRow } from './store.js';
 
 const router = Router();
@@ -52,6 +53,7 @@ async function requireOrgOwner(req: Request, res: Response, next: NextFunction):
 router.get('/', requireSession, async (req, res) => {
   const userId = req.user!.id;
   const ownedOrg = await organizationService.findOrgByOwner(userId);
+  const ownedMembership = ownedOrg ? await organizationService.findMember(ownedOrg.id, userId) : undefined;
   const membership = ownedOrg ? undefined : await organizationService.findActiveMembership(userId);
   const org = ownedOrg ?? (membership ? await organizationService.findOrgById(membership.org_id) : undefined);
 
@@ -61,11 +63,43 @@ router.get('/', requireSession, async (req, res) => {
   }
 
   const role: 'owner' | 'member' = ownedOrg ? 'owner' : 'member';
+  const teamPool = await mongoCollections.licenses.findOne(
+    { org_id: org.id },
+    { projection: { _id: 0, plan: 1, status: 1, quota_remaining: 1, quota_granted: 1, billing_interval: 1, billing_provider: 1, stripe_subscription_id: 1, stripe_subscription_item_id: 1 } },
+  );
+  let billingInterval = teamPool?.billing_interval ?? null;
+  const billingProvider = activeProvider();
+  if (
+    teamPool && !billingInterval && teamPool.billing_provider === billingProvider.name &&
+    billingProvider.supportsAnnualUpgrade() && billingProvider.isConfigured() && teamPool.stripe_subscription_id
+  ) {
+    try {
+      billingInterval = await billingProvider.getSubscriptionInterval({
+        subscriptionId: teamPool.stripe_subscription_id,
+        subscriptionItemId: teamPool.stripe_subscription_item_id ?? null,
+      });
+      if (billingInterval) {
+        await mongoCollections.licenses.updateOne({ org_id: org.id }, {
+          $set: { billing_interval: billingInterval, updated_at: new Date().toISOString() },
+        });
+      }
+    } catch (err) {
+      logWarning('Could not resolve the existing team billing interval', { errorType: err instanceof Error ? err.name : typeof err });
+    }
+  }
   const base = {
     org: { id: org.id, name: org.name, status: org.status, createdAt: org.created_at },
     role,
+    seatActive: ownedOrg ? ownedMembership?.status === 'active' : !!membership,
     seats: await organizationService.seatCounts(org.id),
     license: (await getOrgLicenseForUser(userId)) ?? null,
+    teamPlan: teamPool ? {
+      plan: teamPool.plan,
+      status: teamPool.status,
+      quotaRemaining: teamPool.quota_remaining,
+      quotaGranted: teamPool.quota_granted,
+      billingInterval,
+    } : null,
   };
 
   if (role !== 'owner') {
@@ -127,6 +161,19 @@ router.post('/checkout', requireSession, async (req, res) => {
   } catch (err) {
     if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
       logWarning('Organization checkout could not be completed', { statusCode: err.status, errorType: err.name });
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+});
+
+router.post('/billing/annual', requireSession, requireOrgOwner, async (req, res) => {
+  try {
+    await upgradeOrgToAnnual(req.org!.id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof OrgActionError || err instanceof RazorpayError || err instanceof BillingConfigError) {
       res.status(err.status).json({ error: err.message });
       return;
     }
@@ -196,6 +243,12 @@ router.post('/invites', requireSession, requireOrgOwner, async (req, res) => {
     return;
   }
 
+  const demoInvitesEnabled = activeProvider().name === 'stripe' && isStripeDemoMode();
+  if (!config.brevo.apiKey && !config.smtp.host && !config.smtp.url && !demoInvitesEnabled) {
+    res.status(503).json({ error: 'Email delivery is not configured on this relay' });
+    return;
+  }
+
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   if (await organizationService.countInvitesSince(org.id, oneHourAgo) >= config.org.maxInvitesPerHour) {
     res.status(429).json({ error: 'Too many invites sent Ã¢â‚¬â€ try again later' });
@@ -225,10 +278,18 @@ router.post('/invites', requireSession, requireOrgOwner, async (req, res) => {
     return;
   }
 
-  const invite = await organizationService.createInvite(org.id, normalized, req.user!.id);
+  const created = await organizationService.createInviteWithAvailableSeat(org.id, normalized, req.user!.id);
+  if ('error' in created) {
+    res.status(409).json({ error: created.error });
+    return;
+  }
+  const invite = created.invite;
   const inviterLabel = [req.user!.firstName, req.user!.lastName].filter(Boolean).join(' ') || req.user!.email || 'Someone';
   await sendOrgInviteEmail(normalized, invite.token, org.name, inviterLabel);
-  res.json({ ok: true, id: invite.id, expiresAt: invite.expiresAt });
+  const demoInviteUrl = demoInvitesEnabled
+    ? `${config.publicUrl.replace(/\/+$/, '')}/invite?token=${encodeURIComponent(invite.token)}`
+    : undefined;
+  res.json({ ok: true, id: invite.id, expiresAt: invite.expiresAt, ...(demoInviteUrl ? { demoInviteUrl } : {}) });
 });
 
 router.post('/invites/:id/resend', requireSession, requireOrgOwner, async (req, res) => {
@@ -237,14 +298,29 @@ router.post('/invites/:id/resend', requireSession, requireOrgOwner, async (req, 
     res.status(404).json({ error: 'Invite not found' });
     return;
   }
-  const rotated = await organizationService.resendInvite(invite.id);
+  const rotated = await organizationService.resendInvite(req.org!.id, invite.id);
+  if (!rotated) {
+    res.status(404).json({ error: 'Invite not found' });
+    return;
+  }
   const inviterLabel = [req.user!.firstName, req.user!.lastName].filter(Boolean).join(' ') || req.user!.email || 'Someone';
   await sendOrgInviteEmail(invite.email, rotated.token, req.org!.name, inviterLabel);
-  res.json({ ok: true, expiresAt: rotated.expiresAt });
+  const demoInviteUrl = activeProvider().name === 'stripe' && isStripeDemoMode()
+    ? `${config.publicUrl.replace(/\/+$/, '')}/invite?token=${encodeURIComponent(rotated.token)}`
+    : undefined;
+  res.json({ ok: true, expiresAt: rotated.expiresAt, ...(demoInviteUrl ? { demoInviteUrl } : {}) });
 });
 
 router.delete('/invites/:id', requireSession, requireOrgOwner, async (req, res) => {
-  await organizationService.revokeInvite(req.params.id);
+  const result = await organizationService.revokeInvite(req.org!.id, req.params.id);
+  if (result === 'busy') {
+    res.status(409).json({ error: 'A team seat is being assigned. Please try again shortly.' });
+    return;
+  }
+  if (result === 'not-found') {
+    res.status(404).json({ error: 'Pending invite not found' });
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -288,11 +364,7 @@ router.post('/invites/by-token/:token/accept', requireSession, publicInviteLimit
     return;
   }
 
-  // Re-check seat availability inside the same transaction as the insert, so two people
-  // can't both claim the last seat.
-  const rejected = await withTransaction((session) =>
-    organizationService.claimInviteSeat(invite, org.id, user.id, user.emailVerified, session),
-  );
+  const rejected = await organizationService.claimInviteSeat(invite, org.id, user.id, user.emailVerified);
 
   if (rejected) {
     res.status(409).json({ error: rejected });
@@ -309,10 +381,19 @@ router.post('/invites/by-token/:token/accept', requireSession, publicInviteLimit
 
 router.delete('/members/:userId', requireSession, requireOrgOwner, async (req, res) => {
   if (req.params.userId === req.user!.id) {
-    res.status(403).json({ error: 'Cancel the subscription from billing instead' });
+    res.status(403).json({ error: 'Use the leave-team action to give up your seat while keeping team ownership' });
     return;
   }
   await organizationService.removeMember(req.org!.id, req.params.userId);
+  res.json({ ok: true });
+});
+
+router.post('/seat/join', requireSession, requireOrgOwner, async (req, res) => {
+  const error = await organizationService.claimOwnerSeat(req.org!.id, req.user!.id);
+  if (error) {
+    res.status(409).json({ error });
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -320,10 +401,6 @@ router.post('/leave', requireSession, async (req, res) => {
   const membership = await organizationService.findActiveMembership(req.user!.id);
   if (!membership) {
     res.status(400).json({ error: "You're not on a team" });
-    return;
-  }
-  if (membership.role === 'owner') {
-    res.status(403).json({ error: 'The owner cannot leave Ã¢â‚¬â€ cancel the subscription instead' });
     return;
   }
   await organizationService.removeMember(membership.org_id, req.user!.id);

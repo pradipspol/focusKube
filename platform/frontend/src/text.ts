@@ -1090,6 +1090,7 @@
     },
     aiInfoButton: 'AI plan and credit information',
     aiInfoTitle: 'AI account information',
+    teamLabel: 'Team',
     aiCreditLabel: 'Credits remaining',
     aiStatusLabel: 'Status',
     checkingEntitlement: 'Checking license…',

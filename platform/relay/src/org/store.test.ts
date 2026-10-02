@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { ClientSession } from 'mongodb';
 import { sha256 } from '../auth/crypto.js';
 import {
   OrganizationService,
@@ -12,19 +11,38 @@ import {
 
 test('OrganizationService persists hashed invite credentials through an injected repository', async () => {
   const invites: OrganizationInviteRow[] = [];
+  const organization: OrganizationRow = {
+    id: 'org-1', name: 'Team', owner_user_id: 'owner-1', status: 'active', seats_purchased: 1,
+    created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+  };
+  type Filter = Record<string, unknown>;
+  type Update = Record<string, unknown>;
   const service = new OrganizationService({
-    organizations: {} as OrganizationRepositories['organizations'],
-    members: {} as OrganizationRepositories['members'],
+    organizations: {
+      async findOneAndUpdate() { return organization; },
+      async findOne() { return organization; },
+      async updateOne(_filter: Filter, _update: Update) {
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
+      },
+    } as unknown as OrganizationRepositories['organizations'],
+    members: {
+      async findOne() { return null; },
+      async countDocuments() { return 0; },
+    } as unknown as OrganizationRepositories['members'],
     invites: {
       async insertOne(invite: OrganizationInviteRow) {
         invites.push(invite);
       },
+      async findOne() { return null; },
+      async countDocuments() { return 0; },
     } as unknown as OrganizationRepositories['invites'],
     licenses: {} as OrganizationRepositories['licenses'],
     users: {} as OrganizationRepositories['users'],
   });
 
-  const created = await service.createInvite('org-1', 'alice@example.com', 'user-1');
+  const result = await service.createInviteWithAvailableSeat('org-1', 'alice@example.com', 'user-1');
+  assert.ok('invite' in result);
+  const created = result.invite;
   const persisted = invites[0];
 
   assert.ok(persisted);
@@ -37,8 +55,7 @@ test('OrganizationService persists hashed invite credentials through an injected
   assert.equal(persisted.invited_by_user_id, 'user-1');
 });
 
-test('OrganizationService accepts an invite and forwards the transaction session to every write', async () => {
-  const session = {} as ClientSession;
+test('OrganizationService accepts an invite with serialized writes and no Mongo transaction', async () => {
   const organization: OrganizationRow = {
     id: 'org-1', name: 'Team', owner_user_id: 'owner-1', status: 'active', seats_purchased: 1,
     created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
@@ -49,63 +66,158 @@ test('OrganizationService accepts an invite and forwards the transaction session
     expires_at: '2099-01-01T00:00:00.000Z', accepted_at: null, revoked_at: null,
   };
   const insertedMembers: OrganizationMemberRow[] = [];
-  const forwardedSessions: unknown[] = [];
-  type SessionOptions = { session?: ClientSession };
+  const acceptedInvites: string[] = [];
+  type FindOptions = { returnDocument?: 'before' | 'after' };
   type Filter = Record<string, unknown>;
   type Update = Record<string, unknown>;
   const service = new OrganizationService({
     organizations: {
-      async updateOne(_filter: Filter, _update: Update, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async findOneAndUpdate(_filter: Filter, _update: Update, _options?: FindOptions) {
+        return organization;
+      },
+      async updateOne(_filter: Filter, _update: Update) {
         return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
       },
-      async findOne(_filter: Filter, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async findOne(_filter: Filter) {
         return organization;
       },
     } as unknown as OrganizationRepositories['organizations'],
     members: {
-      async countDocuments(_filter: Filter, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async countDocuments(_filter: Filter) {
         return 0;
       },
-      async findOne(_filter: Filter, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async findOne(_filter: Filter) {
         return null;
       },
-      async insertOne(member: OrganizationMemberRow, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async insertOne(member: OrganizationMemberRow) {
         insertedMembers.push(member);
       },
     } as unknown as OrganizationRepositories['members'],
     invites: {
-      async countDocuments(_filter: Filter, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async countDocuments(_filter: Filter) {
         return 0;
       },
-      async findOne(_filter: Filter, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async findOne(_filter: Filter) {
         return invite;
       },
-      async updateOne(_filter: Filter, _update: Update, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async updateOne(_filter: Filter) {
+        acceptedInvites.push(invite.id);
         return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
       },
     } as unknown as OrganizationRepositories['invites'],
     licenses: {} as OrganizationRepositories['licenses'],
     users: {
-      async updateOne(_filter: Filter, _update: Update, options?: SessionOptions) {
-        forwardedSessions.push(options?.session);
+      async updateOne(_filter: Filter, _update: Update) {
         return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
       },
     } as unknown as OrganizationRepositories['users'],
   });
 
-  const rejected = await service.claimInviteSeat(invite, organization.id, 'alice-1', false, session);
+  const rejected = await service.claimInviteSeat(invite, organization.id, 'alice-1', false);
 
   assert.equal(rejected, undefined);
   assert.equal(insertedMembers.length, 1);
   assert.equal(insertedMembers[0].user_id, 'alice-1');
-  assert.ok(forwardedSessions.length > 0);
-  assert.ok(forwardedSessions.every((forwarded) => forwarded === session));
+  assert.equal(insertedMembers[0].status, 'active');
+  assert.deepEqual(acceptedInvites, [invite.id]);
+});
+
+test('OrganizationService lets an owner claim an available team seat', async () => {
+  const organization: OrganizationRow = {
+    id: 'org-1', name: 'Team', owner_user_id: 'owner-1', status: 'active', seats_purchased: 1,
+    created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+  };
+  const insertedMembers: OrganizationMemberRow[] = [];
+  type Filter = Record<string, unknown>;
+  type Update = Record<string, unknown>;
+  const service = new OrganizationService({
+    organizations: {
+      async findOneAndUpdate() { return organization; },
+      async findOne() { return organization; },
+      async updateOne(_filter: Filter, _update: Update) {
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
+      },
+    } as unknown as OrganizationRepositories['organizations'],
+    members: {
+      async findOne() { return null; },
+      async countDocuments() { return 0; },
+      async insertOne(member: OrganizationMemberRow) { insertedMembers.push(member); },
+    } as unknown as OrganizationRepositories['members'],
+    invites: {
+      async countDocuments() { return 0; },
+    } as unknown as OrganizationRepositories['invites'],
+    licenses: {} as OrganizationRepositories['licenses'],
+    users: {} as OrganizationRepositories['users'],
+  });
+
+  const error = await service.claimOwnerSeat(organization.id, organization.owner_user_id);
+
+  assert.equal(error, undefined);
+  assert.equal(insertedMembers.length, 1);
+  assert.equal(insertedMembers[0].role, 'owner');
+  assert.equal(insertedMembers[0].status, 'active');
+});
+
+test('OrganizationService rejects invitations when active members and pending invites fill all seats', async () => {
+  const organization: OrganizationRow = {
+    id: 'org-1', name: 'Team', owner_user_id: 'owner-1', status: 'active', seats_purchased: 2,
+    created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+  };
+  type Filter = Record<string, unknown>;
+  type Update = Record<string, unknown>;
+  const service = new OrganizationService({
+    organizations: {
+      async findOneAndUpdate() { return organization; },
+      async findOne() { return organization; },
+      async updateOne(_filter: Filter, _update: Update) {
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
+      },
+    } as unknown as OrganizationRepositories['organizations'],
+    members: {
+      async countDocuments() { return 1; },
+    } as unknown as OrganizationRepositories['members'],
+    invites: {
+      async countDocuments() { return 1; },
+      async findOne() { return null; },
+    } as unknown as OrganizationRepositories['invites'],
+    licenses: {} as OrganizationRepositories['licenses'],
+    users: {} as OrganizationRepositories['users'],
+  });
+
+  const result = await service.createInviteWithAvailableSeat(organization.id, 'alice@example.com', 'owner-1');
+
+  assert.ok('error' in result);
+  assert.match(result.error, /All 2 seats are assigned or reserved/);
+});
+
+test('OrganizationService scopes pending invite cancellation to the requested team', async () => {
+  const organization: OrganizationRow = {
+    id: 'org-1', name: 'Team', owner_user_id: 'owner-1', status: 'active', seats_purchased: 2,
+    created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
+  };
+  let cancellationFilter: Record<string, unknown> | undefined;
+  type Filter = Record<string, unknown>;
+  type Update = Record<string, unknown>;
+  const service = new OrganizationService({
+    organizations: {
+      async findOneAndUpdate() { return organization; },
+      async updateOne(_filter: Filter, _update: Update) {
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
+      },
+    } as unknown as OrganizationRepositories['organizations'],
+    members: {} as OrganizationRepositories['members'],
+    invites: {
+      async updateOne(filter: Filter) {
+        cancellationFilter = filter;
+        return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null };
+      },
+    } as unknown as OrganizationRepositories['invites'],
+    licenses: {} as OrganizationRepositories['licenses'],
+    users: {} as OrganizationRepositories['users'],
+  });
+
+  const result = await service.revokeInvite('org-1', 'invite-1');
+
+  assert.equal(result, 'revoked');
+  assert.deepEqual(cancellationFilter, { id: 'invite-1', org_id: 'org-1', status: 'pending' });
 });

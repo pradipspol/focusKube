@@ -6,6 +6,7 @@ export interface AiEntitlement {
   plan?: string;
   status?: string;
   quotaRemaining?: number;
+  team?: { name: string; role: 'owner' | 'member' };
   error?: string;
 }
 

@@ -5,9 +5,9 @@
  */
 import { config } from '../config.js';
 import { BillingConfigError, type BillingProvider, type CheckoutRequest, type CheckoutResult } from './provider.js';
-import { buildProLineItem } from './pricing.js';
+import { buildProLineItem, proUnitAmountCents } from './pricing.js';
 import { isStripeConfigured, stripeClient } from './stripe.js';
-import { createDemoCheckoutSession, isStripeDemoMode } from './stripe-sim.js';
+import { createDemoCheckoutSession, getSimulatedSubscription, isStripeDemoMode, updateSimulatedSubscriptionInterval, updateSimulatedSubscriptionSeats } from './stripe-sim.js';
 import { logDebug, logInfo } from '../logger.js';
 
 function successUrl(purpose: 'individual' | 'org'): string {
@@ -38,6 +38,21 @@ export const stripeProvider: BillingProvider = {
 
   supportsPortal() {
     return true;
+  },
+
+  supportsAnnualUpgrade() {
+    return true;
+  },
+
+  async getSubscriptionInterval({ subscriptionId, subscriptionItemId }) {
+    if (isStripeDemoMode() && subscriptionId.startsWith('sub_demo_')) {
+      const item = getSimulatedSubscription(subscriptionId)?.items.data.find((candidate) => candidate.id === subscriptionItemId);
+      return item?.price.recurring.interval ?? null;
+    }
+    if (!isStripeConfigured() || !subscriptionItemId) return null;
+    const subscription = await stripeClient().subscriptions.retrieve(subscriptionId);
+    const interval: string | undefined = subscription.items.data.find((candidate) => candidate.id === subscriptionItemId)?.price.recurring?.interval;
+    return interval === 'month' || interval === 'year' ? interval : null;
   },
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutResult> {
@@ -103,6 +118,13 @@ export const stripeProvider: BillingProvider = {
 
   async updateSeats({ subscriptionId, subscriptionItemId, seats }) {
     logDebug('Updating Stripe subscription seats', { seats });
+    if (isStripeDemoMode() && subscriptionId.startsWith('sub_demo_')) {
+      if (!subscriptionItemId || !updateSimulatedSubscriptionSeats(subscriptionId, subscriptionItemId, seats)) {
+        throw new Error('The simulated team subscription could not be found');
+      }
+      logInfo('Stripe demo subscription seats updated', { seats });
+      return;
+    }
     if (!isStripeConfigured()) throw new BillingConfigError('Billing is not configured on this server');
     if (!subscriptionItemId) throw new Error('This subscription has no item to update');
     const stripe = stripeClient();
@@ -111,5 +133,37 @@ export const stripeProvider: BillingProvider = {
       proration_behavior: 'create_prorations',
     });
     logInfo('Stripe subscription seats updated', { seats });
+  },
+
+  async updateInterval({ subscriptionId, subscriptionItemId, interval }) {
+    logDebug('Updating Stripe subscription billing interval', { interval });
+    if (isStripeDemoMode() && subscriptionId.startsWith('sub_demo_')) {
+      if (!subscriptionItemId || !updateSimulatedSubscriptionInterval(subscriptionId, subscriptionItemId, interval)) {
+        throw new Error('The simulated team subscription could not be found');
+      }
+      logInfo('Stripe demo subscription billing interval updated', { interval });
+      return;
+    }
+    if (!isStripeConfigured()) throw new BillingConfigError('Billing is not configured on this server');
+    if (!subscriptionItemId) throw new Error('This subscription has no item to update');
+    const stripe = stripeClient();
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const item = subscription.items.data.find((candidate) => candidate.id === subscriptionItemId);
+    if (!item) throw new Error('This subscription item could not be found');
+    const productId = typeof item.price.product === 'string' ? item.price.product : item.price.product.id;
+    await stripe.subscriptions.update(subscriptionId, {
+      items: [{
+        id: subscriptionItemId,
+        price_data: {
+          currency: 'usd',
+          product: productId,
+          unit_amount: proUnitAmountCents(interval),
+          recurring: { interval },
+        },
+      }],
+      proration_behavior: 'always_invoice',
+      payment_behavior: 'error_if_incomplete',
+    });
+    logInfo('Stripe subscription billing interval updated', { interval });
   },
 };

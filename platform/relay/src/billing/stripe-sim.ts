@@ -18,6 +18,11 @@ export interface SimulatedCheckoutSession {
   metadata: Record<string, string> | undefined;
   subscription: string;
   customer: string;
+  product_name: string;
+  quantity: number;
+  unit_amount: number;
+  currency: string;
+  billing_interval: 'month' | 'year';
   success_url: string;
   cancel_url: string;
 }
@@ -25,7 +30,7 @@ export interface SimulatedCheckoutSession {
 export interface SimulatedSubscription {
   id: string;
   status: 'active' | 'canceled';
-  items: { data: Array<{ id: string; quantity: number; current_period_end: number }> };
+  items: { data: Array<{ id: string; quantity: number; current_period_end: number; price: { recurring: { interval: 'month' | 'year' } } }> };
 }
 
 // In-memory store of simulated sessions and subscriptions (cleared on restart)
@@ -61,6 +66,11 @@ export function createDemoCheckoutSession(opts: {
     metadata: opts.metadata,
     subscription: subscriptionId,
     customer: customerId,
+    product_name: opts.line_items[0]?.price_data.product_data.name ?? 'FocusKube Pro',
+    quantity: opts.line_items[0]?.quantity ?? 1,
+    unit_amount: opts.line_items[0]?.price_data.unit_amount ?? 0,
+    currency: opts.line_items[0]?.price_data.currency ?? 'usd',
+    billing_interval: opts.line_items[0]?.price_data.recurring.interval ?? 'month',
     success_url: opts.success_url,
     cancel_url: opts.cancel_url,
   };
@@ -77,6 +87,7 @@ export function createDemoCheckoutSession(opts: {
           id: `si_demo_${crypto.randomUUID()}`,
           quantity: opts.line_items[0]?.quantity ?? 1,
           current_period_end: Math.floor((Date.now() + 30 * 24 * 60 * 60 * 1000) / 1000), // 30 days from now
+          price: { recurring: { interval: opts.line_items[0]?.price_data.recurring.interval ?? 'month' } },
         },
       ],
     },
@@ -229,6 +240,30 @@ export function getSimulatedSession(sessionId: string): SimulatedCheckoutSession
 
 export function getSimulatedSubscription(subscriptionId: string): SimulatedSubscription | undefined {
   return subscriptions.get(subscriptionId);
+}
+
+export function updateSimulatedSubscriptionSeats(subscriptionId: string, subscriptionItemId: string, seats: number): boolean {
+  let subscription = subscriptions.get(subscriptionId);
+  if (!subscription && subscriptionId.startsWith('sub_demo_') && subscriptionItemId.startsWith('si_demo_')) {
+    subscription = {
+      id: subscriptionId,
+      status: 'active',
+      items: { data: [{ id: subscriptionItemId, quantity: seats, current_period_end: Math.floor((Date.now() + 30 * 24 * 60 * 60 * 1000) / 1000), price: { recurring: { interval: 'month' } } }] },
+    };
+    subscriptions.set(subscriptionId, subscription);
+    return true;
+  }
+  const item = subscription?.items.data.find((candidate) => candidate.id === subscriptionItemId);
+  if (!item) return false;
+  item.quantity = seats;
+  return true;
+}
+
+export function updateSimulatedSubscriptionInterval(subscriptionId: string, subscriptionItemId: string, interval: 'year'): boolean {
+  const item = subscriptions.get(subscriptionId)?.items.data.find((candidate) => candidate.id === subscriptionItemId);
+  if (!item) return false;
+  item.price.recurring.interval = interval;
+  return true;
 }
 
 export function listSimulatedSessions(): SimulatedCheckoutSession[] {

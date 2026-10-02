@@ -19,6 +19,8 @@ export interface OrganizationRow {
   seats_purchased: number;
   created_at: string;
   updated_at: string;
+  seat_claim_lock_id?: string;
+  seat_claim_lock_until?: string;
 }
 
 export interface OrganizationMemberRow {
@@ -51,7 +53,7 @@ export interface OrganizationInviteRow {
 }
 
 export interface OrganizationRepositories {
-  organizations: Pick<OrganizationsMongoService, 'insertOne' | 'findOne' | 'updateOne'>;
+  organizations: Pick<OrganizationsMongoService, 'insertOne' | 'findOne' | 'findOneAndUpdate' | 'updateOne'>;
   members: Pick<OrganizationMembersMongoService, 'insertOne' | 'findOne' | 'updateOne' | 'countDocuments' | 'aggregate'>;
   invites: Pick<OrganizationInvitesMongoService, 'insertOne' | 'find' | 'findOne' | 'updateOne' | 'countDocuments'>;
   licenses: Pick<LicensesMongoService, 'findOne'>;
@@ -73,6 +75,31 @@ export interface MemberWithUser extends OrganizationMemberRow {
 
 export class OrganizationService {
   constructor(private readonly repositories: OrganizationRepositories) {}
+
+  private async withSeatClaimLock<T>(orgId: string, operation: () => Promise<T>): Promise<{ acquired: boolean; result?: T }> {
+    const lockId = crypto.randomUUID();
+    const now = new Date();
+    const locked = await this.repositories.organizations.findOneAndUpdate(
+      {
+        id: orgId,
+        $or: [
+          { seat_claim_lock_until: { $lte: now.toISOString() } },
+          { seat_claim_lock_until: { $exists: false } },
+        ],
+      },
+      { $set: { seat_claim_lock_id: lockId, seat_claim_lock_until: new Date(now.getTime() + 60_000).toISOString() } },
+      { returnDocument: 'after' },
+    );
+    if (!locked) return { acquired: false };
+    try {
+      return { acquired: true, result: await operation() };
+    } finally {
+      await this.repositories.organizations.updateOne(
+        { id: orgId, seat_claim_lock_id: lockId },
+        { $unset: { seat_claim_lock_id: '', seat_claim_lock_until: '' } },
+      );
+    }
+  }
 
   async createPendingOrg(ownerUserId: string, name: string): Promise<OrganizationRow> {
     logDebug('Creating pending organization', { ownerUserId, nameLength: name.length });
@@ -226,7 +253,7 @@ export class OrganizationService {
     return key;
   }
 
-  async createInvite(
+  private async persistInvite(
     orgId: string,
     email: string,
     invitedByUserId: string,
@@ -245,6 +272,28 @@ export class OrganizationService {
     return { id, token, expiresAt: expiresAt.toISOString() };
   }
 
+  async createInviteWithAvailableSeat(
+    orgId: string,
+    email: string,
+    invitedByUserId: string,
+  ): Promise<{ invite: { id: string; token: string; expiresAt: string } } | { error: string }> {
+    const claim = await this.withSeatClaimLock(orgId, async () => {
+      const org = await this.findOrgById(orgId);
+      if (!org || org.status !== 'active') return { error: 'Your team subscription is not active' };
+      const counts = await this.seatCounts(orgId);
+      if (counts.filled + counts.pending >= counts.purchased) {
+        return { error: `All ${counts.purchased} seats are assigned or reserved by pending invites. Add a seat or cancel an invitation first.` };
+      }
+      if (await this.findPendingInviteForEmail(orgId, email)) {
+        return { error: 'Already invited — use Resend instead' };
+      }
+      return { invite: await this.persistInvite(orgId, email, invitedByUserId) };
+    });
+    return claim.acquired
+      ? claim.result!
+      : { error: 'Team seats are being updated. Please try again shortly.' };
+  }
+
   async findInviteByToken(token: string): Promise<OrganizationInviteRow | undefined> {
     const invites = this.repositories.invites;
     const tokenHash = sha256(token);
@@ -259,20 +308,26 @@ export class OrganizationService {
     return (await this.repositories.invites.findOne({ org_id: orgId, email, status: 'pending' })) ?? undefined;
   }
 
-  async revokeInvite(id: string): Promise<void> {
+  async revokeInvite(orgId: string, id: string): Promise<'revoked' | 'not-found' | 'busy'> {
     logDebug('Revoking organization invite', { inviteId: id });
-    await this.repositories.invites.updateOne(
-      { id, status: 'pending' }, { $set: { status: 'revoked', revoked_at: new Date().toISOString() } },
-    );
-    logInfo('Organization invite revocation completed', { inviteId: id });
+    const claim = await this.withSeatClaimLock(orgId, async () => {
+      const result = await this.repositories.invites.updateOne(
+        { id, org_id: orgId, status: 'pending' },
+        { $set: { status: 'revoked', revoked_at: new Date().toISOString() } },
+      );
+      return result.modifiedCount ? 'revoked' as const : 'not-found' as const;
+    });
+    if (!claim.acquired) return 'busy';
+    if (claim.result === 'revoked') logInfo('Organization invite revocation completed', { inviteId: id });
+    return claim.result!;
   }
 
-  async resendInvite(id: string): Promise<{ token: string; expiresAt: string }> {
+  async resendInvite(orgId: string, id: string): Promise<{ token: string; expiresAt: string } | undefined> {
     logDebug('Rotating organization invite credential', { inviteId: id });
     const token = randomToken();
     const expiresAt = new Date(Date.now() + config.org.inviteTtlDays * 24 * 60 * 60 * 1000).toISOString();
     await this.repositories.invites.updateOne(
-      { id, status: 'pending' }, { $set: { token_hash: sha256(token), expires_at: expiresAt } },
+      { id, org_id: orgId, status: 'pending' }, { $set: { token_hash: sha256(token), expires_at: expiresAt } },
     );
     logInfo('Organization invite credential rotated', { inviteId: id });
     return { token, expiresAt };
@@ -292,32 +347,48 @@ export class OrganizationService {
     orgId: string,
     userId: string,
     emailVerified: boolean,
-    session: ClientSession,
   ): Promise<string | undefined> {
-    await this.repositories.organizations.updateOne(
-      { id: orgId }, { $inc: { seat_claim_revision: 1 } }, { session },
-    );
-    const freshInvite = await this.repositories.invites.findOne(
-      { id: invite.id, status: 'pending', expires_at: { $gt: new Date().toISOString() } }, { session },
-    );
-    if (!freshInvite) return 'This invite is invalid or has expired';
-
-    const counts = await this.seatCounts(orgId, session);
-    if (counts.filled >= counts.purchased) return `All ${counts.purchased} seats are taken`;
-
-    await this.seatUser(orgId, userId, 'member', invite.invited_by_user_id, session);
-    const accepted = await this.repositories.invites.updateOne(
-      { id: invite.id, status: 'pending' },
-      { $set: { status: 'accepted', accepted_user_id: userId, accepted_at: new Date().toISOString() } },
-      { session },
-    );
-    if (!accepted.modifiedCount) throw new Error('Invite was already accepted');
-    if (!emailVerified) {
-      await this.repositories.users.updateOne(
-        { id: userId }, { $set: { email_verified: 1, updated_at: new Date().toISOString() } }, { session },
+    const claim = await this.withSeatClaimLock(orgId, async () => {
+      const org = await this.findOrgById(orgId);
+      if (!org || org.status !== 'active') return 'This team is not currently active';
+      const freshInvite = await this.repositories.invites.findOne(
+        { id: invite.id, status: 'pending', expires_at: { $gt: new Date().toISOString() } },
       );
-    }
-    return undefined;
+      if (!freshInvite) return 'This invite is invalid or has expired';
+
+      const existingMember = await this.repositories.members.findOne({ org_id: orgId, user_id: userId });
+      if (existingMember?.status !== 'active') {
+        const counts = await this.seatCounts(orgId);
+        if (counts.filled >= counts.purchased) return `All ${counts.purchased} seats are taken`;
+        await this.seatUser(orgId, userId, 'member', invite.invited_by_user_id);
+      }
+      if (!emailVerified) {
+        await this.repositories.users.updateOne(
+          { id: userId }, { $set: { email_verified: 1, updated_at: new Date().toISOString() } },
+        );
+      }
+      const accepted = await this.repositories.invites.updateOne(
+        { id: invite.id, status: 'pending' },
+        { $set: { status: 'accepted', accepted_user_id: userId, accepted_at: new Date().toISOString() } },
+      );
+      if (!accepted.modifiedCount) throw new Error('Invite was already accepted');
+      return undefined;
+    });
+    return claim.acquired ? claim.result : 'A team seat is being assigned. Please try again shortly.';
+  }
+
+  async claimOwnerSeat(orgId: string, userId: string): Promise<string | undefined> {
+    const claim = await this.withSeatClaimLock(orgId, async () => {
+      const org = await this.findOrgById(orgId);
+      if (!org || org.status !== 'active') return 'Your team subscription is not active';
+      const existing = await this.repositories.members.findOne({ org_id: orgId, user_id: userId });
+      if (existing?.status === 'active') return 'You are already using a team seat';
+      const counts = await this.seatCounts(orgId);
+      if (counts.available < 1) return 'No team seats are available. Add a seat or remove a member first.';
+      await this.seatUser(orgId, userId, 'owner', null);
+      return undefined;
+    });
+    return claim.acquired ? claim.result : 'A team seat is being assigned. Please try again shortly.';
   }
 
   async countInvitesSince(orgId: string, sinceIso: string): Promise<number> {

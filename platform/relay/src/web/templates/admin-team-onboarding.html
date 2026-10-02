@@ -1,0 +1,58 @@
+<main class="admin-view">
+  <header class="admin-view-header">
+    <div class="admin-eyebrow">Administration / Organizations</div>
+    <h1>Team onboarding</h1>
+    <p class="sub">Track team activation, seat setup, membership, and pending invitations.</p>
+  </header>
+  <div id="admin-error" class="admin-error" role="status"></div>
+  <section class="admin-panel" aria-labelledby="admin-teams-title">
+    <div class="admin-section-heading">
+      <div><h2 id="admin-teams-title">Organizations</h2><p class="sub" id="admin-team-count"></p></div>
+      <a class="admin-inline-link" href="/admin/users">Invite an individual user</a>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-team-table">
+        <thead><tr><th>Team</th><th>Owner</th><th>Status</th><th>Seats</th><th>Pending invites</th><th>Created</th></tr></thead>
+        <tbody id="admin-teams"><tr><td colspan="6" class="sub">Loading teams&hellip;</td></tr></tbody>
+      </table>
+    </div>
+    <p id="admin-team-limit" class="sub admin-team-limit"></p>
+  </section>
+</main>
+<style>
+  .admin-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .admin-section-heading h2 { margin: 0; color: var(--text-heading); font-size: 18px; }
+  .admin-section-heading p { margin: 5px 0 0; }
+  .admin-inline-link { font-size: 13px; text-decoration: none; white-space: nowrap; }
+  .admin-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }
+  .admin-team-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 13px; }
+  .admin-team-table th, .admin-team-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+  .admin-team-table th { background: var(--bg-elev2); color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
+  .admin-team-name { display: block; color: var(--text-heading); font-weight: 600; }
+  .admin-team-owner { color: var(--text-muted); }
+  .admin-team-status { display: inline-flex; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 11px; text-transform: capitalize; }
+  .admin-team-status[data-status="active"] { border-color: rgba(67,181,129,0.35); background: rgba(67,181,129,0.08); color: #43b581; }
+  .admin-team-limit { margin-top: 12px; }
+  @media (max-width: 700px) { .admin-section-heading { align-items: flex-start; flex-direction: column; } }
+</style>
+<script>
+  const formatDate = (value) => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  const formatNumber = (value) => Number(value || 0).toLocaleString();
+  async function loadTeams() {
+    const response = await fetch('/v1/admin/teams');
+    if (!response.ok) throw new Error('Could not load team onboarding data.');
+    const data = await response.json();
+    document.getElementById('admin-team-count').textContent = formatNumber(data.total) + ' organizations';
+    document.getElementById('admin-team-limit').textContent = data.total > data.teams.length ? 'Showing the 100 most recently created teams.' : '';
+    const tbody = document.getElementById('admin-teams');
+    tbody.innerHTML = data.teams.length ? data.teams.map((team) => {
+      const owner = [team.ownerName, team.ownerEmail].filter(Boolean).join(' · ') || 'Owner unavailable';
+      const seats = team.seatsPurchased + ' purchased / ' + team.activeMembers + ' active';
+      return '<tr><td><span class="admin-team-name">' + esc(team.name) + '</span></td>' +
+        '<td><span class="admin-team-owner">' + esc(owner) + '</span></td>' +
+        '<td><span class="admin-team-status" data-status="' + esc(team.status) + '">' + esc(team.status) + '</span></td>' +
+        '<td>' + esc(seats) + '</td><td>' + formatNumber(team.pendingInvites) + '</td><td>' + formatDate(team.createdAt) + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="sub">No teams have been created yet.</td></tr>';
+  }
+  loadTeams().catch((error) => { document.getElementById('admin-error').textContent = error.message || 'Team data could not be loaded.'; });
+</script>

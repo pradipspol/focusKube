@@ -14,6 +14,7 @@ interface PersistedAiLicenseState {
     plan?: string;
     status?: string;
     quotaRemaining?: number;
+    team?: { name: string; role: 'owner' | 'member' };
   } | null;
 }
 
@@ -22,6 +23,7 @@ export interface EntitlementState {
   plan?: string;
   status?: string;
   quotaRemaining?: number;
+  team?: { name: string; role: 'owner' | 'member' };
   error?: string;
 }
 
@@ -30,6 +32,7 @@ interface RelayLicense {
   plan: string;
   status: string;
   quotaRemaining: number;
+  org?: { name: string; role: 'owner' | 'member' };
 }
 
 let licenseStateLoaded = false;
@@ -85,6 +88,7 @@ function cachedState(extra?: { error?: string }): EntitlementState {
     plan: cachedLicenseState.lastEntitlement?.plan,
     status: cachedLicenseState.lastEntitlement?.status,
     quotaRemaining: cachedLicenseState.lastEntitlement?.quotaRemaining,
+    team: cachedLicenseState.lastEntitlement?.team,
     ...extra,
   };
 }
@@ -92,7 +96,12 @@ function cachedState(extra?: { error?: string }): EntitlementState {
 async function setEntitlement(license: RelayLicense | null): Promise<void> {
   cachedLicenseState.licenseKey = license?.key ?? null;
   cachedLicenseState.lastEntitlement = license
-    ? { plan: license.plan, status: license.status, quotaRemaining: license.quotaRemaining }
+    ? {
+      plan: license.plan,
+      status: license.status,
+      quotaRemaining: license.quotaRemaining,
+      ...(license.org ? { team: license.org } : {}),
+    }
     : null;
   cachedLicenseState.lastValidatedAt = Date.now();
   await persistLicenseState();

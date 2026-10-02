@@ -9,6 +9,7 @@ export function AiAssistantInfoButton() {
   const { data: entitlement } = useAiEntitlement();
   const details = [
     { label: uiText.aiAssistant.planLabel, value: entitlement?.plan ?? '—' },
+    ...(entitlement?.team ? [{ label: uiText.aiAssistant.teamLabel, value: `${entitlement.team.name} (${entitlement.team.role})` }] : []),
     {
       label: uiText.aiAssistant.aiCreditLabel,
       value: typeof entitlement?.quotaRemaining === 'number' ? String(entitlement.quotaRemaining) : '—',

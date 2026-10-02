@@ -44,10 +44,13 @@ export interface BillingProvider {
   isConfigured(): boolean;
   /** Razorpay has no hosted customer portal of any kind, so the UI hides that button. */
   supportsPortal(): boolean;
+  supportsAnnualUpgrade(): boolean;
+  getSubscriptionInterval(args: { subscriptionId: string; subscriptionItemId: string | null }): Promise<'month' | 'year' | null>;
   createCheckout(request: CheckoutRequest): Promise<CheckoutResult>;
   createPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }>;
   cancelAtPeriodEnd(subscriptionId: string): Promise<void>;
   updateSeats(args: { subscriptionId: string; subscriptionItemId: string | null; seats: number }): Promise<void>;
+  updateInterval(args: { subscriptionId: string; subscriptionItemId: string | null; interval: 'year' }): Promise<void>;
 }
 
 export function activeProvider(): BillingProvider {

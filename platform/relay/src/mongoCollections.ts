@@ -35,6 +35,14 @@ export interface RazorpayCheckoutMongoDocument extends Document {
   user_id: string;
 }
 
+export interface AdminInviteMongoDocument extends Document {
+  id: string;
+  email: string;
+  status: 'pending' | 'registered';
+  invited_by: string;
+  invited_at: string;
+}
+
 export interface DocChunkMongoDocument extends Document {
   id: string;
   url: string;
@@ -143,6 +151,14 @@ export class OrganizationInvitesMongoService extends MongoDBService<Organization
   ];
 }
 
+export class AdminInvitesMongoService extends MongoDBService<AdminInviteMongoDocument> {
+  protected readonly collectionName = 'admin_invites';
+  protected readonly indexes: MongoIndexDefinition[] = [
+    { keys: { id: 1 }, options: { unique: true } },
+    { keys: { email: 1 }, options: { unique: true } },
+  ];
+}
+
 export class DocChunksMongoService extends MongoDBService<DocChunkMongoDocument> {
   protected readonly collectionName = 'doc_chunks';
   protected readonly indexes: MongoIndexDefinition[] = [
@@ -164,6 +180,7 @@ export const mongoCollections = {
   organizations: new OrganizationsMongoService(),
   organization_members: new OrganizationMembersMongoService(),
   organization_invites: new OrganizationInvitesMongoService(),
+  admin_invites: new AdminInvitesMongoService(),
   doc_chunks: new DocChunksMongoService(),
 } satisfies Record<string, MongoCollectionService>;
 

@@ -17,6 +17,7 @@ router.get('/home', requirePageSession, (_req, res) => {
     // Razorpay has no hosted billing portal, so the template drops that button entirely
     // rather than offering one that always 503s.
     SUPPORTS_PORTAL: String(activeProvider().supportsPortal()),
+    SUPPORTS_ANNUAL_UPGRADE: String(activeProvider().supportsAnnualUpgrade() && activeProvider().isConfigured()),
     PRO_ANNUAL_DISCOUNT_PERCENT: String(config.pricing.annualDiscountPercent),
   });
   res.type('html').send(page('AI assistant for your clusters', body, '/home'));

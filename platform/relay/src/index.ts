@@ -16,6 +16,7 @@ import { billingRouter, handleStripeWebhook } from './billing/routes.js';
 import { handleRazorpayWebhook } from './billing/razorpayWebhook.js';
 import { orgRouter } from './org/routes.js';
 import { devRouter } from './dev/routes.js';
+import { adminRouter } from './admin/routes.js';
 import { renderDemoCheckoutPage } from './dev/demoCheckoutPage.js';
 import { webRouter } from './web/pages.js';
 import { isStripeDemoMode, simulateCheckoutCompleted, getSimulatedSession } from './billing/stripe-sim.js';
@@ -117,6 +118,7 @@ app.use('/v1/account', accountRouter);
 app.use('/v1/billing', billingRouter);
 app.use('/v1/org', orgRouter);
 app.use('/v1/dev', devRouter);
+app.use('/v1/admin', adminRouter);
 
 // Demo checkout page (only in demo mode)
 app.get('/demo/checkout/:sessionId', (req, res) => {

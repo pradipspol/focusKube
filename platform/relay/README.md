@@ -52,6 +52,12 @@ SMS OTP is disabled by default; set `SMS_OTP_ENABLED=true` and configure Twilio 
 Google sign-in and the selected billing provider need real credentials to exercise end-to-end.
 See `.env.example` for the environment variables.
 
+Relay administration is restricted to the comma-separated addresses in `ADMIN_EMAILS` (for
+example, `ADMIN_EMAILS=owner@example.com,ops@example.com`). The default is empty, which denies
+admin access to everyone. Admins can open `/admin` to review account/license metrics and the
+user directory, search users, and email signup invitations. Invitation delivery requires
+Brevo or SMTP to be configured; an invite creates no account, team membership, or paid plan.
+
 ### Brevo API for email OTP
 
 The relay prefers Brevo's transactional email HTTPS API when `BREVO_API_KEY` is set. Create
@@ -93,6 +99,11 @@ proportionate to this service's current scope, and deliberately not the React ap
 **Account**
 - `GET /v1/account` — profile + license/subscription status (session-protected).
 - `POST /v1/account/license/regenerate` — rotates the user's key without changing its billing linkage.
+
+**Admin** (session-protected and restricted to `ADMIN_EMAILS`)
+- `GET /v1/admin/overview` — aggregate account, subscription, team, invite, and credit metrics.
+- `GET /v1/admin/users?page=1&q=...` — paginated active user directory with account and license status.
+- `POST /v1/admin/invite` — `{email}` sends a signup invitation; requires configured email delivery.
 
 **Billing** (select with `BILLING_PROVIDER`; the example environment selects Razorpay)
 - `POST /v1/billing/checkout` — creates a checkout with the configured provider (session-protected, requires a verified email).

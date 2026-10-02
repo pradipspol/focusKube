@@ -23,6 +23,7 @@ export const config = {
 
   sessionCookieName: process.env.SESSION_COOKIE_NAME ?? 'fk_session',
   sessionTtlDays: parseInt(process.env.SESSION_TTL_DAYS ?? '30', 10),
+  adminEmails: (process.env.ADMIN_EMAILS ?? '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean),
 
   otpPepper: process.env.OTP_PEPPER ?? 'dev-otp-pepper-change-me',
   otpTtlMinutes: parseInt(process.env.OTP_TTL_MINUTES ?? '10', 10),

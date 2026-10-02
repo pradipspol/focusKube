@@ -1,14 +1,75 @@
 import crypto from 'node:crypto';
 import type { Document } from 'mongodb';
 import { config } from '../config.js';
-import { withTransaction } from '../db.js';
 import { mongoCollections } from '../mongoCollections.js';
 import { logDebug, logInfo } from '../logger.js';
 import { adjustOrgPoolForSeatChange, createLicenseForUser, orgPoolSize, resetQuotaForSubscription } from '../licenseStore.js';
 import { organizationService } from '../org/organizationService.js';
+import type { OrganizationRow } from '../org/store.js';
 
 export type BillingProviderName = 'stripe' | 'razorpay';
 const PAID_PLAN = 'pro';
+
+type OrgSubscriptionActivationArgs = {
+  provider: BillingProviderName;
+  orgId: string;
+  seats: number;
+  customerId: string | null;
+  subscriptionId: string | null;
+  subscriptionItemId: string | null;
+  currentPeriodEnd: string | null;
+  billingInterval: 'month' | 'year';
+};
+
+type OrgActivationRepositories = {
+  organizations: Pick<typeof mongoCollections.organizations, 'updateOne'>;
+  licenses: Pick<typeof mongoCollections.licenses, 'findOne' | 'updateOne'>;
+  organization_members: Pick<typeof mongoCollections.organization_members, 'findOne' | 'updateOne'>;
+};
+
+export async function persistOrgSubscriptionActivation(
+  repositories: OrgActivationRepositories,
+  org: OrganizationRow,
+  args: OrgSubscriptionActivationArgs,
+): Promise<boolean> {
+  const existingPool = await repositories.licenses.findOne({ org_id: args.orgId });
+  const sameSubscription = !!args.subscriptionId && existingPool?.stripe_subscription_id === args.subscriptionId;
+  const existingMember = await repositories.organization_members.findOne({ org_id: args.orgId, user_id: org.owner_user_id });
+  const now = new Date().toISOString();
+
+  if (sameSubscription) {
+    await repositories.licenses.updateOne({ org_id: org.id }, { $set: { status: 'active', updated_at: now } });
+  } else {
+    const key = `fk_org_${crypto.randomBytes(24).toString('hex')}`;
+    const granted = orgPoolSize(args.seats);
+    await repositories.licenses.updateOne({ org_id: org.id }, {
+      $set: {
+        key, plan: 'team', status: 'active', quota_granted: granted, quota_remaining: granted,
+        stripe_customer_id: args.customerId, stripe_subscription_id: args.subscriptionId,
+        stripe_subscription_item_id: args.subscriptionItemId, current_period_end: args.currentPeriodEnd,
+        billing_provider: args.provider, billing_interval: args.billingInterval, updated_at: now,
+      },
+      $setOnInsert: { id: crypto.randomUUID(), org_id: org.id, user_id: null, created_at: now },
+    }, { upsert: true });
+  }
+
+  const memberKey = sameSubscription && existingMember?.license_key
+    ? existingMember.license_key
+    : `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
+  await repositories.organization_members.updateOne({ org_id: org.id, user_id: org.owner_user_id }, {
+    $set: {
+      role: 'owner', status: 'active', license_key: memberKey, invited_by_user_id: null,
+      joined_at: now, removed_at: null, updated_at: now,
+    },
+    $setOnInsert: { id: crypto.randomUUID(), org_id: org.id, user_id: org.owner_user_id, calls_used: 0, created_at: now },
+  }, { upsert: true });
+
+  // Mark the organization active last so retries can safely finish partial writes.
+  await repositories.organizations.updateOne({ id: org.id }, { $set: {
+    status: 'active', seats_purchased: args.seats, updated_at: now,
+  } });
+  return sameSubscription;
+}
 
 export async function activateIndividualSubscription(args: {
   provider: BillingProviderName;
@@ -33,15 +94,7 @@ export async function activateIndividualSubscription(args: {
   logInfo('Individual billing subscription activated', { provider: args.provider, userId: args.userId });
 }
 
-export async function activateOrgSubscription(args: {
-  provider: BillingProviderName;
-  orgId: string;
-  seats: number;
-  customerId: string | null;
-  subscriptionId: string | null;
-  subscriptionItemId: string | null;
-  currentPeriodEnd: string | null;
-}): Promise<void> {
+export async function activateOrgSubscription(args: OrgSubscriptionActivationArgs): Promise<void> {
   logDebug('Activating organization billing subscription', { provider: args.provider, orgId: args.orgId, seats: args.seats });
   const org = await organizationService.findOrgById(args.orgId);
   if (!org) {
@@ -49,40 +102,13 @@ export async function activateOrgSubscription(args: {
     return;
   }
   const existingPool = await mongoCollections.licenses.findOne({ org_id: args.orgId });
-  const now = new Date().toISOString();
   if (args.subscriptionId && existingPool?.stripe_subscription_id === args.subscriptionId) {
-    await withTransaction(async (session) => {
-      await mongoCollections.licenses.updateOne({ org_id: args.orgId }, { $set: { status: 'active', updated_at: now } }, { session });
-      await mongoCollections.organizations.updateOne({ id: org.id }, { $set: { status: 'active', updated_at: now } }, { session });
-    });
+    await persistOrgSubscriptionActivation(mongoCollections, org, args);
     logInfo('Organization billing subscription reactivated', { provider: args.provider, orgId: args.orgId });
     return;
   }
 
-  const key = `fk_org_${crypto.randomBytes(24).toString('hex')}`;
-  const granted = orgPoolSize(args.seats);
-  const memberKey = `fk_seat_${crypto.randomBytes(24).toString('hex')}`;
-  await withTransaction(async (session) => {
-    await mongoCollections.organizations.updateOne({ id: org.id }, { $set: {
-      status: 'active', seats_purchased: args.seats, updated_at: now,
-    } }, { session });
-    await mongoCollections.licenses.updateOne({ org_id: org.id }, {
-      $set: {
-        key, plan: 'team', status: 'active', quota_granted: granted, quota_remaining: granted,
-        stripe_customer_id: args.customerId, stripe_subscription_id: args.subscriptionId,
-        stripe_subscription_item_id: args.subscriptionItemId, current_period_end: args.currentPeriodEnd,
-        billing_provider: args.provider, updated_at: now,
-      },
-      $setOnInsert: { id: crypto.randomUUID(), org_id: org.id, user_id: null, created_at: now },
-    }, { upsert: true, session });
-    await mongoCollections.organization_members.updateOne({ org_id: org.id, user_id: org.owner_user_id }, {
-      $set: {
-        role: 'owner', status: 'active', license_key: memberKey, invited_by_user_id: null,
-        joined_at: now, removed_at: null, updated_at: now,
-      },
-      $setOnInsert: { id: crypto.randomUUID(), org_id: org.id, user_id: org.owner_user_id, calls_used: 0, created_at: now },
-    }, { upsert: true, session });
-  });
+  await persistOrgSubscriptionActivation(mongoCollections, org, args);
   logInfo('Organization billing subscription activated', { provider: args.provider, orgId: args.orgId, seats: args.seats });
 }
 
@@ -111,6 +137,12 @@ export async function syncSeatsForSubscription(subscriptionId: string, seats: nu
   await adjustOrgPoolForSeatChange(org.id, org.seats_purchased, newSeats);
   await organizationService.setOrgSeatsPurchased(org.id, newSeats);
   logInfo('Organization seats synchronized from billing provider', { orgId: org.id, seats: newSeats });
+}
+
+export async function syncOrgBillingInterval(subscriptionId: string, interval: 'month' | 'year'): Promise<void> {
+  await mongoCollections.licenses.updateOne({ stripe_subscription_id: subscriptionId, org_id: { $type: 'string' } }, {
+    $set: { billing_interval: interval, updated_at: new Date().toISOString() },
+  });
 }
 
 export async function endSubscription(subscriptionId: string): Promise<void> {

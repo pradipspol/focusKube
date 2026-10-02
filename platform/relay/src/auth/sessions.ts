@@ -149,6 +149,26 @@ export async function requireSession(req: Request, res: Response, next: NextFunc
   next();
 }
 
+export function isAdminEmail(email: string | null | undefined, adminEmails: readonly string[] = config.adminEmails): boolean {
+  return !!email && adminEmails.includes(email.trim().toLowerCase());
+}
+
+export function isAdminUser(
+  user: Pick<SessionUser, 'email' | 'emailVerified'> | null | undefined,
+  adminEmails: readonly string[] = config.adminEmails,
+): boolean {
+  return !!user?.emailVerified && isAdminEmail(user.email, adminEmails);
+}
+
+/** Use after requireSession for JSON endpoints; an empty allowlist denies all users. */
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!isAdminUser(req.user)) {
+    res.status(403).json({ error: 'Admin access required' });
+    return;
+  }
+  next();
+}
+
 /** Same check as requireSession, for the signed-in-only HTML pages (home/download/profile/
  * account/support) rather than the JSON API Ã¢â‚¬â€ a visitor with no valid session is bounced to
  * the marketing page instead of getting a bare 401, since these are full page loads, not
@@ -162,5 +182,14 @@ export async function requirePageSession(req: Request, res: Response, next: Next
   }
   req.user = user;
   updateLogContext({ userId: user.id });
+  next();
+}
+
+/** Use after requirePageSession for admin HTML pages. */
+export function requireAdminPage(req: Request, res: Response, next: NextFunction): void {
+  if (!isAdminEmail(req.user?.email)) {
+    res.redirect('/home');
+    return;
+  }
   next();
 }

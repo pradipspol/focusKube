@@ -31,6 +31,7 @@ export interface LicenseRow extends Document {
   stripe_subscription_id?: string | null;
   stripe_customer_id?: string | null;
   billing_provider?: string | null;
+  billing_interval?: 'month' | 'year' | null;
 }
 
 export const FREE_TRIAL_PLAN = 'trial';

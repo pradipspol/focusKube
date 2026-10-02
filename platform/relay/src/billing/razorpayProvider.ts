@@ -36,6 +36,14 @@ export const razorpayProvider: BillingProvider = {
     return false;
   },
 
+  supportsAnnualUpgrade() {
+    return false;
+  },
+
+  async getSubscriptionInterval() {
+    return null;
+  },
+
   async createCheckout(request: CheckoutRequest): Promise<CheckoutResult> {
     logDebug('Creating Razorpay checkout session', {
       purpose: request.purpose,
@@ -96,5 +104,9 @@ export const razorpayProvider: BillingProvider = {
     // No subscription-item id here: Razorpay carries quantity on the subscription itself.
     await updateSubscriptionQuantity(subscriptionId, seats);
     logInfo('Razorpay subscription seats updated', { seats });
+  },
+
+  async updateInterval() {
+    throw new Error('Razorpay does not support changing an active subscription billing interval');
   },
 };

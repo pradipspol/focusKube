@@ -1,0 +1,56 @@
+<main class="admin-view">
+  <header class="admin-view-header">
+    <div class="admin-eyebrow">Administration / Service usage</div>
+    <h1>Telemetry</h1>
+    <p class="sub">Quota accounting from relay licenses and team seats. FocusKube does not collect client or device telemetry.</p>
+  </header>
+  <div id="admin-error" class="admin-error" role="status"></div>
+  <section class="admin-panel" aria-labelledby="usage-summary-title">
+    <h2 id="usage-summary-title">Current usage snapshot</h2>
+    <p class="sub">Credits consumed are calculated from each license’s current granted and remaining quota. Team calls are accumulated per active seat.</p>
+    <div id="admin-usage-metrics" class="admin-usage-metrics" aria-live="polite"><p class="sub">Loading usage&hellip;</p></div>
+  </section>
+  <section class="admin-panel" aria-labelledby="plan-usage-title">
+    <h2 id="plan-usage-title">Usage by plan</h2>
+    <div class="admin-table-wrap">
+      <table class="admin-usage-table">
+        <thead><tr><th>Plan</th><th>Status</th><th>Licenses</th><th>Credits consumed</th><th>Credits remaining</th></tr></thead>
+        <tbody id="admin-plan-usage"><tr><td colspan="5" class="sub">Loading usage&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<style>
+  .admin-usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+  .admin-usage-metric { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }
+  .admin-usage-metric span { display: block; color: var(--text-muted); font-size: 12px; }
+  .admin-usage-metric strong { display: block; margin-top: 8px; color: var(--text-heading); font-size: 24px; font-variant-numeric: tabular-nums; }
+  .admin-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }
+  .admin-usage-table { width: 100%; min-width: 580px; border-collapse: collapse; font-size: 13px; }
+  .admin-usage-table th, .admin-usage-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; }
+  .admin-usage-table th { background: var(--bg-elev2); color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
+  .admin-usage-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+  @media (max-width: 700px) { .admin-usage-metrics { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<script>
+  const formatNumber = (value) => Number(value || 0).toLocaleString();
+  async function loadTelemetry() {
+    const response = await fetch('/v1/admin/telemetry');
+    if (!response.ok) throw new Error('Could not load service usage.');
+    const data = await response.json();
+    const totals = data.plans.reduce((sum, row) => ({
+      creditsConsumed: sum.creditsConsumed + row.creditsConsumed,
+      creditsRemaining: sum.creditsRemaining + row.creditsRemaining,
+    }), { creditsConsumed: 0, creditsRemaining: 0 });
+    document.getElementById('admin-usage-metrics').innerHTML = [
+      ['Credits consumed', totals.creditsConsumed],
+      ['Credits remaining', totals.creditsRemaining],
+      ['Calls used by active team seats', data.teamCallsUsed],
+    ].map(([label, value]) => '<div class="admin-usage-metric"><span>' + label + '</span><strong>' + formatNumber(value) + '</strong></div>').join('');
+    const tbody = document.getElementById('admin-plan-usage');
+    tbody.innerHTML = data.plans.length ? data.plans.map((row) =>
+      '<tr><td>' + esc(row.plan) + '</td><td>' + esc(row.status) + '</td><td>' + formatNumber(row.licenses) + '</td><td>' + formatNumber(row.creditsConsumed) + '</td><td>' + formatNumber(row.creditsRemaining) + '</td></tr>'
+    ).join('') : '<tr><td colspan="5" class="sub">No license usage is available.</td></tr>';
+  }
+  loadTelemetry().catch((error) => { document.getElementById('admin-error').textContent = error.message || 'Usage could not be loaded.'; });
+</script>

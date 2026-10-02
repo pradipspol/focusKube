@@ -9,6 +9,7 @@ import { supportPageRouter } from './support.js';
 import { teamPageRouter } from './org.js';
 import { invitePageRouter } from './invite.js';
 import { payPageRouter } from './pay.js';
+import { adminPageRouter } from './admin.js';
 
 // Aggregator only — the actual page handlers live in the sibling files above, split
 // out of what used to be one large file (home/marketing, download, auth forms,
@@ -26,3 +27,4 @@ router.use(supportPageRouter);
 router.use(teamPageRouter);
 router.use(invitePageRouter);
 router.use(payPageRouter);
+router.use(adminPageRouter);

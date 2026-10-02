@@ -11,7 +11,7 @@ import { parseInterval } from './pricing.js';
 import { activeProvider, BillingConfigError } from './provider.js';
 import { RazorpayError } from './razorpay.js';
 import { stripeClient } from './stripe.js';
-import { isStripeDemoMode } from './stripe-sim.js';
+import { getSimulatedSubscription, isStripeDemoMode } from './stripe-sim.js';
 import { logError, logWarning } from '../logger.js';
 import { logDebug, logInfo } from '../logger.js';
 import {
@@ -23,6 +23,7 @@ import {
   renewSubscriptionQuota,
   setSubscriptionStatus,
   syncSeatsForSubscription,
+  syncOrgBillingInterval,
 } from './effects.js';
 
 const router = Router();
@@ -244,7 +245,10 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
         if (!subscriptionId) break;
         // The webhook payload's session.subscription is a bare id, so the item id, quantity
         // and period end have to be retrieved before the org can be activated.
-        const subscription = await stripeClient().subscriptions.retrieve(subscriptionId);
+        const simulatedSubscription = isStripeDemoMode() ? getSimulatedSubscription(subscriptionId) : undefined;
+        const subscription = simulatedSubscription
+          ? ({ items: simulatedSubscription.items } as unknown as Stripe.Subscription)
+          : await stripeClient().subscriptions.retrieve(subscriptionId);
         await activateOrgSubscription({
           provider: 'stripe',
           orgId: session.metadata.fk_org_id,
@@ -253,6 +257,7 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
           subscriptionId,
           subscriptionItemId: subscriptionItemId(subscription),
           currentPeriodEnd: subscriptionPeriodEnd(subscription),
+          billingInterval: subscription.items.data[0]?.price.recurring?.interval === 'year' ? 'year' : 'month',
         });
         break;
       }
@@ -274,6 +279,8 @@ async function dispatchStripeEvent(event: Stripe.Event): Promise<void> {
       // No-op when this subscription isn't a Team's Ã¢â‚¬â€ reconciles seats_purchased (and the
       // pool's grant) if it drifted, e.g. a change made directly in the Stripe dashboard.
       await syncSeatsForSubscription(subscription.id, subscription.items.data[0]?.quantity);
+      const interval: string | undefined = subscription.items.data[0]?.price.recurring?.interval;
+      if (interval === 'month' || interval === 'year') await syncOrgBillingInterval(subscription.id, interval);
       break;
     }
     case 'customer.subscription.deleted': {

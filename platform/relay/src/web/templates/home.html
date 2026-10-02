@@ -38,6 +38,8 @@
 
     const acctRes = await fetch('/v1/account');
     const acct = await acctRes.json();
+    const orgRes = await fetch('/v1/org');
+    const orgData = orgRes.ok ? await orgRes.json() : null;
     const fmtDate = (iso) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
     const upgradeButtonsHtml =
@@ -45,7 +47,21 @@
       '<form id="checkout-year"><button type="submit" class="secondary">Subscribe annually ({{PRO_ANNUAL_DISCOUNT_PERCENT}}% off)</button></form>';
 
     let planHtml;
-    if (acct.license && acct.license.scope === 'org') {
+    if (orgData?.role === 'owner' && orgData.teamPlan?.status === 'active') {
+      const available = Number(orgData.seats?.available || 0);
+      const interval = orgData.teamPlan.billingInterval;
+      const annualUpgrade = interval === 'month' && '{{SUPPORTS_ANNUAL_UPGRADE}}' === 'true'
+        ? '<form id="upgrade-team-annual"><button type="submit" class="secondary">Upgrade team to annual ({{PRO_ANNUAL_DISCOUNT_PERCENT}}% off)</button></form>'
+        : '';
+      const seatAction = orgData.seatActive
+        ? '<p>You are using one of your team seats.</p>'
+        : '<p>You are not using a team seat.</p><form id="owner-seat-join"><button type="submit" class="secondary" ' + (available < 1 ? 'disabled' : '') + '>' + (available > 0 ? 'Use an available team seat' : 'No team seats available') + '</button></form>';
+      planHtml =
+        '<p><strong>Team plan:</strong> ' + esc(orgData.org.name) + ' (' + esc(orgData.teamPlan.plan) + ', ' + esc(orgData.teamPlan.status) + ')</p>' +
+        '<p>' + orgData.teamPlan.quotaRemaining + ' of ' + orgData.teamPlan.quotaGranted + ' pooled credits left</p>' +
+        seatAction +
+        '<div class="button-row">' + annualUpgrade + '<a class="button-link secondary" href="/team">Manage your team</a></div>';
+    } else if (acct.license && acct.license.scope === 'org') {
       // Covered by a team's pooled plan — full management lives on /team, not here.
       const org = acct.license.org;
       planHtml =
@@ -112,6 +128,8 @@
       else location.reload();
     };
     document.getElementById('trial')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/account/trial/start'); });
+    document.getElementById('owner-seat-join')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/org/seat/join'); });
+    document.getElementById('upgrade-team-annual')?.addEventListener('submit', (e) => { e.preventDefault(); if (confirm('Upgrade this team subscription to annual billing? Stripe will invoice the prorated change immediately.')) goTo('/v1/org/billing/annual'); });
     document.getElementById('checkout-month')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/checkout', { interval: 'month' }); });
     document.getElementById('checkout-year')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/checkout', { interval: 'year' }); });
     document.getElementById('portal')?.addEventListener('submit', (e) => { e.preventDefault(); goTo('/v1/billing/portal'); });

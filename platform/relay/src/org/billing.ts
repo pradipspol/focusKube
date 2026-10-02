@@ -66,8 +66,15 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
   if (!org) throw new OrgActionError(404, 'Team not found');
 
   const counts = await organizationService.seatCounts(orgId);
-  if (seats < counts.filled) {
-    throw new OrgActionError(409, `Remove ${counts.filled - seats} member(s) before dropping to ${seats} seats`);
+  const committedSeats = counts.filled + counts.pending;
+  if (seats < committedSeats) {
+    const excessMembers = Math.max(counts.filled - seats, 0);
+    const excessInvites = Math.max(counts.pending - Math.max(seats - counts.filled, 0), 0);
+    const blockers = [
+      ...(excessMembers ? [`remove ${excessMembers} active member(s)`] : []),
+      ...(excessInvites ? [`cancel ${excessInvites} pending invitation(s)`] : []),
+    ];
+    throw new OrgActionError(409, `Cannot reduce to ${seats} seats; ${blockers.join(' and ')} first`);
   }
   if (seats < config.org.minSeats || seats > config.org.maxSeats) {
     throw new OrgActionError(400, `Seats must be between ${config.org.minSeats} and ${config.org.maxSeats}`);
@@ -93,6 +100,42 @@ export async function updateOrgSeats(orgId: string, seats: number): Promise<void
 
   await adjustOrgPoolForSeatChange(orgId, org.seats_purchased, seats);
   await organizationService.setOrgSeatsPurchased(orgId, seats);
+}
+
+export async function upgradeOrgToAnnual(orgId: string): Promise<void> {
+  const provider = activeProvider();
+  if (!provider.supportsAnnualUpgrade()) {
+    throw new OrgActionError(409, 'Annual plan changes are not supported by this payment provider');
+  }
+  if (!provider.isConfigured()) throw new OrgActionError(503, 'Billing is not configured on this server');
+
+  const org = await organizationService.findOrgById(orgId);
+  if (!org) throw new OrgActionError(404, 'Team not found');
+  const licenseRow = await mongoCollections.licenses.findOne({ org_id: orgId });
+  if (!licenseRow?.stripe_subscription_id) throw new OrgActionError(400, 'This team has no active subscription to update');
+  if (org.status !== 'active' || licenseRow.status !== 'active') {
+    throw new OrgActionError(409, 'Only an active team subscription can be upgraded');
+  }
+  if (provider.name === 'stripe' && !licenseRow.stripe_subscription_item_id) {
+    throw new OrgActionError(400, 'This team has no active subscription item to update');
+  }
+  assertProviderOwnsSubscription(licenseRow.billing_provider ?? null, provider.name);
+
+  const currentInterval = licenseRow.billing_interval ?? await provider.getSubscriptionInterval({
+    subscriptionId: licenseRow.stripe_subscription_id,
+    subscriptionItemId: licenseRow.stripe_subscription_item_id ?? null,
+  });
+  if (currentInterval === 'year') throw new OrgActionError(409, 'This team is already billed annually');
+  if (currentInterval !== 'month') throw new OrgActionError(409, 'The current billing interval could not be verified');
+
+  await provider.updateInterval({
+    subscriptionId: licenseRow.stripe_subscription_id,
+    subscriptionItemId: licenseRow.stripe_subscription_item_id ?? null,
+    interval: 'year',
+  });
+  await mongoCollections.licenses.updateOne({ org_id: orgId }, {
+    $set: { billing_interval: 'year', updated_at: new Date().toISOString() },
+  });
 }
 
 /** Owner-triggered subscription cancellation. Marks the subscription to cancel at the

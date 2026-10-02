@@ -1,0 +1,174 @@
+<main class="admin-view">
+  <header class="admin-view-header">
+    <div class="admin-eyebrow">Administration / Directory</div>
+    <h1>Users</h1>
+    <p class="sub">Review account access and send individual signup invitations.</p>
+  </header>
+  <div id="admin-error" class="admin-error" role="status"></div>
+  <section class="admin-panel" aria-labelledby="admin-invite-title">
+    <h2 id="admin-invite-title">Invite a user</h2>
+    <p class="sub">This sends a signup invitation and does not assign a plan or team.</p>
+    <form id="admin-invite-form" class="admin-invite-form">
+      <label>Email address <input type="email" name="email" required autocomplete="email" placeholder="person@example.com"></label>
+      <button type="submit">Send invitation</button>
+      <span id="admin-invite-status" class="admin-invite-status" role="status"></span>
+    </form>
+  </section>
+  <section class="admin-panel" aria-labelledby="admin-users-title">
+    <div class="admin-section-heading admin-users-heading">
+      <div><h2 id="admin-users-title">Directory</h2><p class="sub" id="admin-user-count"></p></div>
+      <form id="admin-user-search" class="admin-search-form" role="search">
+        <label class="visually-hidden" for="admin-query">Search users</label>
+        <input id="admin-query" type="search" name="q" placeholder="Search name, email, or phone">
+        <button type="submit" class="secondary">Search</button>
+      </form>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-users-table">
+        <thead><tr><th>User</th><th>Joined / invited</th><th>Status</th><th>Account security</th><th>Plan</th><th>Credits left</th></tr></thead>
+        <tbody id="admin-users"><tr><td colspan="6" class="sub">Loading users&hellip;</td></tr></tbody>
+      </table>
+    </div>
+    <div class="admin-pagination">
+      <span id="admin-page-label" class="sub"></span>
+      <div class="button-row">
+        <button id="admin-prev" type="button" class="secondary">Previous</button>
+        <button id="admin-next" type="button" class="secondary">Next</button>
+      </div>
+    </div>
+  </section>
+</main>
+<style>
+  .admin-invite-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; max-width: 720px; margin: 16px 0 0; }
+  .admin-invite-form label { min-width: 0; }
+  .admin-invite-form button { grid-column: 2; grid-row: 1; white-space: nowrap; }
+  .admin-invite-status { grid-column: 1 / -1; min-height: 18px; color: var(--text-muted); font-size: 12px; }
+  .admin-invite-status[data-state="error"] { color: var(--danger); }
+  .admin-invite-status[data-state="success"] { color: #43b581; }
+  .admin-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .admin-section-heading h2 { margin: 0; color: var(--text-heading); font-size: 18px; }
+  .admin-section-heading p { margin: 5px 0 0; }
+  .admin-search-form { display: flex; align-items: center; gap: 8px; width: min(100%, 440px); margin: 0; }
+  .admin-search-form input { flex: 1; min-width: 0; }
+  .admin-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }
+  .admin-users-table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 13px; }
+  .admin-users-table th, .admin-users-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+  .admin-users-table th { background: var(--bg-elev2); color: var(--text-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; }
+  .admin-users-table tbody tr:hover { background: var(--surface-hover); }
+  .admin-users-table tbody tr:last-child td { border-bottom: 0; }
+  .admin-user-cell { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+  .admin-avatar { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border-auth); border-radius: 50%; background: var(--notice-bg); color: var(--accent-bright); font-size: 11px; font-weight: 700; }
+  .admin-user-name { display: block; color: var(--text-heading); font-weight: 600; }
+  .admin-user-secondary { display: block; max-width: 220px; margin-top: 3px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .admin-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+  .admin-status, .admin-plan-tag { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+  .admin-status-good { border-color: rgba(67,181,129,0.35); background: rgba(67,181,129,0.08); color: #43b581; }
+  .admin-plan-tag { border-color: var(--notice-border); background: var(--notice-bg); color: var(--notice-text); text-transform: capitalize; }
+  .admin-credits { color: var(--text-heading); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .admin-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .admin-pagination .button-row { margin-top: 0; }
+  .admin-pagination button { min-width: 88px; }
+  html[data-admin-density="compact"] .admin-users-table th, html[data-admin-density="compact"] .admin-users-table td { padding-top: 7px; padding-bottom: 7px; }
+  @media (max-width: 700px) {
+    .admin-invite-form { grid-template-columns: minmax(0, 1fr); }
+    .admin-invite-form button { grid-column: 1; grid-row: auto; width: 100%; }
+    .admin-search-form { width: 100%; }
+    .admin-users-heading { align-items: stretch; flex-direction: column; }
+    .admin-pagination { align-items: flex-start; flex-direction: column; }
+    .admin-pagination .button-row { width: 100%; }
+    .admin-pagination button { flex: 1; }
+  }
+</style>
+<script>
+  const prefs = JSON.parse(localStorage.getItem('focuskube-admin-preferences') || '{}');
+  const pageSize = [10, 25, 50, 100].includes(Number(prefs.userPageSize)) ? Number(prefs.userPageSize) : 25;
+  const state = { page: 1, total: 0, query: '' };
+  const errorEl = document.getElementById('admin-error');
+  const formatDate = (value) => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  const formatNumber = (value) => Number(value || 0).toLocaleString();
+
+  async function loadUsers() {
+    const params = new URLSearchParams({ page: String(state.page), pageSize: String(pageSize), q: state.query });
+    const response = await fetch('/v1/admin/users?' + params);
+    if (!response.ok) throw new Error('Could not load users.');
+    const result = await response.json();
+    state.total = result.total;
+    const tbody = document.getElementById('admin-users');
+    const accountRows = result.users.map((user) => {
+      const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || 'No name provided';
+      const contact = user.email || user.phone || 'No contact address';
+      const initials = Array.from(displayName === 'No name provided' ? contact : displayName).slice(0, 2).join('').toUpperCase();
+      const verified = user.emailVerified ? '<span class="admin-status admin-status-good">Verified</span>' : '<span class="admin-status">Unverified</span>';
+      const twoFactor = user.twoFactorEnabled ? '<span class="admin-status admin-status-good">2FA enabled</span>' : '<span class="admin-status">2FA off</span>';
+      const license = user.license;
+      return '<tr>' +
+        '<td><div class="admin-user-cell"><span class="admin-avatar" aria-hidden="true">' + esc(initials) + '</span><span><span class="admin-user-name">' + esc(displayName) + '</span><span class="admin-user-secondary">' + esc(contact) + '</span></span></div></td>' +
+        '<td>' + formatDate(user.createdAt) + '</td>' +
+        '<td><span class="admin-status">' + esc(user.status) + '</span></td>' +
+        '<td><div class="admin-badges">' + verified + twoFactor + (user.hasUsedTrial ? '<span class="admin-status">Trial used</span>' : '') + '</div></td>' +
+        '<td>' + (license ? '<span class="admin-plan-tag">' + esc(license.plan) + ' · ' + esc(license.status) + '</span>' : '<span class="admin-status">Not purchased</span>') + '</td>' +
+        '<td><span class="admin-credits">' + (license ? formatNumber(license.quotaRemaining) + ' / ' + formatNumber(license.quotaGranted) : '—') + '</span></td>' +
+        '</tr>';
+    });
+    const inviteRows = result.invitedUsers.map((invite) =>
+      '<tr><td><div class="admin-user-cell"><span class="admin-avatar" aria-hidden="true">' + esc(invite.email.slice(0, 2).toUpperCase()) + '</span><span><span class="admin-user-name">Invitation pending</span><span class="admin-user-secondary">' + esc(invite.email) + '</span></span></div></td>' +
+      '<td>' + formatDate(invite.invitedAt) + '</td><td><span class="admin-status">' + esc(invite.status) + '</span></td>' +
+      '<td>—</td><td><span class="admin-status">Not purchased</span></td><td>—</td></tr>'
+    );
+    if (!accountRows.length && !inviteRows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="sub">No users or invitations found.</td></tr>';
+    } else {
+      tbody.innerHTML = [...accountRows, ...inviteRows].join('');
+    }
+    const first = state.total ? (state.page - 1) * pageSize + 1 : 0;
+    const last = Math.min(state.page * pageSize, state.total);
+    document.getElementById('admin-user-count').textContent = formatNumber(state.total) + ' active accounts · ' + formatNumber(result.totalInvites) + ' pending invitations';
+    document.getElementById('admin-page-label').textContent = first + '–' + last + ' of ' + formatNumber(state.total) + ' accounts';
+    document.getElementById('admin-prev').disabled = state.page <= 1;
+    document.getElementById('admin-next').disabled = last >= state.total;
+  }
+
+  async function refresh() {
+    errorEl.textContent = '';
+    try { await loadUsers(); }
+    catch (error) { errorEl.textContent = error.message || 'User data could not be loaded.'; }
+  }
+
+  document.getElementById('admin-user-search').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    state.query = document.getElementById('admin-query').value.trim();
+    state.page = 1;
+    await refresh();
+  });
+  document.getElementById('admin-prev').addEventListener('click', async () => { state.page -= 1; await refresh(); });
+  document.getElementById('admin-next').addEventListener('click', async () => { state.page += 1; await refresh(); });
+  document.getElementById('admin-invite-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = document.getElementById('admin-invite-status');
+    const submit = form.querySelector('button[type="submit"]');
+    status.textContent = '';
+    status.dataset.state = '';
+    submit.disabled = true;
+    try {
+      const response = await fetch('/v1/admin/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: new FormData(form).get('email') }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Invitation could not be sent.');
+      form.reset();
+      await refresh();
+      status.textContent = 'Invitation sent.';
+      status.dataset.state = 'success';
+    } catch (error) {
+      status.textContent = error.message || 'Invitation could not be sent.';
+      status.dataset.state = 'error';
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  refresh();
+</script>

@@ -13,6 +13,12 @@ function escapeHtml(value: string): string {
 export function renderDemoCheckoutPage(session: SimulatedCheckoutSession, nonce: string): string {
   const safeSessionId = escapeHtml(session.id);
   const safeSuccessUrl = escapeHtml(session.success_url);
+  const total = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: session.currency.toUpperCase(),
+  }).format((session.unit_amount * session.quantity) / 100);
+  const isTeamPurchase = session.metadata?.fk_purchase === 'org';
+  const productName = isTeamPurchase ? 'FocusKube Team' : session.product_name;
 
   return `
     <!DOCTYPE html>
@@ -34,9 +40,10 @@ export function renderDemoCheckoutPage(session: SimulatedCheckoutSession, nonce:
       <div class="card">
         <h1>Confirm Purchase</h1>
         <p class="details"><strong>Email:</strong> ${escapeHtml(session.customer_email)}</p>
-        <p class="details"><strong>Plan:</strong> FocusKube Pro</p>
-        <p class="details"><strong>Billing:</strong> Monthly</p>
-        <div class="price">$19.99/month</div>
+        <p class="details"><strong>Plan:</strong> ${escapeHtml(productName)}</p>
+        ${isTeamPurchase ? `<p class="details"><strong>Seats:</strong> ${session.quantity}</p>` : ''}
+        <p class="details"><strong>Billing:</strong> ${session.billing_interval === 'year' ? 'Annually' : 'Monthly'}</p>
+        <div class="price">${total}/${session.billing_interval === 'year' ? 'year' : 'month'}</div>
         <button id="complete-purchase" type="button" data-session-id="${safeSessionId}" data-success-url="${safeSuccessUrl}">Complete Purchase</button>
         <div class="footer">This is a demo checkout; no real charge will be made.</div>
       </div>

@@ -18,10 +18,9 @@ export function renderTemplate(name: string, substitutions?: Record<string, stri
   for (const [key, value] of Object.entries(substitutions ?? {})) {
     html = html.replaceAll(`{{${key}}}`, value);
   }
-  // Stamp the CSP nonce onto this template's own inline <script> tag(s) so it runs under a
-  // script-src that otherwise has no 'unsafe-inline' — leaves `<script src="...">` (e.g.
-  // pay-razorpay.html's Razorpay SDK tag) alone, since those are allowed by host instead.
-  html = html.replace(/<script>/g, `<script nonce="${currentNonce()}">`);
+  // Stamp inline behavior and layout with the request's CSP nonce, while leaving external
+  // scripts such as Razorpay's SDK tag untouched.
+  html = html.replace(/<(script|style)>/g, `<$1 nonce="${currentNonce()}">`);
   return html;
 }
 
@@ -232,14 +231,21 @@ const navScript = `
   (async () => {
     const guest = document.querySelectorAll('.nav-guest');
     const user = document.querySelectorAll('.nav-user');
+    const admin = document.querySelectorAll('.nav-admin');
     try {
       const res = await fetch('/v1/auth/me');
       const signedIn = res.ok;
       guest.forEach((el) => { el.style.display = signedIn ? 'none' : ''; });
       user.forEach((el) => { el.style.display = signedIn ? '' : 'none'; });
+      if (signedIn) {
+        const access = await fetch('/v1/admin/access');
+        const isAdmin = access.ok && (await access.json()).isAdmin;
+        admin.forEach((el) => { el.style.display = isAdmin ? '' : 'none'; });
+      }
     } catch {
       guest.forEach((el) => { el.style.display = ''; });
       user.forEach((el) => { el.style.display = 'none'; });
+      admin.forEach((el) => { el.style.display = 'none'; });
     }
     document.getElementById('nav-logout')?.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -249,12 +255,28 @@ const navScript = `
   })();
 `;
 
+const adminPreferencesScript = `
+  try {
+    const preferences = JSON.parse(localStorage.getItem('focuskube-admin-preferences') || '{}');
+    if (preferences.tableDensity === 'compact' || preferences.tableDensity === 'comfortable') {
+      document.documentElement.dataset.adminDensity = preferences.tableDensity;
+    }
+    const startPage = ['/admin', '/admin/users', '/admin/telemetry', '/admin/preferences', '/admin/team-onboarding'].includes(preferences.startPage)
+      ? preferences.startPage
+      : '/admin';
+    if (location.pathname === '/admin' && startPage !== '/admin' && !new URLSearchParams(location.search).has('stay')) {
+      location.replace(startPage);
+    }
+  } catch {}
+`;
+
 function nav(): string {
   return `
     <nav class="site-nav">
       <a class="site-nav-brand" href="/home">FocusKube</a>
       <div class="site-nav-links">
         <a href="/download">Download</a>
+        <a class="nav-admin" style="display:none" href="/admin">Admin</a>
         <span class="nav-guest"><a href="/login">Log in</a></span>
         <span class="nav-guest"><a class="site-nav-cta" href="/signup">Sign up</a></span>
         <span class="nav-user" style="display:none"><a href="#" id="nav-logout">Log out</a></span>
@@ -263,18 +285,30 @@ function nav(): string {
   `;
 }
 
-const SIDEBAR_LINKS: Array<{ href: string; label: string }> = [
+function adminNav(): string {
+  return `
+    <nav class="site-nav">
+      <a class="site-nav-brand" href="/admin">FocusKube Admin</a>
+      <div class="site-nav-links">
+        <span class="nav-user"><a href="#" id="nav-logout">Log out</a></span>
+      </div>
+    </nav>
+  `;
+}
+
+const SIDEBAR_LINKS: Array<{ href: string; label: string; admin?: boolean }> = [
   { href: '/home', label: 'Home' },
   { href: '/download', label: 'Download' },
   { href: '/profile', label: 'Profile' },
   { href: '/account', label: 'Account' },
   { href: '/team', label: 'Team' },
   { href: '/support', label: 'Support' },
+  { href: '/admin', label: 'Admin', admin: true },
 ];
 
 function sidebar(currentPath: string): string {
   const links = SIDEBAR_LINKS.map(
-    ({ href, label }) => `<a class="sidebar-link${href === currentPath ? ' active' : ''}" href="${href}">${label}</a>`,
+    ({ href, label, admin }) => `<a class="sidebar-link${href === currentPath ? ' active' : ''}${admin ? ' nav-admin' : ''}"${admin ? ' style="display:none"' : ''} href="${href}">${label}</a>`,
   ).join('');
   return `<aside class="sidebar">${links}</aside>`;
 }
@@ -284,6 +318,60 @@ function sidebar(currentPath: string): string {
 export function page(title: string, body: string, currentPath: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} — FocusKube</title><style nonce="${currentNonce()}">${styles}</style><script nonce="${currentNonce()}" src="/static/security.js"></script></head><body>${nav()}<div class="layout-shell">${sidebar(currentPath)}<div class="page-container">${body}</div></div><script nonce="${currentNonce()}">${navScript}</script></body></html>`;
+}
+
+const adminShellStyles = `
+  .admin-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 30px; align-items: start; width: min(94%, 1320px); min-height: calc(100vh - 58px); margin: 0 auto; }
+  .admin-sidebar { position: sticky; top: 58px; display: flex; flex-direction: column; gap: 16px; min-height: calc(100vh - 58px); padding: 28px 16px 24px 0; border-right: 1px solid var(--border); }
+  .admin-sidebar-label { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .admin-sidebar nav { display: grid; gap: 4px; }
+  .admin-sidebar nav a { padding: 9px 11px; border-radius: var(--radius-md); color: var(--text); font-size: 14px; text-decoration: none; }
+  .admin-sidebar nav a:hover, .admin-sidebar nav a:focus-visible { background: var(--surface-hover); color: var(--text-heading); }
+  .admin-sidebar nav a[aria-current="page"] { background: var(--bg-elev2); color: var(--accent-bright); font-weight: 600; }
+  .admin-back-link { margin-top: auto; padding: 10px 0; border-top: 1px solid var(--border); color: var(--accent-bright); font-size: 13px; text-decoration: none; }
+  .admin-back-link:hover { color: var(--text-heading); }
+  .admin-main { min-width: 0; padding: 28px 0 60px; }
+  .admin-view { display: grid; gap: 24px; }
+  .admin-view-header { padding: 20px 24px; border-left: 3px solid var(--accent); background: linear-gradient(100deg, var(--notice-bg), transparent 72%); }
+  .admin-view-header h1 { margin: 10px 0 6px; color: var(--text-heading); font-size: 27px; line-height: 1.2; }
+  .admin-view-header p { max-width: 72ch; margin: 0; line-height: 1.5; }
+  .admin-eyebrow, .admin-index { color: var(--accent-bright); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .admin-panel { min-width: 0; padding: 18px 0; border-top: 1px solid var(--border); }
+  .admin-panel h2 { margin: 0 0 6px; color: var(--text-heading); font-size: 18px; }
+  .admin-panel > .sub { margin: 0 0 16px; }
+  .admin-error { color: var(--danger); }
+  @media (max-width: 700px) {
+    .admin-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .admin-sidebar { position: static; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; min-height: 0; padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--border); }
+    .admin-sidebar-label { display: none; }
+    .admin-sidebar nav { display: flex; flex-wrap: wrap; gap: 2px; }
+    .admin-sidebar nav a { padding: 8px; font-size: 12px; }
+    .admin-back-link { margin: 0; padding: 8px 0 8px 8px; border-top: 0; border-left: 1px solid var(--border); white-space: nowrap; }
+    .admin-main { padding: 20px 0 44px; }
+    .admin-view-header { padding: 18px; }
+    .admin-view-header h1 { font-size: 24px; }
+  }
+`;
+
+export function adminPage(title: string, body: string, currentPath: string): string {
+  const links = [
+    ['/admin', 'Overview'],
+    ['/admin/users', 'Users'],
+    ['/admin/telemetry', 'Telemetry'],
+    ['/admin/preferences', 'Preferences'],
+    ['/admin/team-onboarding', 'Team onboarding'],
+  ] as const;
+  const adminSidebar = `
+    <aside class="admin-sidebar">
+      <span class="admin-sidebar-label">Administration</span>
+      <nav aria-label="Admin sections">
+        ${links.map(([href, label]) => `<a href="${href === '/admin' ? '/admin?stay=1' : href}"${href === currentPath ? ' aria-current="page"' : ''}>${label}</a>`).join('')}
+      </nav>
+      <a class="admin-back-link" href="/home">&larr; Back to FocusKube</a>
+    </aside>
+  `;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} — FocusKube Admin</title><style nonce="${currentNonce()}">${styles}${adminShellStyles}</style><script nonce="${currentNonce()}" src="/static/security.js"></script></head><body>${adminNav()}<div class="admin-layout">${adminSidebar}<div class="admin-main">${body}</div></div><script nonce="${currentNonce()}">${navScript}</script><script nonce="${currentNonce()}">${adminPreferencesScript}</script></body></html>`;
 }
 
 /** Bare-bones nav for landingPage() below — brand plus Log in/Sign up only, no Download

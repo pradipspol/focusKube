@@ -51,11 +51,29 @@
     if (!meRes.ok) { location.href = '/login'; return; }
     const profileRes = await fetch('/v1/account/profile');
     const { user } = await profileRes.json();
+    const [accountRes, teamRes] = await Promise.all([fetch('/v1/account'), fetch('/v1/org')]);
+    const account = await accountRes.json();
+    const teamData = await teamRes.json();
     const fullName = esc([user.firstName, user.lastName].filter(Boolean).join(' '));
     let tfaEnabled = !!user.twoFactorEnabled;
 
     document.getElementById('content').innerHTML =
       '<p class="sub">Signed in as ' + (fullName ? fullName + ' &middot; ' : '') + esc(user.email || user.phone) + '</p>' +
+
+      (teamData.org ? (
+        '<div class="card">' +
+        '<h2>' + (teamData.role === 'owner' ? 'Your team' : 'Team access') + '</h2>' +
+        '<p><strong>' + esc(teamData.org.name) + '</strong> &middot; ' + esc(teamData.role) + '</p>' +
+        '<p class="sub">' + (teamData.role === 'owner'
+          ? 'Team plan: ' + esc(teamData.teamPlan?.status || teamData.org.status) + (teamData.seatActive ? ' &middot; You are using a team seat.' : ' &middot; You are not using a team seat.')
+          : 'License: ' + esc(account.license?.status || 'inactive') + ' &middot; Plan: ' + esc(account.license?.plan || teamData.teamPlan?.plan || 'team')) +
+        (account.license?.scope === 'org' ? ' &middot; ' + account.license.quotaRemaining + ' of ' + account.license.quotaGranted + ' pooled credits remain.' : '') +
+        '</p>' +
+        '<a class="button-link secondary" href="/team">' + (teamData.role === 'owner' ? 'Manage team' : 'View team and membership') + '</a>' +
+        '</div>'
+      ) : account.license?.scope === 'org' ? (
+        '<div class="card"><h2>Team access</h2><p><strong>' + esc(account.license.org.name) + '</strong> &middot; ' + esc(account.license.status) + '</p><a class="button-link secondary" href="/team">View team and membership</a></div>'
+      ) : '') +
 
       '<div class="card">' +
       '<h2>Username</h2>' +

@@ -56,7 +56,7 @@ async function sendEmail(
   to: string,
   subject: string,
   text: string,
-  messageType: 'password-reset' | 'otp' | 'organization-invite',
+  messageType: 'password-reset' | 'otp' | 'organization-invite' | 'admin-invite',
 ): Promise<void> {
   const useBrevoApi = Boolean(config.brevo.apiKey);
   const t = useBrevoApi ? null : getTransporter();
@@ -106,5 +106,15 @@ export async function sendOrgInviteEmail(to: string, token: string, orgName: str
     `${inviterLabel} invited you to join ${orgName} on focusKube`,
     `${inviterLabel} invited you to join "${orgName}" on focusKube, with access to the AI assistant.\n\nAccept the invite: ${link}\n\nThis link expires in ${config.org.inviteTtlDays} days. If you weren't expecting this, ignore this email.`,
     'organization-invite',
+  );
+}
+
+export async function sendAdminInviteEmail(to: string, inviterLabel: string): Promise<void> {
+  const link = `${config.publicUrl}/signup?email=${encodeURIComponent(to)}`;
+  await sendEmail(
+    to,
+    `${inviterLabel} invited you to join focusKube`,
+    `${inviterLabel} invited you to create a focusKube account.\n\nCreate your account: ${link}\n\nThis invitation does not include a paid plan or team membership.`,
+    'admin-invite',
   );
 }
