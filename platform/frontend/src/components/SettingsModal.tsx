@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppWindow, BarChart3, Code2, Network, Plug } from 'lucide-react';
+import { useAiEntitlement } from '../api/aiAssistantApi';
 import { api } from '../api/client';
 import type {
   AppSettingsResponse,
@@ -465,6 +466,7 @@ function McpGroup({ settings, draft, onChange }: { settings: AppSettingsResponse
   const text = uiText.settings.integrations;
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const entitlementQuery = useAiEntitlement();
   const [showToken, setShowToken] = useState(false);
   const regenerate = useMutation({
     mutationFn: () => api.regenerateMcpToken(),
@@ -472,6 +474,8 @@ function McpGroup({ settings, draft, onChange }: { settings: AppSettingsResponse
   });
 
   const { status, token } = settings.mcp;
+  const plan = entitlementQuery.data?.plan;
+  const hasPaidAccess = entitlementQuery.data?.enabled && ['trial', 'pro', 'team', 'dev'].includes(plan ?? '');
   const url = `http://127.0.0.1:${draft.port}/mcp`;
   const dirty = draft.enabled !== settings.mcp.enabled || draft.port !== settings.mcp.port || draft.allowWrite !== settings.mcp.allowWrite;
 
@@ -491,8 +495,11 @@ function McpGroup({ settings, draft, onChange }: { settings: AppSettingsResponse
 
   return (
     <SettingsGroup title={text.aiHeading} description={text.mcpDescription}>
+      {!entitlementQuery.isLoading && !hasPaidAccess && (
+        <Notice variant="warning">{text.mcpPaidRequired}</Notice>
+      )}
       <div className="settings-toggles">
-        <Toggle id="settings-mcp-enabled" label={text.mcpEnable} checked={draft.enabled} onChange={(enabled) => onChange({ ...draft, enabled })} />
+        <Toggle id="settings-mcp-enabled" label={text.mcpEnable} checked={draft.enabled} disabled={!hasPaidAccess && !draft.enabled} onChange={(enabled) => onChange({ ...draft, enabled })} />
       </div>
       <Row label={text.mcpPort} htmlFor="settings-mcp-port">
         <input

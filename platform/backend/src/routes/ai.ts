@@ -4,7 +4,9 @@ import { HttpError } from '../util/httpError.js';
 import { logError, logInfo } from '../util/logger.js';
 import { getEntitlementState } from '../runtime/aiLicenseStore.js';
 import { getSessionToken } from '../runtime/accountStore.js';
+import { getAppSettings } from '../runtime/appSettingsStore.js';
 import { aiChatSessionStore } from '../services/aiChatSessionStore.js';
+import { applyMcpSettings } from '../mcp/mcpServer.js';
 import type { ChatMessage } from '../services/aiService.js';
 
 const router = Router();
@@ -56,6 +58,8 @@ function recoverTranscript(session: {
 router.get('/entitlement', async (_req: Request, res: Response<EntitlementResponse>, next: NextFunction) => {
   try {
     const state = await getEntitlementState();
+    const mcpSettings = getAppSettings().mcp;
+    if (mcpSettings.enabled) await applyMcpSettings(mcpSettings);
     res.json({
       enabled: state.status === 'active',
       plan: state.plan,

@@ -295,6 +295,7 @@
       aiHeading: 'AI integrations — MCP server',
       mcpDescription:
         'Expose FocusKube\'s Kubernetes tools to MCP clients such as VS Code, Claude Desktop or Cursor. The server listens on this machine only and requires a bearer token.',
+      mcpPaidRequired: 'MCP requires an active FocusKube trial, Pro, or Team membership.',
       mcpEnable: 'Enable MCP server',
       mcpPort: 'Port',
       mcpAllowWrite: 'Allow write tools (scale, restart, apply, delete, Helm)',

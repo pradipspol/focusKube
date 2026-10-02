@@ -2,9 +2,11 @@ import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { hasCapability } from '../auth/rbac.js';
 import { resolveAuthFromHeaders } from '../auth/session.js';
+import { getEntitlementState, type EntitlementState } from '../runtime/aiLicenseStore.js';
 import { getAppSettings, type McpSettings } from '../runtime/appSettingsStore.js';
 import { recordUsage } from '../runtime/usageStats.js';
-import { resolveSessionHelmAccess, resolveSessionKubeAccess } from '../services/aiContextService.js';
+import { resolveSessionHelmAccess, resolveSessionKubeAccess, type ClusterContext } from '../services/aiContextService.js';
+import { runInvestigation } from '../services/investigationAgent.js';
 import {
   READ_TOOLS,
   WRITE_TOOLS,
@@ -31,6 +33,12 @@ export interface McpServerStatus {
 let server: http.Server | null = null;
 let listeningPort: number | null = null;
 let lastError: string | null = null;
+
+export function hasPaidMcpAccess(entitlement: EntitlementState): boolean {
+  return Boolean(entitlement.licenseKey)
+    && entitlement.status === 'active'
+    && ['trial', 'pro', 'team', 'dev'].includes(entitlement.plan ?? '');
+}
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -73,9 +81,9 @@ function toMcpTool(tool: ToolDefinition, write: boolean) {
   };
 }
 
-function availableTools(settings: McpSettings) {
+export function availableTools(settings: McpSettings) {
   const tools: Array<Record<string, unknown>> = [ACTIVE_CONTEXT_TOOL];
-  tools.push(...READ_TOOLS.filter((t) => !isInvestigationTool(t.name)).map((t) => toMcpTool(t, false)));
+  tools.push(...READ_TOOLS.map((t) => toMcpTool(t, false)));
   if (settings.allowWrite) tools.push(...WRITE_TOOLS.map((t) => toMcpTool(t, true)));
   return tools;
 }
@@ -92,7 +100,7 @@ async function callTool(name: string, args: Record<string, unknown>, settings: M
     return textResult(JSON.stringify({ context: state.activeContext ?? null, source: state.activeContextSource ?? null }, null, 2));
   }
 
-  const known = READ_TOOLS.some((t) => t.name === name && !isInvestigationTool(name)) || isWriteTool(name);
+  const known = READ_TOOLS.some((t) => t.name === name) || isWriteTool(name);
   if (!known) throw new RpcError(-32602, `Unknown tool: ${name}`);
   if (isWriteTool(name)) {
     if (!settings.allowWrite) return textResult('Write tools are disabled in FocusKube Settings > Integrations > MCP server.', true);
@@ -112,6 +120,29 @@ async function callTool(name: string, args: Record<string, unknown>, settings: M
 
   const ctx = { context, kubeOptions, role: user.role, helm };
   recordUsage(`mcp.tool.${name}`);
+  if (isInvestigationTool(name)) {
+    const rawTargets = input.targets;
+    if (!Array.isArray(rawTargets) || rawTargets.length === 0) {
+      return textResult('investigate_resources requires at least one target with kind and name.', true);
+    }
+    const targets = rawTargets.flatMap((target): Array<{ kind: string; name: string; namespace?: string }> => {
+      if (!target || typeof target !== 'object') return [];
+      const value = target as Record<string, unknown>;
+      if (typeof value.kind !== 'string' || typeof value.name !== 'string') return [];
+      return [{
+        kind: value.kind,
+        name: value.name,
+        ...(typeof value.namespace === 'string' ? { namespace: value.namespace } : {}),
+      }];
+    });
+    if (targets.length !== rawTargets.length) {
+      return textResult('Each investigation target must include string kind and name values.', true);
+    }
+    const question = typeof input.question === 'string' ? input.question : undefined;
+    const turnContext: ClusterContext = { cluster: { context } };
+    const results = await runInvestigation({ targets, question, turnContext, toolCtx: ctx });
+    return textResult(JSON.stringify(results, null, 2), results.some((result) => Boolean(result.error)));
+  }
   if (isWriteTool(name)) {
     const preview = await dryRunWriteTool(name, input, ctx);
     if (preview.isError) return textResult(preview.output, true);
@@ -132,7 +163,7 @@ async function handleRpc(message: JsonRpcRequest): Promise<unknown> {
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'focuskube', title: 'FocusKube', version: '1.0.0' },
         instructions:
-          'Tools operate on the Kubernetes clusters connected in the FocusKube desktop app. Omit "context" to use the cluster currently selected in FocusKube.',
+          'Tools operate on the Kubernetes clusters connected in the FocusKube desktop app. AI-backed investigate_resources runs FocusKube read-only diagnostic sub-agents. Omit "context" to use the cluster currently selected in FocusKube.',
       };
     }
     case 'ping':
@@ -204,6 +235,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     res.setHeader('WWW-Authenticate', 'Bearer');
     return sendJson(res, 401, { error: 'Invalid or missing bearer token' });
   }
+  if (!hasPaidMcpAccess(await getEntitlementState())) {
+    return sendJson(res, 403, { error: 'MCP requires an active FocusKube trial, Pro, or Team membership.' });
+  }
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return sendJson(res, 405, { error: 'Method not allowed' });
@@ -270,6 +304,11 @@ export async function applyMcpSettings(settings: McpSettings): Promise<void> {
   lastError = null;
   if (!settings.enabled) {
     await stopServer();
+    return;
+  }
+  if (!hasPaidMcpAccess(await getEntitlementState())) {
+    await stopServer();
+    lastError = 'An active FocusKube trial, Pro, or Team membership is required.';
     return;
   }
   if (server && listeningPort === settings.port) return;
