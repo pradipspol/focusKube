@@ -10,6 +10,8 @@ interface RelayAuthResponse {
   ok?: boolean;
   error?: string;
   sessionToken?: string;
+  verificationRequired?: boolean;
+  email?: string;
 }
 
 /** POSTs to the relay's own auth endpoints server-to-server — the frontend never talks to
@@ -67,7 +69,17 @@ authRouter.post(
   withRouteErrorLogging('auth', 'POST /signup', async (req, res) => {
     setRequestOperation(req, 'auth.signup');
     const { email, password } = req.body as { email?: string; password?: string };
-    await proxyAndCaptureSession('/v1/auth/signup', { email, password }, res);
+    const { status, body } = await callRelayAuth('/v1/auth/signup', { email, password });
+    res.status(status).json(body);
+  }),
+);
+
+authRouter.post(
+  '/signup/verify',
+  withRouteErrorLogging('auth', 'POST /signup/verify', async (req, res) => {
+    setRequestOperation(req, 'auth.signup.verify');
+    const { email, password, code } = req.body as { email?: string; password?: string; code?: string };
+    await proxyAndCaptureSession('/v1/auth/signup/verify', { email, password, code }, res);
   }),
 );
 

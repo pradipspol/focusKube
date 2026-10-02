@@ -82,11 +82,13 @@ function safeError(error: unknown): Record<string, unknown> {
   if (!(error instanceof Error)) return { type: typeof error };
   const errorCode = 'code' in error ? error.code : undefined;
   const cause = 'cause' in error ? error.cause : undefined;
+  const causeCode = cause instanceof Error && 'code' in cause ? cause.code : undefined;
   return {
     type: error.name,
     message: sanitizeErrorMessage(error.message),
     ...(typeof errorCode === 'string' || typeof errorCode === 'number' ? { code: errorCode } : {}),
     ...(cause instanceof Error ? { causeType: cause.name } : {}),
+    ...(typeof causeCode === 'string' || typeof causeCode === 'number' ? { causeCode } : {}),
   };
 }
 

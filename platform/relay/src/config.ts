@@ -26,6 +26,7 @@ export const config = {
 
   otpPepper: process.env.OTP_PEPPER ?? 'dev-otp-pepper-change-me',
   otpTtlMinutes: parseInt(process.env.OTP_TTL_MINUTES ?? '10', 10),
+  smsOtpEnabled: process.env.SMS_OTP_ENABLED === 'true',
 
   passwordResetTtlMinutes: parseInt(process.env.PASSWORD_RESET_TTL_MINUTES ?? '30', 10),
 
@@ -52,8 +53,17 @@ export const config = {
     redirectUri: process.env.GOOGLE_REDIRECT_URI ?? `${publicUrl}/v1/auth/google/callback`,
   },
 
+  brevo: {
+    apiKey: process.env.BREVO_API_KEY ?? '',
+  },
+
   smtp: {
     url: process.env.SMTP_URL ?? '',
+    host: process.env.SMTP_HOST ?? '',
+    port: intEnv(process.env.SMTP_PORT, 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER ?? '',
+    pass: process.env.SMTP_PASS ?? '',
     from: process.env.EMAIL_FROM ?? 'focusKube <no-reply@focuskube.dev>',
   },
 

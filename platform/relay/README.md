@@ -4,7 +4,8 @@ Vendor-hosted service behind the focusKube AI assistant. This is the **only** pl
 Anthropic API key is allowed to live — `platform/backend` is self-hosted by users (including
 on air-gapped networks), so it never holds the key; it only calls out to this relay over a
 license key. This service also owns customer accounts, sign-in, and license issuance — a
-customer signs up here, subscribes via Stripe, and gets a license key to paste into focusKube.
+customer signs up here, subscribes through the configured billing provider, and gets a
+license key to paste into focusKube.
 
 ## Running locally
 
@@ -45,10 +46,29 @@ environment; secrets are not baked into the image.
 
 ### What needs real credentials vs. what works out of the box
 
-Email/password sign-up, sessions, the account dashboard, and email-OTP sign-in use Atlas;
-password-reset/OTP emails log to the console instead of sending when `SMTP_URL` isn't set
-(same for SMS OTP when Twilio credentials aren't set). Google sign-in and Stripe billing need
-real accounts to exercise end-to-end. See `.env.example` for the environment variables.
+Email/password sign-up, sessions, the account dashboard, and email-OTP sign-in use Atlas.
+Password-reset and OTP emails are skipped when neither Brevo API nor SMTP is configured; no OTP code is logged.
+SMS OTP is disabled by default; set `SMS_OTP_ENABLED=true` and configure Twilio to enable it.
+Google sign-in and the selected billing provider need real credentials to exercise end-to-end.
+See `.env.example` for the environment variables.
+
+### Brevo API for email OTP
+
+The relay prefers Brevo's transactional email HTTPS API when `BREVO_API_KEY` is set. Create
+an API key in Brevo, verify the sender address or domain used by `EMAIL_FROM`, and configure
+these in `platform/relay/.env`:
+
+```env
+BREVO_API_KEY=YOUR_BREVO_API_KEY
+EMAIL_FROM="focusKube <no-reply@your-verified-domain.example>"
+```
+
+The existing SMTP transporter remains available as a fallback when `BREVO_API_KEY` is blank.
+For Brevo SMTP fallback, use its SMTP login and SMTP key (not the API key), set
+`SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=587`, and `SMTP_SECURE=false`. `SMTP_URL` remains
+supported when `SMTP_HOST` is blank. Keep all keys private and never commit `.env`. Restart
+the relay, open
+`http://localhost:4001/otp`, and request a code for an inbox you can access.
 
 ## Web pages (customer-facing)
 
@@ -60,8 +80,10 @@ proportionate to this service's current scope, and deliberately not the React ap
 ## API
 
 **Auth**
-- `POST /v1/auth/signup` / `/login` — `{email, password}` → sets an httpOnly session cookie.
-- `POST /v1/auth/otp/request` — `{destination, channel: "email"|"sms"}` → emails/texts a 6-digit code (console-logged in dev without SMTP/Twilio configured).
+- `POST /v1/auth/signup` — `{email, password, firstName?, lastName?}` → emails a verification code; no account or session is created yet.
+- `POST /v1/auth/signup/verify` — `{email, password, code, firstName?, lastName?}` → verifies the email, creates the account, and sets an httpOnly session cookie.
+- `POST /v1/auth/login` — `{email, password}` → sets an httpOnly session cookie for an existing account.
+- `POST /v1/auth/otp/request` — `{destination, channel: "email"|"sms"}` → emails/texts a 6-digit code. Email requires `BREVO_API_KEY` or SMTP settings for delivery; SMS is rejected unless `SMS_OTP_ENABLED=true`.
 - `POST /v1/auth/otp/verify` — `{destination, channel, code}` → finds-or-creates the account and signs in.
 - `GET /v1/auth/google/start` / `GET /v1/auth/google/callback` — Google OAuth (needs `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`; 503s otherwise).
 - `POST /v1/auth/logout` — clears the session.
@@ -70,12 +92,12 @@ proportionate to this service's current scope, and deliberately not the React ap
 
 **Account**
 - `GET /v1/account` — profile + license/subscription status (session-protected).
-- `POST /v1/account/license/regenerate` — rotates the user's key without touching plan/Stripe linkage.
+- `POST /v1/account/license/regenerate` — rotates the user's key without changing its billing linkage.
 
-**Billing** (needs `STRIPE_SECRET_KEY`/`STRIPE_PRICE_ID`; 503s otherwise)
-- `POST /v1/billing/checkout` — creates a Stripe Checkout session (session-protected, requires a verified email).
-- `POST /v1/billing/portal` — creates a Stripe customer billing-portal session.
-- `POST /v1/billing/webhook` — Stripe webhook (signature-verified, idempotent by event id): `checkout.session.completed` issues the user's license, `customer.subscription.updated`/`.deleted` sync its status.
+**Billing** (select with `BILLING_PROVIDER`; the example environment selects Razorpay)
+- `POST /v1/billing/checkout` — creates a checkout with the configured provider (session-protected, requires a verified email).
+- `POST /v1/billing/portal` — creates a customer portal session when supported by the configured provider.
+- `POST /v1/billing/webhook` — verifies provider webhook signatures and applies subscription changes idempotently. For Razorpay, configure `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`.
 
 **Relay proper** (used by `platform/backend`, not the web UI)
 - `POST /v1/license/validate` — `Authorization: Bearer <key>` → `{plan, status, quotaRemaining}` or 401/403.
@@ -119,5 +141,5 @@ create a class solely to wrap a single function.
   else's account.
 - OTP codes are peppered+hashed, rate-limited per destination (not just per-IP), and requesting a
   new code invalidates any still-pending one for that destination.
-- Stripe webhook handling is idempotent per event id (`billing_events` collection) since Stripe
-  redelivers on timeout/retry.
+- Billing webhook handling is idempotent per provider event id (`billing_events` collection)
+  since providers may redeliver after timeouts or retries.

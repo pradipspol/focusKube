@@ -16,6 +16,7 @@ export function SignInGate({ onSignedIn }: Props) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>('password');
   const [passwordSubMode, setPasswordSubMode] = useState<PasswordSubMode>('signIn');
+  const [signupVerificationPending, setSignupVerificationPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -28,14 +29,16 @@ export function SignInGate({ onSignedIn }: Props) {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="auth-brand">{uiText.brand.appName}</div>
-        <h1>{mode === 'otp' ? uiText.auth.otpTitle : passwordSubMode === 'signUp' ? uiText.auth.signUpTitle : uiText.auth.signInTitle}</h1>
-        <p className="auth-copy">{mode === 'otp' ? uiText.auth.otpCopy : uiText.auth.copy}</p>
+        <h1>{mode === 'otp' ? uiText.auth.otpTitle : signupVerificationPending ? uiText.auth.signUpVerifyTitle : passwordSubMode === 'signUp' ? uiText.auth.signUpTitle : uiText.auth.signInTitle}</h1>
+        <p className="auth-copy">{mode === 'otp' ? uiText.auth.otpCopy : signupVerificationPending ? uiText.auth.signUpVerifyCopy : uiText.auth.copy}</p>
 
         {error && <div className="auth-error">{error}</div>}
 
         {mode === 'password' ? (
           <PasswordForm
             subMode={passwordSubMode}
+            signupVerificationPending={signupVerificationPending}
+            setSignupVerificationPending={setSignupVerificationPending}
             busy={busy}
             setBusy={setBusy}
             setError={setError}
@@ -59,6 +62,7 @@ export function SignInGate({ onSignedIn }: Props) {
                 className="link-button"
                 onClick={() => {
                   setError(null);
+                  setSignupVerificationPending(false);
                   setPasswordSubMode((m) => (m === 'signIn' ? 'signUp' : 'signIn'));
                 }}
               >
@@ -70,6 +74,7 @@ export function SignInGate({ onSignedIn }: Props) {
                 className="link-button"
                 onClick={() => {
                   setError(null);
+                  setSignupVerificationPending(false);
                   setMode('otp');
                 }}
               >
@@ -96,12 +101,16 @@ export function SignInGate({ onSignedIn }: Props) {
 
 function PasswordForm({
   subMode,
+  signupVerificationPending,
+  setSignupVerificationPending,
   busy,
   setBusy,
   setError,
   onSuccess,
 }: {
   subMode: PasswordSubMode;
+  signupVerificationPending: boolean;
+  setSignupVerificationPending: (pending: boolean) => void;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   setError: (error: string | null) => void;
@@ -109,6 +118,7 @@ function PasswordForm({
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -125,7 +135,12 @@ function PasswordForm({
     setBusy(true);
     try {
       if (subMode === 'signUp') {
-        await api.authSignup(normalizedEmail, password);
+        if (!signupVerificationPending) {
+          await api.authSignup(normalizedEmail, password);
+          setSignupVerificationPending(true);
+          return;
+        }
+        await api.authSignupVerify(normalizedEmail, password, code.trim());
       } else {
         await api.authLogin(normalizedEmail, password);
       }
@@ -147,6 +162,7 @@ function PasswordForm({
           onChange={(e) => setEmail(e.target.value)}
           placeholder={uiText.auth.emailPlaceholder}
           autoComplete="email"
+          disabled={signupVerificationPending && subMode === 'signUp'}
         />
       </label>
       <label>
@@ -157,10 +173,25 @@ function PasswordForm({
           onChange={(e) => setPassword(e.target.value)}
           placeholder={uiText.auth.passwordPlaceholder}
           autoComplete={subMode === 'signUp' ? 'new-password' : 'current-password'}
+          disabled={signupVerificationPending && subMode === 'signUp'}
         />
       </label>
+      {signupVerificationPending && subMode === 'signUp' && (
+        <label>
+          {uiText.auth.signUpCodeLabel}
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]{6}"
+            maxLength={6}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            autoComplete="one-time-code"
+          />
+        </label>
+      )}
       <button type="submit" className="primary" disabled={busy}>
-        {busy ? uiText.auth.signingIn : subMode === 'signUp' ? uiText.auth.signUpButton : uiText.auth.signInButton}
+        {busy ? uiText.auth.signingIn : subMode === 'signUp' ? signupVerificationPending ? uiText.auth.signUpVerifyButton : uiText.auth.signUpSendCodeButton : uiText.auth.signInButton}
       </button>
     </form>
   );

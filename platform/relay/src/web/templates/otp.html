@@ -1,8 +1,8 @@
 <h1>Sign in with a code</h1>
-<p class="sub">Enter your email or phone number and we'll send a one-time code.</p>
+<p class="sub" id="otp-description">Enter your email and we'll send a one-time code.</p>
 <div id="err"></div>
-<form id="request-form">
-  <label>Email or phone <input type="text" name="destination" required placeholder="you@example.com or +15551234567"></label>
+<form id="request-form" data-sms-otp-enabled="{{SMS_OTP_ENABLED}}">
+  <label id="destination-label">Email <input type="email" name="destination" required placeholder="you@example.com" autocomplete="email"></label>
   <button type="submit">Send code</button>
 </form>
 <form id="verify-form" style="display:none">
@@ -24,11 +24,20 @@
   }
   const requestForm = document.getElementById('request-form');
   const verifyForm = document.getElementById('verify-form');
+  const smsOtpEnabled = requestForm.dataset.smsOtpEnabled === 'true';
+  const destinationInput = requestForm.elements.destination;
+  if (smsOtpEnabled) {
+    document.getElementById('otp-description').textContent = 'Enter your email or phone number and we\'ll send a one-time code.';
+    document.getElementById('destination-label').firstChild.textContent = 'Email or phone ';
+    destinationInput.type = 'text';
+    destinationInput.placeholder = 'you@example.com or +15551234567';
+    destinationInput.autocomplete = 'email';
+  }
   requestForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
     destination = data.destination.trim();
-    channel = destination.includes('@') ? 'email' : 'sms';
+    channel = smsOtpEnabled && !destination.includes('@') ? 'sms' : 'email';
     const res = await fetch('/v1/auth/otp/request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ destination, channel }) });
     const body = await res.json();
     if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(body.error) + '</div>'; return; }

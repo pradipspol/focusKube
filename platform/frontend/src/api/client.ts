@@ -107,7 +107,15 @@ export const api = {
   authMe: () => request<{ user: AuthUser | null }>('/auth/me'),
   authSignOut: () => request<{ ok: boolean }>('/auth/signout', { method: 'POST' }),
   authSignup: (email: string, password: string) =>
-    request<{ ok: boolean }>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+    request<{ ok: boolean; verificationRequired: boolean; email: string }>('/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  authSignupVerify: (email: string, password: string, code: string) =>
+    request<{ ok: boolean }>('/auth/signup/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, code }),
+    }),
   authLogin: (email: string, password: string) =>
     request<{ ok: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   authOtpRequest: (destination: string, channel: 'email' | 'sms') =>

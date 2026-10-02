@@ -1,5 +1,5 @@
-<h1>Create your account</h1>
-<p class="sub">Sign up to FocusKube to continue.</p>
+<h1 id="signup-title">Create your account</h1>
+<p class="sub" id="signup-copy">Sign up to FocusKube to continue.</p>
 <style>
   .name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 480px) { .name-row { grid-template-columns: 1fr; } }
@@ -34,6 +34,10 @@
   </label>
   <button type="submit">Sign up</button>
 </form>
+<form id="verify-form" style="display:none" novalidate>
+  <label>Email verification code <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" placeholder="6-digit code"></label>
+  <button type="submit">Verify email and create account</button>
+</form>
 <div class="auth-divider">or</div>
 <button type="button" id="google-start" class="secondary">Continue with Google</button>
 <div class="links" id="login-link"><a href="/login">Already have an account? Sign in</a></div>
@@ -57,6 +61,7 @@
   }
   const prefillEmail = params.get('email');
   if (prefillEmail) document.getElementById('email-input').value = prefillEmail;
+  let signupPayload = null;
 
   document.querySelectorAll('.pw-toggle').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -86,6 +91,23 @@
     }
     delete body.confirmPassword;
     const res = await fetch('/v1/auth/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
+    signupPayload = body;
+    document.getElementById('f').style.display = 'none';
+    document.getElementById('verify-form').style.display = 'grid';
+    document.getElementById('signup-title').textContent = 'Verify your email';
+    document.getElementById('signup-copy').textContent = 'Enter the 6-digit code sent to ' + data.email + ' to finish creating your account.';
+  });
+  document.getElementById('verify-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.getElementById('err').innerHTML = '';
+    const code = new FormData(e.target).get('code');
+    const res = await fetch('/v1/auth/signup/verify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ...signupPayload, code }),
+    });
     const data = await res.json();
     if (!res.ok) { document.getElementById('err').innerHTML = '<div class="error">' + esc(data.error) + '</div>'; return; }
     location.href = validNext || '/account';

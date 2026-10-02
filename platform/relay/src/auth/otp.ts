@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import type { Document } from 'mongodb';
 import { config } from '../config.js';
-import { withTransaction } from '../db.js';
 import { mongoCollections } from '../mongoCollections.js';
 import { randomOtpCode, sha256 } from './crypto.js';
 
@@ -31,17 +30,14 @@ export async function createOtp(destination: string, channel: 'email' | 'sms', p
 
   // Only one code should ever be valid at a time for a given destination+purpose Ã¢â‚¬â€
   // invalidate anything still pending before issuing the new one.
-  await withTransaction(async (session) => {
-    const collection = mongoCollections.otp_codes;
-    await collection.updateMany(
-      { destination, purpose, consumed_at: null },
-      { $set: { consumed_at: now.toISOString() } },
-      { session },
-    );
-    await collection.insertOne({
-      id: crypto.randomUUID(), destination, channel, code_hash: hashCode(destination, code), purpose,
-      attempts: 0, consumed_at: null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(),
-    }, { session });
+  const collection = mongoCollections.otp_codes;
+  await collection.updateMany(
+    { destination, purpose, consumed_at: null },
+    { $set: { consumed_at: now.toISOString() } },
+  );
+  await collection.insertOne({
+    id: crypto.randomUUID(), destination, channel, code_hash: hashCode(destination, code), purpose,
+    attempts: 0, consumed_at: null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(),
   });
   return code;
 }

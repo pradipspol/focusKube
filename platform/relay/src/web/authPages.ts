@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { config } from '../config.js';
 import { authPage, page, renderTemplate } from './layout.js';
 
 const router = Router();
@@ -27,5 +28,7 @@ router.get('/reset-password', (_req, res) => {
 });
 
 router.get('/otp', (_req, res) => {
-  res.type('html').send(authPage('Sign in with a code', renderTemplate('otp')));
+  res.type('html').send(authPage('Sign in with a code', renderTemplate('otp', {
+    SMS_OTP_ENABLED: String(config.smsOtpEnabled),
+  })));
 });

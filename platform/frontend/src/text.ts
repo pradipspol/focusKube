@@ -13,6 +13,8 @@
   auth: {
     signInTitle: 'Sign in',
     signUpTitle: 'Create your account',
+    signUpVerifyTitle: 'Verify your email',
+    signUpVerifyCopy: 'Enter the 6-digit code sent to your email to finish creating your account.',
     copy: 'Sign in to focusKube to continue.',
     emailLabel: 'Email',
     emailPlaceholder: 'you@example.com',
@@ -21,6 +23,9 @@
     continueButton: 'Continue',
     signInButton: 'Sign in',
     signUpButton: 'Sign up',
+    signUpSendCodeButton: 'Send verification code',
+    signUpVerifyButton: 'Verify email and create account',
+    signUpCodeLabel: 'Email verification code',
     emailRequired: 'Email is required.',
     passwordRequired: 'Password must be at least 8 characters.',
     switchToSignUp: "Need an account? Sign up",

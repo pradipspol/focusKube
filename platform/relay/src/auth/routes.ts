@@ -27,6 +27,8 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+const SIGNUP_OTP_PURPOSE = 'signup';
+
 router.post('/signup', authLimiter, async (req, res) => {
   const { email, password, firstName, lastName } = req.body as {
     email?: string;
@@ -47,10 +49,45 @@ router.post('/signup', authLimiter, async (req, res) => {
     res.status(409).json({ error: 'An account with this email already exists' });
     return;
   }
+
+  if (await recentOtpCount(normalizedEmail, SIGNUP_OTP_PURPOSE, 10 * 60 * 1000) >= 3) {
+    res.status(429).json({ error: 'Too many codes requested for this email — try again later' });
+    return;
+  }
+
+  const code = await createOtp(normalizedEmail, 'email', SIGNUP_OTP_PURPOSE);
+  await sendOtpEmail(normalizedEmail, code);
+  res.json({ ok: true, verificationRequired: true, email: normalizedEmail });
+});
+
+router.post('/signup/verify', authLimiter, async (req, res) => {
+  const { email, password, firstName, lastName, code } = req.body as {
+    email?: string;
+    password?: string;
+    firstName?: string;
+    lastName?: string;
+    code?: string;
+  };
+  if (!isValidEmail(email) || !password || password.length < 8 || !code) {
+    res.status(400).json({ error: 'A valid email, an 8+ character password, and verification code are required' });
+    return;
+  }
+  const normalizedEmail = normalizeEmail(email);
+  if (await userService.findUserByEmail(normalizedEmail)) {
+    res.status(409).json({ error: 'An account with this email already exists' });
+    return;
+  }
+  const verification = await verifyOtp(normalizedEmail, SIGNUP_OTP_PURPOSE, code.trim());
+  if (!verification.ok) {
+    res.status(400).json({ error: verification.error });
+    return;
+  }
+
   const passwordHash = await hashPassword(password);
   const user = await userService.createUser({
     email: normalizedEmail,
     password_hash: passwordHash,
+    email_verified: 1,
     first_name: firstName?.trim() || null,
     last_name: lastName?.trim() || null,
   });
@@ -179,6 +216,10 @@ router.post('/otp/request', authLimiter, async (req, res) => {
     res.status(400).json({ error: 'destination and channel ("email" or "sms") are required' });
     return;
   }
+  if (channel === 'sms' && !config.smsOtpEnabled) {
+    res.status(403).json({ error: 'SMS sign-in is disabled' });
+    return;
+  }
   const normalized = channel === 'email' ? normalizeEmail(destination) : destination.trim();
 
   // Per-destination throttle on top of the per-IP rate limiter above ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â otherwise someone
@@ -205,6 +246,10 @@ router.post('/otp/verify', authLimiter, async (req, res) => {
   };
   if (!destination || !code || (channel !== 'email' && channel !== 'sms')) {
     res.status(400).json({ error: 'destination, channel, and code are required' });
+    return;
+  }
+  if (channel === 'sms' && !config.smsOtpEnabled) {
+    res.status(403).json({ error: 'SMS sign-in is disabled' });
     return;
   }
   const normalized = channel === 'email' ? normalizeEmail(destination) : destination.trim();

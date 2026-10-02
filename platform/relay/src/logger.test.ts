@@ -22,6 +22,8 @@ it('writes request lifecycle logs asynchronously with user context and no secret
   logInfo('Diagnostic information message');
   logWarning('Diagnostic warning message');
   logError('Diagnostic error message', new Error('password=error-secret-value'), { password: 'error-password-value' });
+  const networkCause = Object.assign(new Error('proxy password=network-secret-value'), { code: 'ECONNRESET' });
+  logError('Diagnostic transport message', new TypeError('fetch failed', { cause: networkCause }));
 
   const app = express();
   app.use(express.json());
@@ -88,6 +90,9 @@ it('writes request lifecycle logs asynchronously with user context and no secret
     assert.equal(entries.find((entry) => entry.msg === 'Diagnostic information message')?.level, 'info');
     assert.equal(entries.find((entry) => entry.msg === 'Diagnostic warning message')?.level, 'warn');
     assert.equal(entries.find((entry) => entry.msg === 'Diagnostic error message')?.level, 'error');
+    const transportError = entries.find((entry) => entry.msg === 'Diagnostic transport message')?.error;
+    assert.equal(transportError?.causeType, 'Error');
+    assert.equal(transportError?.causeCode, 'ECONNRESET');
     assert.deepEqual(complete?.input.bodyFields, ['[redacted]', 'displayName']);
     assert.deepEqual(complete?.output.responseFields, ['ok', '[redacted]']);
     const serialized = JSON.stringify(entries);
@@ -97,6 +102,7 @@ it('writes request lifecycle logs asynchronously with user context and no secret
     assert.equal(serialized.includes('debug-secret-value'), false);
     assert.equal(serialized.includes('error-secret-value'), false);
     assert.equal(serialized.includes('error-password-value'), false);
+    assert.equal(serialized.includes('network-secret-value'), false);
     assert.equal(serialized.includes('exception-secret-value'), false);
     assert.match(serialized, /password=\[redacted\]/);
   } finally {

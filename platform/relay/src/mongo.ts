@@ -6,10 +6,18 @@ import { mongoCollections } from './mongoCollections.js';
 let client: MongoClient | undefined;
 let database: Db | undefined;
 
+export function disableMongoRetryWrites(uri: string): string {
+  const queryIndex = uri.indexOf('?');
+  const baseUri = queryIndex < 0 ? uri : uri.slice(0, queryIndex);
+  const query = new URLSearchParams(queryIndex < 0 ? '' : uri.slice(queryIndex + 1));
+  query.set('retryWrites', 'false');
+  return `${baseUri}?${query.toString()}`;
+}
+
 export async function connectDb(): Promise<void> {
   if (!config.mongodbUri) throw new Error('MONGODB_URI is required to connect the relay to MongoDB Atlas');
 
-  client = new MongoClient(config.mongodbUri);
+  client = new MongoClient(disableMongoRetryWrites(config.mongodbUri), { retryWrites: false });
   await client.connect();
   database = client.db(config.mongodbDbName);
 
